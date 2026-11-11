@@ -191,13 +191,15 @@ const NO_OUTER: CharacterLook["outer"] = {
 
 /**
  * Shirt + outer layer of a catalog outfit:
- *   jacket       white tee, closed jacket in the agent colour (the original look)
- *   hoodie       closed zip hoodie with hood and kangaroo pocket in the agent colour
+ *   jacket       open jacket in the agent colour over a white tee (the original look)
+ *   hoodie       pullover hoodie (no zip) with hood, drawstrings and kangaroo pocket in the
+ *                agent colour
  *   flannel      open grey plaid flannel (white threads, dusk bands) over a navy tee
  *   flannel-red  open red lumberjack plaid (pink threads, night bands) over a navy tee
  *   tee          plain dusk-navy t-shirt with short sleeves, no outer layer
  *   costumes     closed garment in the costume colours (details: `extras.costume`)
- * Everything but jacket/hoodie keeps its colours and shows the agent as armband + pin.
+ * Everything but jacket/hoodie keeps its colours and shows the agent as the 1× renderer did:
+ * a chest badge, and a patch across the shoulders from behind.
  */
 function outfitLayers(outfit: OutfitId): Layers {
   const whiteTee = tee(ramp(WHITE, SILVER, WHITE), "long");
@@ -206,14 +208,14 @@ function outfitLayers(outfit: OutfitId): Layers {
     case "jacket":
       return {
         shirt: whiteTee,
-        outer: { ...NO_OUTER, kind: "jacket", agentColored: true, ramp: agent },
+        outer: { ...NO_OUTER, kind: "jacket", agentColored: true, ramp: agent, open: true },
       };
     case "hoodie":
       return {
         shirt: whiteTee,
         outer: {
           ...NO_OUTER,
-          kind: "zip-hoodie",
+          kind: "hoodie",
           agentColored: true,
           ramp: agent,
           collar: "hood",

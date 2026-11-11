@@ -1,6 +1,6 @@
 /**
  * Arms and hands for every view, the standing poses (front idle + the free arm while waving),
- * the agent armband, raised/waving hands, the reading book and the mug.
+ * raised/waving hands, the reading book and the mug.
  */
 import type { Ramp } from "@agent-office/protocol";
 import { C } from "../palette.ts";
@@ -54,21 +54,6 @@ function armColumn(c: Ctx, x: number, y0: number, len: number, dark: boolean, ha
     c.pc.rect(x, y0 + len, 2, 2, skin.base);
     c.pc.set(x + 1, y0 + len + 1, skin.shadow);
   }
-  if (c.r.accent) armband(c, x, y0, 2);
-}
-
-/** Agent armband around the upper arm (below the shoulder, so it doesn't read as an epaulette). */
-function armband(c: Ctx, x: number, y0: number, w: number) {
-  const a = c.r.agentRamp;
-  // from behind people mostly sit, and the chair hides the lower arm: band at the shoulder
-  const back = c.view === "up";
-  const y = y0 + (back ? 1 : 4);
-  // from behind it wraps one texel onto the shoulder so it still reads at zoom 2
-  const x0 = back && x > 16 ? x - 1 : x;
-  const ww = back ? w + 1 : w;
-  c.pc.hline(x0, y, ww, a.base);
-  c.pc.hline(x0, y + 1, ww - 1, a.base);
-  c.pc.set(x0 + ww - 1, y + 1, a.shadow);
 }
 
 /** Front-view arm on the viewer's left (`side` -1) or right (+1) in the look's pose. */
@@ -167,7 +152,6 @@ export function drawArmsFront(c: Ctx, b: TorsoBox, arms: Arms, phase: number) {
       c.pc.set(hx + 3, T - 15, sk.base);
       c.pc.vline(hx + 7, T - 16, 4, sk.shadow);
     }
-    if (c.r.accent) armband(c, rx, T, 2);
     return;
   }
   if (posed && c.L.pose.hands !== "relaxed" && c.L.pose.hands !== "hand-in-pocket") {
@@ -191,7 +175,6 @@ export function drawRaisedHand(c: Ctx, b: TorsoBox, arms: Arms) {
   c.pc.rect(x, T - 20 + lift, 4, 6, sk.base);
   c.pc.vline(x + 3, T - 19 + lift, 5, sk.shadow);
   c.pc.rect(x - 2, T - 18 + lift, 2, 2, sk.base); // thumb
-  if (c.r.accent) armband(c, x + 2, T - 10 + lift, 2);
 }
 
 export function drawArmsBack(c: Ctx, b: TorsoBox, arms: Arms, phase: number) {

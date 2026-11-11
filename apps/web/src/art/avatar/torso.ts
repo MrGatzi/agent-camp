@@ -491,6 +491,11 @@ function drawOuterFront(c: Ctx, b: TorsoBox) {
       pc.hline(c.tl + 2, end - 3, 4, o.ramp.shadow);
       pc.hline(c.tr - 5, end - 3, 4, o.ramp.shadow);
       break;
+    case "hoodie":
+      // pullover: no zip, two white drawstrings under the hood
+      pc.vline(CX0 - 2, b.T + 1, 3, WHITE);
+      pc.vline(CX1 + 2, b.T + 1, 3, WHITE);
+      break;
     case "denim-jacket": {
       const st = o.ramp.light;
       pc.hline(c.tl, b.T + 3, c.tr - c.tl + 1, st);
@@ -592,11 +597,44 @@ function drawOuterFront(c: Ctx, b: TorsoBox) {
   }
 }
 
+/**
+ * The agent mark on clothes that are not agent coloured, as on main's 1× renderer: a 4×4
+ * badge (2×2 at 1×) on the chest — centred on the shirt when the outer layer is open or
+ * missing and no vest is in the way, else on the wearer's left chest (viewer's right) — a 2×2
+ * dot at the front edge from the side, and
+ * from behind (how seated people are mostly seen) a wide patch across the shoulders.
+ */
+function drawAgentBadge(c: Ctx, b: TorsoBox) {
+  if (!c.r.accent) return;
+  const a = c.r.agentRamp;
+  const o = c.L.outer;
+  const centre = (o.kind === "none" || o.open) && c.L.vest.kind === "none";
+  // off-centre: against the side seam, high on the chest, clear of buttons on short torsos
+  const x = centre ? CX0 - 1 : c.tr - 4;
+  const y = b.T + (centre ? 3 : 2);
+  c.pc.rect(x, y, 4, 4, a.base);
+  c.pc.rect(x, y, 2, 2, a.light);
+}
+
+function drawAgentPatch(c: Ctx, b: TorsoBox) {
+  if (!c.r.accent) return;
+  const a = c.r.agentRamp;
+  const w = c.tr - c.tl - 3;
+  c.pc.rect(c.tl + 2, b.T + 2, w, 4, a.base);
+  c.pc.hline(c.tl + 2, b.T + 2, w, a.light);
+}
+
+function drawAgentDot(c: Ctx, b: TorsoBox) {
+  if (!c.r.accent) return;
+  c.pc.rect(c.tl, b.T + 2, 2, 2, c.r.agentRamp.base);
+}
+
 export function drawTorsoFront(c: Ctx, b: TorsoBox) {
   drawShirtFront(c, b);
   drawSuspendersFront(c, b);
   drawVestFront(c, b);
   drawOuterFront(c, b);
+  drawAgentBadge(c, b);
 }
 
 // ---- back view --------------------------------------------------------------------------------
@@ -654,7 +692,7 @@ export function drawTorsoBack(c: Ctx, b: TorsoBox) {
     if (o.kind === "bomber" || o.kind === "cardigan") {
       for (let x = c.tl; x <= c.tr; x += 2) pc.set(x, end - 1, o.ramp.shadow);
     }
-    if (o.kind === "zip-hoodie" || o.collar === "hood") {
+    if (o.kind === "zip-hoodie" || o.kind === "hoodie" || o.collar === "hood") {
       pc.rect(11, b.T - 2, 10, 6, o.ramp.base);
       pc.hline(11, b.T + 3, 10, o.ramp.shadow);
       pc.vline(20, b.T - 2, 6, o.ramp.shadow);
@@ -672,6 +710,7 @@ export function drawTorsoBack(c: Ctx, b: TorsoBox) {
   }
   if (L.shirt.collar === "turtleneck" && o.kind === "none")
     pc.rect(12, b.T - 2, 8, 2, L.shirt.ramp.base);
+  drawAgentPatch(c, b);
 }
 
 // ---- side view (facing left) ------------------------------------------------------------------
@@ -723,7 +762,7 @@ export function drawTorsoSide(c: Ctx, b: TorsoBox) {
       pc.hline(front + 3, end - 3, 4, pp);
       if (o.pockets === "flap") pc.hline(front + 3, end - 2, 4, o.ramp.shadow);
     }
-    if (o.kind === "zip-hoodie" || o.collar === "hood")
+    if (o.kind === "zip-hoodie" || o.kind === "hoodie" || o.collar === "hood")
       pc.rect(c.tl + 5, b.T - 2, 6, 4, o.ramp.base);
     if (o.collar !== "none" && o.collar !== "crew" && o.collar !== "hood") {
       const cc = opt(o.collarColor, o.ramp.light);
@@ -738,4 +777,5 @@ export function drawTorsoSide(c: Ctx, b: TorsoBox) {
   } else if (L.shirt.collar === "stand-up" || L.shirt.collar === "turtleneck") {
     pc.rect(c.tl + 1, b.T - 2, 7, 2, opt(L.shirt.collarColor, L.shirt.ramp.base));
   }
+  drawAgentDot(c, b);
 }

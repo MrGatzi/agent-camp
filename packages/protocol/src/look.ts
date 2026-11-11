@@ -178,6 +178,7 @@ export const OUTER_KINDS = [
   "janker",
   "cardigan",
   "zip-hoodie",
+  "hoodie",
   "denim-jacket",
   "leather-jacket",
   "bomber",

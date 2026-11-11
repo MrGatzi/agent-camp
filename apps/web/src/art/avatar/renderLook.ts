@@ -21,7 +21,7 @@ export type RenderLook = {
   agent: AgentKind;
   /** the agent's colour ramp (AGENT_PALETTES) */
   agentRamp: Ramp;
-  /** draw the agent colour as an armband (outer garment keeps its own colour); the only agent mark */
+  /** draw the agent colour as chest badge + back patch (outer garment keeps its own colour) */
   accent: boolean;
   /** sibling session: little hat */
   hat: boolean;
@@ -34,7 +34,7 @@ export function agentRampOf(agent: AgentKind): Ramp {
   return { base: p.main, shadow: p.shade, light: p.light };
 }
 
-/** Does this look wear the agent colour on its outer garment? Otherwise: armband. */
+/** Does this look wear the agent colour on its outer garment? Otherwise: badge + back patch. */
 export const agentOnOuter = (l: CharacterLook) => l.outer.kind !== "none" && l.outer.agentColored;
 
 export function lookFor(

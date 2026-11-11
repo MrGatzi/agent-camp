@@ -6,12 +6,12 @@ import {
   type AvatarSpec,
   avatarFromSeed,
   type CharacterLook,
-  LOOK_FIXTURES,
   lookFromCatalog,
   sessionVariation,
 } from "@agent-office/protocol";
+import { LOOK_FIXTURES } from "@agent-office/protocol/fixtures";
 import { mix } from "../src/art/avatar/color.ts";
-import { FH, FW, SPECS } from "../src/art/avatar/geometry.ts";
+import { ANIM, FH, FW, SPECS } from "../src/art/avatar/geometry.ts";
 import { RefCache } from "../src/art/avatar/refCache.ts";
 import { lookFor } from "../src/art/avatar/renderLook.ts";
 import { paintSheet } from "../src/art/avatar/sheet.ts";
@@ -81,12 +81,15 @@ describe("HD character painter", () => {
     expect((legs.get(skin.base) ?? 0) + (legs.get(skin.shadow) ?? 0)).toBeGreaterThan(3);
   });
 
-  test("agent shows as an armband only when the jacket keeps its own colour", () => {
+  test("agent shows as chest badge + back patch when the jacket keeps its own colour", () => {
     const p = AGENT_PALETTES.codex;
-    const c = colours(paintSheet(lookFor(tracht, "codex", null)), 0);
-    expect(c.get(p.main)).toBeGreaterThan(4);
-    // one agent mark: no lapel pin (its highlight/shadow texels are gone)
-    expect(c.get(p.light) ?? 0).toBe(0);
+    const sheet = paintSheet(lookFor(tracht, "codex", null));
+    const c = colours(sheet, 0);
+    expect(c.get(p.main)).toBe(12); // 4×4 badge, light 2×2 corner
+    expect(c.get(p.light)).toBe(4);
+    // from behind: the wide patch across the shoulders (what you see at the desk)
+    const back = colours(sheet, ANIM.sitType[0]!);
+    expect((back.get(p.main) ?? 0) + (back.get(p.light) ?? 0)).toBeGreaterThan(30);
     // not on the jacket itself
     expect(c.get(tracht.look!.outer.ramp.base)).toBeGreaterThan(20);
   });
@@ -135,6 +138,8 @@ describe("HD character painter", () => {
       eyewear: { ...cat.eyewear, style: "none" },
       headwear: { ...cat.headwear, style: "none" },
       facialHair: { ...cat.facialHair, style: "none" },
+      // closed, so the closed-front details of every outer kind / pocket are visible
+      outer: { ...cat.outer, open: false },
     };
     const baseSpec: AvatarSpec = { ...avatarFromSeed("probe"), look: base };
     const baseFrames = [0, 10, 30]

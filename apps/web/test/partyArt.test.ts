@@ -6,11 +6,11 @@ import {
   AvatarSpec,
   avatarFromSeed,
   HELD_ITEMS,
-  LOOK_FIXTURES,
   OUTFITS,
   VEHICLES,
   WRISTWEAR,
 } from "@agent-office/protocol";
+import { LOOK_FIXTURES } from "@agent-office/protocol/fixtures";
 import { FH, FW } from "../src/art/avatar/geometry.ts";
 import { lookFor, lookKey, paintSheet } from "../src/art/characters.ts";
 import { vehiclePixels } from "../src/art/party.ts";
@@ -117,6 +117,34 @@ describe("integrated avatar costumes", () => {
     expect(found).toBe(true);
   });
 
+  /**
+   * Pins how existing (catalog) looks render: all 35 HD frames of seeded avatars in every
+   * catalog outfit, a costume and the hand-authored detailed look. Any pixel change fails here;
+   * update the hashes only for an intended change and list it below.
+   *
+   * Intended differences from main's 1× renderer (16×24) that these hashes accept:
+   *  - painted at 32×48 texels (same world size, CHAR_RES = 2): more detail, same layout
+   *  - same layers and colours as main: open agent jacket over a white tee, pullover hoodie
+   *    (drawstrings, kangaroo pocket, no zip), open plaid flannels over a navy tee, dusk tee
+   *  - same agent mark as main on non-agent outfits: chest badge (4×4) + patch across the
+   *    shoulders from behind (+ a dot at the front edge from the side)
+   *  - held items, bracelets and costume details are main's 1× art, doubled
+   */
+  test("all 35 HD frames of seeded catalog looks retain their pixel checksums", () => {
+    const sheetHash = (avatar: Avatar) => {
+      let hash = 2166136261;
+      for (const pixel of paintSheet(lookFor(avatar, "codex", null)).data)
+        hash = Math.imul(hash ^ pixel, 16777619) >>> 0;
+      return hash;
+    };
+    const got: Record<string, number> = {};
+    for (const seed of ["anna", "martin"])
+      for (const outfit of ["jacket", "hoodie", "flannel", "flannel-red", "tee", "robot"] as const)
+        got[`${seed}/${outfit}`] = sheetHash({ ...avatarFromSeed(seed), outfit });
+    got.tracht = sheetHash(LOOK_FIXTURES.tracht);
+    expect(got).toEqual(PINNED_SHEETS);
+  });
+
   test("old avatar payloads receive neutral defaults", () => {
     const { wrist: _w, accentColor: _a, vehicle: _v, ...legacy } = avatarFromSeed("anna");
     const parsed = AvatarSpec.parse(legacy);
@@ -126,3 +154,19 @@ describe("integrated avatar costumes", () => {
     );
   });
 });
+
+const PINNED_SHEETS: Record<string, number> = {
+  "anna/jacket": 3533252985,
+  "anna/hoodie": 2696425433,
+  "anna/flannel": 3746024559,
+  "anna/flannel-red": 1382481483,
+  "anna/tee": 2318857163,
+  "anna/robot": 843878427,
+  "martin/jacket": 2462738828,
+  "martin/hoodie": 10235228,
+  "martin/flannel": 3949982611,
+  "martin/flannel-red": 1788145618,
+  "martin/tee": 1847809540,
+  "martin/robot": 251882392,
+  tracht: 3785941241,
+};
