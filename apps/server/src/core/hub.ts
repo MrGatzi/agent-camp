@@ -476,31 +476,16 @@ export class Hub {
   }
 
   /**
-   * A live socket of this person's connectors that can draw a look locally, preferring
-   * `prefer` (the Mac that just said hello), else the one heard from most recently.
+   * The local AI tools of one socket (the Mac a browser proved it can read, see
+   * OfficeApp.requestLocalLook), when it is the live socket of one of this person's connectors;
+   * else []. Never any other socket of the person: a connector's person is only a claimed name.
    */
-  lookSocketOf(
-    personId: string,
-    now: number,
-    prefer?: string,
-  ): { socketId: string; generator: LookGenerator } | null {
-    let best: { socketId: string; generator: LookGenerator; seen: number } | null = null;
-    for (const c of this.connectors.values()) {
-      const generator = c.lookGenerators?.[0];
-      if (c.personId !== personId || !c.socketId || !generator || this.isStale(c, now)) continue;
-      const seen = c.socketId === prefer ? Number.POSITIVE_INFINITY : c.lastSeen;
-      if (!best || seen > best.seen) best = { socketId: c.socketId, generator, seen };
-    }
-    return best && { socketId: best.socketId, generator: best.generator };
-  }
-
-  /** Local AI tools of this person's live connectors (for the look studio). */
-  lookGeneratorsOf(personId: string, now: number): LookGenerator[] {
-    const out = new Set<LookGenerator>();
-    for (const c of this.connectors.values())
-      if (c.personId === personId && c.socketId && !this.isStale(c, now))
-        for (const g of c.lookGenerators ?? []) out.add(g);
-    return [...out];
+  lookGeneratorsOf(personId: string, socketId: string | undefined, now: number): LookGenerator[] {
+    if (!socketId) return [];
+    const b = this.sockets.get(socketId);
+    const c = b && this.connectors.get(b.clientId);
+    if (!c || c.socketId !== socketId || c.personId !== personId || this.isStale(c, now)) return [];
+    return [...(c.lookGenerators ?? [])];
   }
 
   /** Open sockets of a person's connectors that are still heartbeating. */

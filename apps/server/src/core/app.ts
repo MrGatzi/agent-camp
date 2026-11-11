@@ -19,7 +19,14 @@ import {
   type ViewerEvent,
 } from "@agent-office/protocol";
 import { z } from "zod";
-import { isAuthorized, ME_TTL_MS, makeMeToken, meCookie, meFromRequest } from "./auth.ts";
+import {
+  isAuthorized,
+  ME_TTL_MS,
+  makeMeToken,
+  meCookie,
+  meFromRequest,
+  meProofFromRequest,
+} from "./auth.ts";
 import {
   AI_AVATAR_SCHEMA,
   type AvatarResult,
@@ -97,12 +104,17 @@ export const LOOK_GENERATES_PER_DAY = 5;
 type PendingLook = {
   requestId: string;
   job: AvatarJob;
-  /** the look studio's Generate this answers (see studioKey), absent for automatic looks */
+  /** the look studio's Generate this answers (see studioKey) */
   studio?: string;
+  /** the socket it went to: the Mac the owner's browser proved with its code */
+  mac?: string;
   at: number;
   generator: LookGenerator;
 };
 const pendingLookKey = (personId: string) => `look.pending.${personId}`;
+/** "This is me" codes in flight: one per connector socket (`mac`) of the person. */
+type ClaimCode = { code: string; mac: string };
+type PendingClaim = { codes: ClaimCode[]; exp: number; tries: number };
 /**
  * The person's newest look studio Generate (a random token, "" once they pick a look): an AI
  * look replaces a picked look only for that one, so a late answer never undoes a newer choice.
@@ -211,7 +223,7 @@ export class OfficeApp {
     const r = this.hub.onConnectorMessage(socketId, raw, this.now());
     // a hello (it returns a binding) is the only thing that refreshes the latest version
     if (r.binding) this.refreshLatest();
-    return this.handle(r, socketId);
+    return this.handle(r);
   }
 
   /** Background GitHub lookup when stale; the welcome that triggered it never waits. */
@@ -253,20 +265,20 @@ export class OfficeApp {
     this.transport.scheduleAlarm(this.hub.nextDeadline());
   }
 
-  private handle(r: HubResult, socketId?: string): SocketAction {
+  private handle(r: HubResult): SocketAction {
     this.publish(r.events);
     this.transport.scheduleAlarm(this.hub.nextDeadline());
     if (r.avatarJob) {
       const job = r.avatarJob;
-      // the person's own Mac first (their own AI subscription), else the server's provider
-      if (!this.requestLocalLook(job, { prefer: socketId })) {
-        const p = this.genui
-          .resolve(job)
-          .then((res) => this.applyLook(job, res))
-          .catch((err) => console.error("avatar job failed", err));
-        this.transport.waitUntil?.(p);
-      }
-    } else if (r.binding) this.retryStaleLook(r.binding.personId, socketId);
+      // a look from a hello (join, a new description): the server's provider, never a Mac. Any
+      // connector with the shared password can say hello under any name, so neither its text
+      // nor the person's description may go to a Mac on its say-so (see requestLocalLook)
+      const p = this.genui
+        .resolve(job)
+        .then((res) => this.applyLook(job, res))
+        .catch((err) => console.error("avatar job failed", err));
+      this.transport.waitUntil?.(p);
+    } else if (r.binding) this.retryStaleLook(r.binding.personId);
     if (r.lookGenerated) {
       const p = this.onLookGenerated(r.lookGenerated).catch((err) =>
         console.error("local look failed", err),
@@ -287,23 +299,28 @@ export class OfficeApp {
   // ---- looks drawn on the person's own Mac --------------------------------------------------
 
   /**
-   * Ask one of the person's live connectors to draw the look with its local AI tool (Claude
-   * Code on that person's own subscription). The request is remembered in the store
-   * (one per person, the newest wins), so the answer is accepted only for a request this
+   * Ask the owner's own Mac to draw a look studio Generate with its local AI tool (Claude Code
+   * on their own subscription). Only for a Generate from a browser that proved it is the
+   * person (`ao_me`), and only to `mac`: the connector socket whose claim code that browser
+   * typed, if it is still connected. Never to another socket of the same name: a connector's
+   * person is just the name it says hello with (shared password), so an impostor would get the
+   * owner's description, or push its text to the owner's Mac. The request is remembered in the
+   * store (one per person, the newest wins), so the answer is accepted only for a request this
    * server made, from a connector of that same person, even across a hibernation. Returns the
-   * tool, or null when no connector of theirs can (then the server provider takes the job).
+   * tool, or null when that Mac cannot (then the server provider takes the job).
    */
   private requestLocalLook(
     job: AvatarJob,
-    opts: { prefer?: string | undefined; studio?: string | undefined },
+    studio: string,
+    mac: string | undefined,
   ): LookGenerator | null {
-    if (!job.selfDescription?.trim() || !this.transport.sendToConnector) return null;
+    if (!job.selfDescription?.trim() || !mac || !this.transport.sendToConnector) return null;
     const now = this.now();
-    const target = this.hub.lookSocketOf(job.personId, now, opts.prefer);
-    if (!target) return null;
+    const [generator] = this.hub.lookGeneratorsOf(job.personId, mac, now);
+    if (!generator) return null;
     const requestId = `lr_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
     const sent = this.transport.sendToConnector(
-      target.socketId,
+      mac,
       JSON.stringify(
         envelope("connector.lookRequested", {
           requestId,
@@ -314,16 +331,10 @@ export class OfficeApp {
       ),
     );
     if (!sent) return null;
-    const pending: PendingLook = {
-      requestId,
-      job,
-      ...(opts.studio ? { studio: opts.studio } : {}),
-      at: now,
-      generator: target.generator,
-    };
+    const pending: PendingLook = { requestId, job, studio, mac, at: now, generator };
     this.store.kvPut(pendingLookKey(job.personId), JSON.stringify(pending));
-    this.hub.log(`look ${job.personId} requested from their Mac (${target.generator})`);
-    return target.generator;
+    this.hub.log(`look ${job.personId} requested from their Mac (${generator})`);
+    return generator;
   }
 
   private pendingLook(personId: string): PendingLook | null {
@@ -357,13 +368,15 @@ export class OfficeApp {
 
   /**
    * A Mac that took a look request and never answered (quit, updated, asleep): when one of the
-   * person's connectors says hello again after LOOK_LOCAL_RETRY_MS, ask again.
+   * person's connectors says hello again after LOOK_LOCAL_RETRY_MS, ask again: the same
+   * Generate, and only the same proven Mac (a new socket, even of the same name, is not
+   * proven), else the server's provider draws it.
    */
-  private retryStaleLook(personId: string, socketId: string | undefined): void {
+  private retryStaleLook(personId: string): void {
     const pending = this.pendingLook(personId);
     if (!pending || this.now() - pending.at < LOOK_LOCAL_RETRY_MS) return;
     this.store.kvPut(pendingLookKey(personId), "");
-    if (this.requestLocalLook(pending.job, { prefer: socketId, studio: pending.studio })) return;
+    if (pending.studio && this.requestLocalLook(pending.job, pending.studio, pending.mac)) return;
     const p = this.serverLook(pending.job, pending.studio)
       .then((res) => this.applyLook(pending.job, res, pending.studio))
       .catch((err) => console.error("avatar job failed", err));
@@ -525,8 +538,10 @@ export class OfficeApp {
         const p = this.hub.state().people.find((x) => x.personId === personId);
         if (!p) return json({ error: "not in the office" }, { status: 404 });
         // the description is the person's own words: only their own browser gets it back
-        const mine = (await meFromRequest(req, this.env, this.now())) === personId;
-        const localLooks = this.hub.lookGeneratorsOf(personId, this.now());
+        const proof = await meProofFromRequest(req, this.env, this.now());
+        const mine = proof?.personId === personId;
+        // the Mac this browser proved, the only one its Generate goes to
+        const localLooks = mine ? this.hub.lookGeneratorsOf(personId, proof.mac, this.now()) : [];
         return json({
           ok: true,
           avatar: p.avatar,
@@ -575,12 +590,13 @@ export class OfficeApp {
       } catch {
         return json({ error: "bad person id" }, { status: 400 });
       }
-      if ((await meFromRequest(req, this.env, this.now())) !== personId)
+      const proof = await meProofFromRequest(req, this.env, this.now());
+      if (proof?.personId !== personId)
         return json(
           { error: "you can only change your own look (confirm it is you first)" },
           { status: 403 },
         );
-      return this.describeLook(req, personId);
+      return this.describeLook(req, personId, proof.mac);
     }
 
     const person = /^\/api\/people\/([^/]{1,64})$/.exec(path);
@@ -666,7 +682,9 @@ export class OfficeApp {
    * "This is me": send a one-time code as a notification to the person's live Macs (the
    * poke channel, so every connector shows it). Whoever can read it there may edit the look.
    * A courtesy lock, not identity: a connector's person is just the name it reports with the
-   * shared password, so a colleague could start one under someone else's name.
+   * shared password, so a colleague could start one under someone else's name. Each socket
+   * gets its own code, so the browser is tied to the one Mac it read it on: the only Mac its
+   * look studio sends a description to (requestLocalLook).
    */
   private async sendClaimCode(req: Request, personId: string): Promise<Response> {
     const now = this.now();
@@ -691,24 +709,29 @@ export class OfficeApp {
     this.lastClaim.set(personId, now);
     this.lastClaim.set(`ip:${who}`, now);
     if (this.lastClaim.size > 500) this.lastClaim.clear();
-    const code = String(crypto.getRandomValues(new Uint32Array(1))[0]! % 1_000_000).padStart(
-      6,
-      "0",
-    );
+    const codes: ClaimCode[] = [];
+    while (codes.length < sockets.length) {
+      const code = String(crypto.getRandomValues(new Uint32Array(1))[0]! % 1_000_000).padStart(
+        6,
+        "0",
+      );
+      if (!codes.some((c) => c.code === code)) codes.push({ code, mac: sockets[codes.length]! });
+    }
     this.store.kvPut(
       `claim.${personId}`,
-      JSON.stringify({ code, exp: now + CLAIM_CODE_TTL_MS, tries: 0 }),
-    );
-    const poke = JSON.stringify(
-      envelope("connector.poked", {
-        kind: "message",
-        from: "Agent Office",
-        text: `Your code to edit your look: ${code} (5 min). Not you? Just ignore this.`,
-      }),
+      JSON.stringify({ codes, exp: now + CLAIM_CODE_TTL_MS, tries: 0 } satisfies PendingClaim),
     );
     let delivered = 0;
-    for (const socketId of sockets)
-      if (this.transport.sendToConnector?.(socketId, poke)) delivered++;
+    for (const { code, mac } of codes) {
+      const poke = JSON.stringify(
+        envelope("connector.poked", {
+          kind: "message",
+          from: "Agent Office",
+          text: `Your code to edit your look: ${code} (5 min). Not you? Just ignore this.`,
+        }),
+      );
+      if (this.transport.sendToConnector?.(mac, poke)) delivered++;
+    }
     this.hub.log(`look ${personId} claim code sent to ${delivered} Mac(s)`);
     if (delivered === 0)
       return json({ error: "no Mac of theirs is connected right now" }, { status: 409 });
@@ -725,15 +748,21 @@ export class OfficeApp {
     }
     const now = this.now();
     const key = `claim.${personId}`;
-    let pending: { code: string; exp: number; tries: number } | null = null;
+    let pending: PendingClaim | null = null;
     try {
       pending = JSON.parse(this.store.kvGet(key) ?? "null");
     } catch {
       pending = null;
     }
-    if (!pending || pending.exp < now || pending.tries >= CLAIM_MAX_TRIES)
+    if (
+      !pending ||
+      !Array.isArray(pending.codes) ||
+      pending.exp < now ||
+      pending.tries >= CLAIM_MAX_TRIES
+    )
       return json({ error: "no valid code, send a new one" }, { status: 410 });
-    if (code !== pending.code) {
+    const match = pending.codes.find((c) => c.code === code);
+    if (!match) {
       pending.tries++;
       this.store.kvPut(key, JSON.stringify(pending));
       return json({ error: "wrong code" }, { status: 403 });
@@ -741,7 +770,7 @@ export class OfficeApp {
     this.store.kvPut(key, "null");
     const pw = connectorPassword(this.env);
     if (!pw) return json({ error: "office has no password" }, { status: 500 });
-    const token = await makeMeToken(pw, personId, now);
+    const token = await makeMeToken(pw, personId, now, match.mac);
     this.hub.log(`look ${personId} claimed by a browser`);
     return json(
       { ok: true, personId },
@@ -774,7 +803,9 @@ export class OfficeApp {
     this.hub.log(`look ${personId} edited by ${parsed.data.from || "someone"}`);
     this.publish(r.events);
     let avatar = r.avatar;
-    if (r.avatarJob && !this.requestLocalLook(r.avatarJob, {})) {
+    // Automatic draws the stored description, which any hello under this name may have set:
+    // the server's provider, never a Mac (only a Generate's own text goes to the proven Mac)
+    if (r.avatarJob) {
       const job = r.avatarJob;
       const res = await this.genui.resolve(job);
       this.publish(
@@ -797,12 +828,17 @@ export class OfficeApp {
   }
 
   /**
-   * Look studio: the owner describes their look, their Mac or the server's GenUI turns it
-   * into one. Waits for the server's AI (up to its timeout) so the studio can show the result.
+   * Look studio: the owner describes their look, the Mac this browser proved (`proven`, see
+   * requestLocalLook) or the server's GenUI turns it into one. Waits for the server's AI (up to
+   * its timeout) so the studio can show the result.
    * The description is saved even when AI looks are off, so it is used as soon as they are
    * turned on. One Generate at a time per person, and LOOK_GENERATES_PER_DAY on the server's AI.
    */
-  private async describeLook(req: Request, personId: string): Promise<Response> {
+  private async describeLook(
+    req: Request,
+    personId: string,
+    proven: string | undefined,
+  ): Promise<Response> {
     let body: unknown;
     try {
       body = await req.json();
@@ -821,8 +857,11 @@ export class OfficeApp {
         { error: `one new look at a time, try again in ${Math.ceil(retryIn / 1000)} s` },
         { status: 429, headers: { "retry-after": String(Math.ceil(retryIn / 1000)) } },
       );
-    // no Mac of theirs can draw it, so the server's AI would: refused up front at their limit
-    const mac = !!this.transport.sendToConnector && !!this.hub.lookSocketOf(personId, now);
+    // the Mac this browser proved cannot draw it, so the server's AI would: refused up front at
+    // their limit
+    const mac =
+      !!this.transport.sendToConnector &&
+      this.hub.lookGeneratorsOf(personId, proven, now).length > 0;
     if (
       !mac &&
       this.genui.providerId !== "off" &&
@@ -831,7 +870,7 @@ export class OfficeApp {
       const resetIn = Math.ceil((86_400_000 - (now % 86_400_000)) / 1000);
       return json(
         {
-          error: `you used today's ${this.maxGenerates} looks from the office's AI, more after midnight UTC (or connect a Mac with Claude Code: it draws them on your own subscription)`,
+          error: `you used today's ${this.maxGenerates} looks from the office's AI, more after midnight UTC (or confirm it is you with the code on a connected Mac with Claude Code: it draws them on your own subscription)`,
         },
         { status: 429, headers: { "retry-after": String(resetIn) } },
       );
@@ -842,10 +881,11 @@ export class OfficeApp {
     const current = () =>
       this.hub.state().people.find((p) => p.personId === personId)?.avatar ?? job.previous;
 
-    // their own Mac draws it (their own AI subscription); the studio waits for avatar.updated
+    // the Mac this browser proved draws it (their own AI subscription); the studio waits for
+    // avatar.updated
     const studio = crypto.randomUUID();
     this.store.kvPut(studioKey(personId), studio);
-    const generator = this.requestLocalLook(job, { studio });
+    const generator = this.requestLocalLook(job, studio, proven);
     if (generator) {
       const avatar = current();
       if (avatar)
