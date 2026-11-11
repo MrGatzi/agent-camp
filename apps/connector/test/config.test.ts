@@ -70,6 +70,7 @@ describe("config.toml", () => {
       saveConfig(path, {
         share_project_names: true,
         notifications: true,
+        look_generator: "auto",
         client_id: "c_abc",
         name: "Zoe",
       });
@@ -77,6 +78,7 @@ describe("config.toml", () => {
       expect(text).toContain('name = "Zoe"');
       expect(text).toContain("share_project_names = true");
       expect(text).toContain('client_id = "c_abc"');
+      expect(text).toContain('look_generator = "auto"');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

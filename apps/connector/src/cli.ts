@@ -15,6 +15,7 @@ import {
   CONFIG_KEYS,
   type Config,
   loadConfig,
+  lookGeneratorSetting,
   machineName,
   newClientId,
   saveConfig,
@@ -23,6 +24,7 @@ import {
 import { Daemon, type StatusFile } from "./daemon.ts";
 import { Detector } from "./detect/index.ts";
 import { log } from "./log.ts";
+import { bunSpawn, describeGenerators, detectGenerators, LookGenerators } from "./lookgen.ts";
 import { Notifier } from "./notify.ts";
 import {
   agentDirs,
@@ -90,6 +92,8 @@ Commands:
       --machine-name LABEL  (default: short hostname; "" resets to it)
       --share-project-names true|false     --get KEY (print one value)
       --notifications true|false   show waves/messages from the office (default true)
+      --look-generator auto|claude|codex|off   draw your look with your own Claude Code /
+                           Codex subscription when the office asks (default auto)
       --birthday MM-DD     opt-in: the office brings you a cake that day ("" removes it)
   status            connection state and live sessions
   logs              follow the daemon log
@@ -205,6 +209,15 @@ async function cmdRun(args: Args): Promise<number> {
     return 1;
   }
 
+  // Draw the look with Claude Code / Codex on this person's own subscription. Test runs on a
+  // fixture home (--home / AGENT_OFFICE_HOME) never touch the real CLIs unless asked to.
+  const testHome = !!home || !!env.AGENT_OFFICE_HOME;
+  const lookSetting =
+    lookGeneratorSetting(env.AGENT_OFFICE_LOOK_GENERATOR) ??
+    (testHome ? "off" : config.look_generator);
+  const lookTools = await detectGenerators(lookSetting, bunSpawn);
+  const looks = new LookGenerators({ tools: lookTools, log });
+
   const hello = (): MessageData<"connector.hello"> => {
     const h: MessageData<"connector.hello"> = {
       name: name.slice(0, 40),
@@ -216,6 +229,7 @@ async function cmdRun(args: Args): Promise<number> {
     Object.assign(h, helloDescription(description));
     if (machine) h.machine = machine;
     if (config.birthday) h.birthday = config.birthday;
+    if (looks.available.length) h.lookGenerators = looks.available;
     return h;
   };
 
@@ -240,11 +254,14 @@ async function cmdRun(args: Args): Promise<number> {
     version: VERSION,
     statusFile: statusPath(),
     onPoked: (p) => void notifier.show(p),
+    looks,
+    looksLabel: describeGenerators(lookTools),
   });
 
   log(
     `agent-office ${VERSION} (${platformId()}) starting; server ${daemon.client.url}; ` +
-      `self-update ${updater.enabled ? "on" : "off"}${assumeProcesses ? "; assuming processes" : ""}`,
+      `self-update ${updater.enabled ? "on" : "off"}; looks drawn by ${describeGenerators(lookTools)}` +
+      `${assumeProcesses ? "; assuming processes" : ""}`,
   );
   let stopping = false;
   const shutdown = (sig: string) => {
@@ -320,6 +337,15 @@ async function cmdConfigure(args: Args): Promise<number> {
   }
   const notify = flags.notifications;
   if (notify !== undefined) next.notifications = !(notify === "false" || notify === "0");
+  const lookGen = flagStr(flags, "look-generator");
+  if (lookGen !== undefined) {
+    const v = lookGeneratorSetting(lookGen);
+    if (!v) {
+      console.error("look-generator must be auto, claude, codex or off");
+      return 2;
+    }
+    next.look_generator = v;
+  }
   if (next.name && next.name.trim().length > 40) {
     console.error("name must be at most 40 characters");
     return 2;
@@ -421,6 +447,7 @@ async function cmdStatus(): Promise<number> {
           ? `  server    connected to ${status.server} as ${status.personId ?? status.name}`
           : `  server    not connected to ${status.server}${status.lastError ? ` (${status.lastError})` : ""}`,
       );
+      if (status.looks) lines.push(`  looks     ${status.looks}`);
       lines.push(`  sessions  ${status.sessions.length} live`);
       lines.push(...formatSessions(status.sessions, now));
     }

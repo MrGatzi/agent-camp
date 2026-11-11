@@ -87,9 +87,23 @@ export type PokeRequest = {
 /** What the HUD shows after a poke: a short status line. */
 export type PokeResult = { ok: boolean; message: string };
 /** After saving in the look editor. */
-export type LookResult = { ok: boolean; message: string; avatar?: AvatarSpec };
+export type LookResult = {
+  ok: boolean;
+  message: string;
+  avatar?: AvatarSpec;
+  /** the person's own Mac is drawing it: the new look arrives over the socket */
+  pending?: boolean;
+};
 /** GET /api/people/:id/avatar, as far as the look studio cares. */
-export type LookInfo = { custom: boolean; aiLooks?: boolean; description?: string };
+export type LookInfo = {
+  custom: boolean;
+  aiLooks?: boolean;
+  description?: string;
+  /** local AI tools on this person's Macs ("Claude Code", "Codex") */
+  localLooks?: string[];
+};
+/** How long the studio waits for a look drawn on the person's Mac. */
+const LOCAL_LOOK_WAIT_MS = 5 * 60_000;
 
 type LookField = Exclude<keyof AvatarSpec, "deskProps" | "deskMess">;
 /** The look editor's catalog rows (arrow carousels), in order. */
@@ -833,7 +847,9 @@ export class Hud {
       if (info.custom) say("custom look (picked here)");
       if (describeText && info.description && !describeText.value)
         describeText.value = info.description;
-      if (describeHint && info.aiLooks === false)
+      if (describeHint && info.localLooks?.length)
+        describeHint.textContent = `Your Mac draws it with ${info.localLooks[0]} on your own subscription (about a minute). It replaces a look picked here.`;
+      else if (describeHint && info.aiLooks === false)
         describeHint.textContent =
           "AI looks are off on this office server: your text is saved and used as soon as the admin turns them on (GENUI_PROVIDER, see README).";
     });
@@ -854,7 +870,27 @@ export class Hud {
       }
       describeGo.disabled = true;
       say("the AI is drawing you, this can take a minute...");
+      const before = JSON.stringify(this.model.people.get(p.personId)?.avatar ?? null);
       const r = await this.onDescribeLook(p.personId, text);
+      if (r.pending) {
+        say(r.message);
+        // the look arrives as avatar.updated: watch the model until it changes
+        const until = Date.now() + LOCAL_LOOK_WAIT_MS;
+        const watch = () => {
+          if (this.lookEditor?.box !== box) return; // studio closed
+          const now = this.model.people.get(p.personId)?.avatar;
+          if (now && JSON.stringify(now) !== before) {
+            describeGo.disabled = false;
+            showAvatar(now);
+            say("new look, drawn on your Mac!", true);
+          } else if (Date.now() > until) {
+            describeGo.disabled = false;
+            say("no new look yet: run `agent-office logs` on your Mac to see why", false);
+          } else setTimeout(watch, 1_500);
+        };
+        watch();
+        return;
+      }
       describeGo.disabled = false;
       say(r.message, r.ok);
       if (r.ok && r.avatar) showAvatar(r.avatar);

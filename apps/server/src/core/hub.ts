@@ -16,6 +16,8 @@ import {
   compareVersions,
   envelope,
   hashString,
+  type LookGenerator,
+  type MessageData,
   type MessageOf,
   PERSON_GRACE_MS,
   type PersonView,
@@ -61,6 +63,8 @@ export type Binding = {
   machine?: string;
   /** opt-in "MM-DD" */
   birthday?: string;
+  /** local AI tools this connector can draw its person's look with (their own subscription) */
+  lookGenerators?: LookGenerator[];
 };
 
 /** A connector as the hub tracks and persists it (its description lives on the person). */
@@ -104,6 +108,8 @@ export type HubResult = {
   avatarJob?: AvatarJob;
   /** new binding for this socket (persist it with the socket) */
   binding?: Binding;
+  /** a connector answered a look request (checked and applied by the app) */
+  lookGenerated?: MessageData<"connector.lookGenerated"> & { personId: string };
 };
 
 type Persisted = { v: 1; connectors: ConnectorRec[]; people: PersonRec[] };
@@ -266,6 +272,12 @@ export class Hub {
         return this.onHello(socketId, msg, now);
       case "presence.snapshot":
         return this.onSnapshot(socketId, msg.data.sessions, now);
+      case "connector.lookGenerated": {
+        const b = this.sockets.get(socketId);
+        if (!b) return this.reject("bad_message", CLOSE_BAD_MESSAGE, "send connector.hello first");
+        // the person comes from the socket's own hello, never from the message
+        return { events: [], lookGenerated: { ...msg.data, personId: b.personId } };
+      }
       case "connector.bye": {
         const b = this.sockets.get(socketId);
         this.sockets.delete(socketId);
@@ -453,6 +465,34 @@ export class Hub {
     return this.sockets.get(socketId);
   }
 
+  /**
+   * A live socket of this person's connectors that can draw a look locally, preferring
+   * `prefer` (the Mac that just said hello), else the one heard from most recently.
+   */
+  lookSocketOf(
+    personId: string,
+    now: number,
+    prefer?: string,
+  ): { socketId: string; generator: LookGenerator } | null {
+    let best: { socketId: string; generator: LookGenerator; seen: number } | null = null;
+    for (const c of this.connectors.values()) {
+      const generator = c.lookGenerators?.[0];
+      if (c.personId !== personId || !c.socketId || !generator || this.isStale(c, now)) continue;
+      const seen = c.socketId === prefer ? Number.POSITIVE_INFINITY : c.lastSeen;
+      if (!best || seen > best.seen) best = { socketId: c.socketId, generator, seen };
+    }
+    return best && { socketId: best.socketId, generator: best.generator };
+  }
+
+  /** Local AI tools of this person's live connectors (for the look studio). */
+  lookGeneratorsOf(personId: string, now: number): LookGenerator[] {
+    const out = new Set<LookGenerator>();
+    for (const c of this.connectors.values())
+      if (c.personId === personId && c.socketId && !this.isStale(c, now))
+        for (const g of c.lookGenerators ?? []) out.add(g);
+    return [...out];
+  }
+
   /** Open sockets of a person's connectors that are still heartbeating. */
   liveSocketsOf(personId: string, now: number): string[] {
     const out: string[] = [];
@@ -506,6 +546,7 @@ export class Hub {
       ...(desc ? { selfDescription: desc } : {}),
       ...(machine ? { machine } : {}),
       ...(d.birthday ? { birthday: d.birthday } : {}),
+      ...(d.lookGenerators?.length ? { lookGenerators: [...new Set(d.lookGenerators)] } : {}),
     };
     // a hello on a socket that was bound to another clientId: drop the old binding
     this.sockets.set(socketId, binding);

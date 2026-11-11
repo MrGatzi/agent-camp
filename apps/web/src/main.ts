@@ -547,12 +547,17 @@ async function boot() {
         custom: body.custom,
         ...(body.aiLooks !== undefined ? { aiLooks: body.aiLooks } : {}),
         ...(body.description !== undefined ? { description: body.description } : {}),
+        ...(body.localLooks ? { localLooks: body.localLooks.map(toolName) } : {}),
       };
     } catch {
       return null;
     }
   };
-  /** Look studio: describe your look, the server's AI draws it (waits for the answer). */
+  const toolName = (g: string) => (g === "claude" ? "Claude Code" : g === "codex" ? "Codex" : g);
+  /**
+   * Look studio: describe your look. Your own Mac draws it (Claude Code / Codex on your own
+   * subscription; the look arrives as avatar.updated), else the server's AI (waits for it).
+   */
   async function describeLook(personId: string, description: string) {
     if (demo) return { ok: false, message: "demo: no AI looks here" };
     try {
@@ -569,6 +574,12 @@ async function boot() {
       };
       if (r.status === 401) void loginIfLoggedOut();
       if (!r.ok) return { ok: false, message: body.error ?? `failed (${r.status})` };
+      if (body.result === "pending")
+        return {
+          ok: true,
+          pending: true,
+          message: `your Mac is drawing you with ${toolName(body.generator ?? "its AI")} on your own subscription, about a minute...`,
+        };
       const message =
         body.result === "ai"
           ? "new look, straight from your description!"

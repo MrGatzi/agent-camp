@@ -135,8 +135,13 @@ shows up on the agent card so you can tell the sessions apart.
 
 ### How do I look?
 
-The server picks your look. With AI off it comes from a hash of your name. With AI on it is
-drawn from your description: a few words work, but a detailed one (up to ~8000 characters)
+Your look is drawn by AI from your description, and the AI is **your own**: the connector
+asks Claude Code (`claude -p`) or, without it, Codex (`codex exec`) on your Mac, on your own
+subscription, so the office needs no shared API key. Only your description goes to your AI
+and only the finished look goes to the office. Without either tool, the office's own AI draws
+it if the admin set one up (`GENUI_PROVIDER`), else your look comes from a hash of your name.
+`agent-office status` shows which one your Mac uses; `agent-office configure --look-generator
+claude|codex|off` picks one or turns it off (default `auto`). The description: a few words work, but a detailed one (up to ~8000 characters)
 gets you a detailed character: hair cut and colour, glasses and their frame, each layer of
 clothing with its collar, buttons, pockets, pattern and embroidery, socks, shoes, even an
 expression and a pose. Exact colours (`#1f3d2b`, "forest green") are used as given. All of it
@@ -163,9 +168,10 @@ badge on the tee and a band across the back, so you can still tell Claude from C
 desk.
 
 The studio also has a **Describe your look** box: write how you look (a few words or a whole
-paragraph) and press **Generate look**; the server's AI draws you from it within a minute,
-replacing a look picked in the studio. Pressing it again with the same text is a fresh try
-(one per person every 20 s, inside the daily AI cap). The text becomes your description, just
+paragraph) and press **Generate look**; your Mac draws you from it (as above) within a
+minute or two, replacing a look picked in the studio. Pressing it again with the same text is
+a fresh try (one per person every 20 s). Like editing your look, this needs **It's me** first:
+only your own browser can ask, only your own Mac's answer is taken. The text becomes your description, just
 like one set with `agent-office configure --description-file` (a connector that keeps sending
 its old, unchanged description does not undo it). If AI looks are off on the server, the box
 says so and the text is kept for when they are turned on (`GENUI_PROVIDER`, see Deploy).
@@ -181,8 +187,10 @@ the context window is (a percentage), when the
 session started, the connector version, the **machine name** you chose (`machine_name`,
 defaults to the short hostname, e.g. `martins-mbp`; set it to anything you like), and your
 **look description** (up to 8000 characters, if you set one). The server keeps the
-description to draw your avatar (with AI on it goes to the configured AI provider) and never
-shows it to viewers; they only see the finished avatar.
+description to draw your avatar and never shows it to viewers; they only see the finished
+avatar. To draw it, the server sends the description back to your own Mac, whose Claude Code /
+Codex (your own account) turns it into the look, which the connector sends to the office.
+Only when no Mac of yours can do that does it go to the office's AI provider, if one is set.
 
 Optional: `agent-office configure --birthday MM-DD` and the office brings you a cake that day
 (only "it's your birthday today" is ever shown, never the date).

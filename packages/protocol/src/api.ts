@@ -16,6 +16,7 @@ import {
   AgentKind,
   InteractionKind,
   InteractionText,
+  LookGenerator,
   PersonId,
   ViewerName,
 } from "./messages.ts";
@@ -50,8 +51,10 @@ export const AvatarEditResponse = z.object({
   /** the look now shown (for a reset: the current one until the new automatic look lands) */
   avatar: AvatarSpec,
   custom: z.boolean(),
-  /** whether the server can turn a description into a look (GENUI_PROVIDER is set up) */
+  /** whether a description can become a look (a local AI on their Mac or GENUI_PROVIDER) */
   aiLooks: z.boolean().optional(),
+  /** local AI tools on this person's live Macs that draw looks on their own subscription */
+  localLooks: z.array(LookGenerator).optional(),
   /** the person's look description; only sent to that person's own browser */
   description: z.string().optional(),
 });
@@ -73,9 +76,11 @@ export const LookDescribeResponse = z.object({
   /**
    * ai = a new look from the description; off = this server has no AI looks (the description
    * is saved and used once they are turned on); failed = error, refusal, unusable answer or
-   * daily cap (the previous look stays, the next join retries)
+   * daily cap (the previous look stays, the next join retries); pending = the person's own
+   * Mac is drawing it (`generator`), the new look arrives as avatar.updated
    */
-  result: z.enum(["ai", "off", "failed"]),
+  result: z.enum(["ai", "off", "failed", "pending"]),
+  generator: LookGenerator.optional(),
 });
 export type LookDescribeResponse = z.infer<typeof LookDescribeResponse>;
 

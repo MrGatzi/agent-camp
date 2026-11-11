@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname } from "node:path";
+import { LOOK_GENERATOR_SETTINGS, type LookGeneratorSetting } from "./lookgen.ts";
 
 export type Config = {
   server?: string;
@@ -20,6 +21,8 @@ export type Config = {
   notifications: boolean;
   /** opt-in "MM-DD": the office brings a cake that day */
   birthday?: string;
+  /** draw the look with a local AI tool on your own subscription: auto | claude | codex | off */
+  look_generator: LookGeneratorSetting;
   client_id: string;
 };
 
@@ -32,6 +35,7 @@ export const CONFIG_KEYS = [
   "share_project_names",
   "notifications",
   "birthday",
+  "look_generator",
   "client_id",
 ] as const;
 
@@ -129,6 +133,14 @@ export function machineName(config: Pick<Config, "machine_name">, host?: string)
   return v || defaultMachineName(host);
 }
 
+/** A valid `look_generator` value, or undefined. */
+export function lookGeneratorSetting(v: string | undefined): LookGeneratorSetting | undefined {
+  const t = v?.trim().toLowerCase();
+  return (LOOK_GENERATOR_SETTINGS as readonly string[]).includes(t ?? "")
+    ? (t as LookGeneratorSetting)
+    : undefined;
+}
+
 /** "MM-DD" or undefined. */
 export function validBirthday(v: string | undefined): string | undefined {
   const t = v?.trim();
@@ -154,6 +166,7 @@ export function toConfig(values: Record<string, TomlValue>): Config {
     share_project_names: !(share === false || share === "false"),
     notifications: !(notify === false || notify === "false"),
     birthday: validBirthday(s("birthday")),
+    look_generator: lookGeneratorSetting(s("look_generator")) ?? "auto",
     client_id: clientId && /^[A-Za-z0-9_-]{1,64}$/.test(clientId) ? clientId : newClientId(),
   };
 }
@@ -182,6 +195,7 @@ export function saveConfig(path: string, config: Config): void {
       share_project_names: config.share_project_names,
       notifications: config.notifications,
       birthday: config.birthday,
+      look_generator: config.look_generator,
       client_id: config.client_id,
     }),
     { mode: 0o600 },

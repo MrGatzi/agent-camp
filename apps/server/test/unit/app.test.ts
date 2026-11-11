@@ -662,6 +662,182 @@ describe("OfficeApp look editor", () => {
     });
   });
 
+  describe("looks drawn on the person's own Mac", () => {
+    const helloLocal = (name: string, desc?: string, gens: string[] = ["claude"]) =>
+      JSON.stringify(
+        envelope("connector.hello", {
+          name,
+          password: "pw",
+          clientId: `c-${name}-local`,
+          connectorVersion: "1.0.0",
+          ...(desc ? { selfDescription: desc } : {}),
+          lookGenerators: gens as ("claude" | "codex")[],
+        }),
+      );
+    const answer = (requestId: string, data: Record<string, unknown>) =>
+      JSON.stringify(
+        envelope("connector.lookGenerated", { requestId, generator: "claude", ...data }),
+      );
+    const lookRequests = (toConnector: { socketId: string; data: string }[]) =>
+      toConnector
+        .map((m) => ({ socketId: m.socketId, msg: JSON.parse(m.data) }))
+        .filter((m) => m.msg.type === "connector.lookRequested");
+    const describeLook = (app: OfficeApp, personId: string, description: string) =>
+      app.handleHttp(
+        req(`/api/people/${personId}/look`, {
+          method: "POST",
+          headers: { "content-type": "application/json", cookie: me },
+          body: JSON.stringify({ description }),
+        }),
+      );
+
+    test("a described join asks the person's Mac, not the server, and applies its look", async () => {
+      const bodies: unknown[] = [];
+      const t = setup(
+        {
+          CONNECTOR_PASSWORD: "pw",
+          GENUI_PROVIDER: "anthropic",
+          ANTHROPIC_API_KEY: "k",
+          LATEST_CONNECTOR_VERSION: "1.0.0",
+        },
+        (async (_u: unknown, init: RequestInit) => {
+          bodies.push(init.body);
+          return Response.json({});
+        }) as unknown as typeof globalThis.fetch,
+      );
+      const { app, sent, toConnector, pending } = t;
+      const desc = "Tracht: charcoal Janker, tan lederhosen";
+      app.connectorMessage("s1", helloLocal("Tom", desc));
+      await Promise.all(pending);
+      expect(bodies).toHaveLength(0); // no shared API key used
+      const [ask] = lookRequests(toConnector);
+      expect(ask?.socketId).toBe("s1");
+      expect(ask?.msg.data.prompt).toContain(desc);
+      expect(ask?.msg.data.schema.properties.look).toBeDefined();
+      expect(ask?.msg.data.system).toContain("pixel-art character");
+
+      app.connectorMessage("s1", answer(ask!.msg.data.requestId, { avatar: LOOK_FIXTURES.tracht }));
+      await Promise.all(pending);
+      expect(app.hub.state().people[0]!.avatar.look).toEqual(LOOK_FIXTURES.tracht.look);
+      const ev = parseViewerMessage(sent.at(-1)!);
+      expect(ev.ok && ev.msg.type === "avatar.updated").toBe(true);
+      expect(app.store.getAvatar("tom")?.key).not.toEndWith(":fallback");
+      // answered once: the same answer again changes nothing
+      const before = sent.length;
+      app.connectorMessage("s1", answer(ask!.msg.data.requestId, { avatar: LOOK_FIXTURES.tracht }));
+      await Promise.all(pending);
+      expect(sent.length).toBe(before);
+    });
+
+    test("only that person's connector can answer, and only the newest request", async () => {
+      const t = setup();
+      const { app, toConnector, pending } = t;
+      app.connectorMessage("s1", helloLocal("Tom", "blue mohawk"));
+      app.connectorMessage("s2", helloLocal("Anna", "curly red hair"));
+      await Promise.all(pending);
+      const tomAsk = lookRequests(toConnector).find((m) => m.socketId === "s1")!;
+      const seeded = app.hub.state().people.find((p) => p.personId === "tom")!.avatar;
+      // Anna's Mac answers Tom's request: ignored (the person comes from the socket's hello)
+      app.connectorMessage(
+        "s2",
+        answer(tomAsk.msg.data.requestId, { avatar: LOOK_FIXTURES.tracht }),
+      );
+      await Promise.all(pending);
+      expect(app.hub.state().people.find((p) => p.personId === "tom")!.avatar).toEqual(seeded);
+      // a made-up request id: ignored
+      app.connectorMessage("s1", answer("lr_forged", { avatar: LOOK_FIXTURES.tracht }));
+      await Promise.all(pending);
+      expect(app.hub.state().people.find((p) => p.personId === "tom")!.avatar).toEqual(seeded);
+      // an answer before hello is a protocol error
+      const r = app.connectorMessage("s9", answer("x", {}));
+      expect(r.close?.code).toBeDefined();
+    });
+
+    test("studio: Generate goes to the Mac, the answer replaces the custom look", async () => {
+      const t = setup();
+      const { app, toConnector, pending } = t;
+      app.connectorMessage("s1", helloLocal("Tom"));
+      await Promise.all(pending);
+      expect(lookRequests(toConnector)).toHaveLength(0); // no description, nothing to draw
+      me = await claim(t, "tom");
+      expect((await put(app, "tom", { avatar: tomLook }))!.status).toBe(200);
+      const info = (await (await app.handleHttp(
+        req("/api/people/tom/avatar", { headers: { cookie: me } }),
+      ))!.json()) as { aiLooks: boolean; localLooks: string[] };
+      expect(info).toMatchObject({ aiLooks: true, localLooks: ["claude"] });
+
+      const r = (await describeLook(app, "tom", "Tracht with lederhosen"))!;
+      expect(await r.json()).toMatchObject({ ok: true, result: "pending", generator: "claude" });
+      const ask = lookRequests(toConnector).at(-1)!;
+      expect(ask.msg.data.prompt).toContain("Tracht with lederhosen");
+      expect(app.hub.isCustomLook("tom")).toBe(true); // nothing changes until the Mac answers
+      app.connectorMessage("s1", answer(ask.msg.data.requestId, { avatar: LOOK_FIXTURES.tracht }));
+      await Promise.all(pending);
+      expect(app.hub.isCustomLook("tom")).toBe(false);
+      expect(app.hub.state().people[0]!.avatar.look).toEqual(LOOK_FIXTURES.tracht.look);
+    });
+
+    test("the Mac could not draw it: the server provider tries, else the look stays", async () => {
+      const bodies: unknown[] = [];
+      const t = setup(
+        {
+          CONNECTOR_PASSWORD: "pw",
+          GENUI_PROVIDER: "anthropic",
+          ANTHROPIC_API_KEY: "k",
+          LATEST_CONNECTOR_VERSION: "1.0.0",
+        },
+        (async (_u: unknown, init: RequestInit) => {
+          bodies.push(init.body);
+          return Response.json({
+            stop_reason: "end_turn",
+            content: [{ type: "text", text: JSON.stringify(LOOK_FIXTURES.tracht) }],
+          });
+        }) as unknown as typeof globalThis.fetch,
+      );
+      const { app, toConnector, pending } = t;
+      app.connectorMessage("s1", helloLocal("Tom", "Tracht"));
+      await Promise.all(pending);
+      const ask = lookRequests(toConnector).at(-1)!;
+      app.connectorMessage(
+        "s1",
+        answer(ask.msg.data.requestId, { error: "exit 1: not logged in" }),
+      );
+      await Promise.all(pending);
+      expect(bodies).toHaveLength(1);
+      expect(app.hub.state().people[0]!.avatar.look).toEqual(LOOK_FIXTURES.tracht.look);
+
+      // AI looks off on the server and an unusable answer: kept, retried on a later join
+      const off = setup();
+      off.app.connectorMessage("s1", helloLocal("Anna", "curly red hair"));
+      await Promise.all(off.pending);
+      const seeded = off.app.hub.state().people[0]!.avatar;
+      const offAsk = lookRequests(off.toConnector).at(-1)!;
+      off.app.connectorMessage("s1", answer(offAsk.msg.data.requestId, { avatar: { nope: 1 } }));
+      await Promise.all(off.pending);
+      expect(off.app.hub.state().people[0]!.avatar).toEqual(seeded);
+      expect(off.app.store.getAvatar("anna")?.key).toEndWith(":fallback");
+    });
+
+    test("a request the Mac never answered is asked again on a later hello", async () => {
+      const t = setup();
+      const { app, toConnector, pending, advance } = t;
+      app.connectorMessage("s1", helloLocal("Tom", "blue mohawk"));
+      await Promise.all(pending);
+      expect(lookRequests(toConnector)).toHaveLength(1);
+      app.connectorClosed("s1");
+      advance(60_000);
+      app.connectorMessage("s2", helloLocal("Tom", "blue mohawk"));
+      expect(lookRequests(toConnector)).toHaveLength(1); // still waiting, not yet stale
+      app.connectorClosed("s2");
+      advance(5 * 60_000);
+      app.connectorMessage("s3", helloLocal("Tom", "blue mohawk"));
+      const asks = lookRequests(toConnector);
+      expect(asks).toHaveLength(2);
+      expect(asks[1]!.socketId).toBe("s3");
+      expect(asks[1]!.msg.data.requestId).not.toBe(asks[0]!.msg.data.requestId);
+    });
+  });
+
   test("claim codes: sent only to that person's Macs, single use, limited tries", async () => {
     const t = setup();
     const { app, toConnector, advance } = t;

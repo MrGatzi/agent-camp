@@ -467,6 +467,29 @@ export class AvatarService {
   }
 
   /**
+   * Check an untrusted AI answer (server provider or a connector's local AI): repaired, and
+   * usable only if at least MIN_LOOK_SCORE of the look is the model's own. Null = unusable.
+   */
+  accept(
+    candidate: unknown,
+    job: AvatarJob | (AvatarRequest & { key?: string; previous?: AvatarSpec }),
+    by: string,
+  ): AvatarResult | null {
+    const key = job.key ?? this.cacheKey(job.name, job.selfDescription);
+    const { avatar, repaired } = repairAvatar(candidate, job.personId, job.previous);
+    const candidateLook = isRecord(candidate) ? candidate.look : undefined;
+    const score = avatar.look ? repairLookScored(candidateLook, lookFromCatalog(avatar)).score : 0;
+    if (score < MIN_LOOK_SCORE) {
+      this.log(
+        `genui ${by} unusable avatar for ${job.personId} (look score ${score.toFixed(2)}), kept current look`,
+      );
+      return null;
+    }
+    if (repaired) this.log(`genui ${by} repaired avatar for ${job.personId}`);
+    return { avatar, key, source: "ai" };
+  }
+
+  /**
    * Resolve a look for a Hub avatar job. No description or no provider -> no call, previous
    * look kept. On failure the returned key is marked so the next join retries (still bounded
    * by the cap).
@@ -491,19 +514,7 @@ export class AvatarService {
       this.log(
         `genui ${this.providerId} ${job.personId} tokens in=${r.inputTokens ?? "?"} out=${r.outputTokens ?? "?"} (call ${used + 1}/${this.maxCallsPerDay} today)${r.note ? ` ${r.note}` : ""}`,
       );
-      const { avatar, repaired } = repairAvatar(r.candidate, job.personId, job.previous);
-      const candidateLook = isRecord(r.candidate) ? r.candidate.look : undefined;
-      const score = avatar.look
-        ? repairLookScored(candidateLook, lookFromCatalog(avatar)).score
-        : 0;
-      if (score < MIN_LOOK_SCORE) {
-        this.log(
-          `genui ${this.providerId} unusable avatar for ${job.personId} (look score ${score.toFixed(2)}), kept current look`,
-        );
-        return fallback;
-      }
-      if (repaired) this.log(`genui ${this.providerId} repaired avatar for ${job.personId}`);
-      return { avatar, key, source: "ai" };
+      return this.accept(r.candidate, { ...job, key }, this.providerId) ?? fallback;
     } catch (err) {
       this.log(`genui ${this.providerId} error for ${job.personId}: ${(err as Error).message}`);
       return fallback;
