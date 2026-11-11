@@ -1,9 +1,17 @@
 /**
  * OfficeApp: everything the Durable Object and the Bun dev server share. Wraps the Hub,
- * the store, GenUI and the /api/* routes. Uses only web-standard Request/Response;
- * sockets are abstracted behind `Transport` and identified by string ids.
+ * the store, GenUI and the /api/* routes (listed in packages/protocol/src/api.ts). Uses only
+ * web-standard Request/Response; sockets are abstracted behind `Transport` and identified by
+ * string ids.
  */
-import { HistoryRow, type ServerToConnector, type ViewerEvent } from "@agent-office/protocol";
+import {
+  HistoryRow,
+  parseGiphyId,
+  type ServerToConnector,
+  SetGifRequest,
+  type SetGifResponse,
+  type ViewerEvent,
+} from "@agent-office/protocol";
 import { z } from "zod";
 import { type AvatarService, createAvatarService, type FetchLike, type GenuiEnv } from "./genui.ts";
 import { type Binding, Hub, type HubResult } from "./hub.ts";
@@ -238,6 +246,9 @@ export class OfficeApp {
       );
     }
 
+    const personGif = /^\/api\/people\/([^/]{1,64})\/gif$/.exec(path);
+    if (personGif && method === "PUT") return this.putGif(req, personGif[1]!);
+
     if (path === "/api/history.csv" && method === "GET") {
       return new Response(historyToCsv(this.store.history()), {
         headers: {
@@ -288,6 +299,48 @@ export class OfficeApp {
 
     if (path.startsWith("/api/")) return json({ error: "not found" }, { status: 404 });
     return null;
+  }
+
+  /**
+   * PUT /api/people/:personId/gif (Bearer CONNECTOR_PASSWORD): set or remove a person's head
+   * GIF from the web UI. Auth comes first, so callers without the password learn nothing about
+   * who is in the office. A connector reconnect does not undo it (see `Hub.helloGifs`).
+   */
+  private async putGif(req: Request, rawId: string): Promise<Response> {
+    if (!bearerOk(req, this.env)) return json({ error: "unauthorized" }, { status: 401 });
+    let personId: string;
+    try {
+      personId = decodeURIComponent(rawId);
+    } catch {
+      return json({ error: "bad person id" }, { status: 400 });
+    }
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return json({ error: "invalid JSON" }, { status: 400 });
+    }
+    const parsed = SetGifRequest.safeParse(body);
+    if (!parsed.success)
+      return json({ error: z.prettifyError(parsed.error).slice(0, 1000) }, { status: 400 });
+    const link = parsed.data.link?.trim() ?? "";
+    let gif: string | undefined;
+    if (link) {
+      const id = parseGiphyId(link);
+      if (!id)
+        return json(
+          {
+            error: "not a Giphy GIF link (paste a giphy.com/gifs/... or media.giphy.com link)",
+          },
+          { status: 400 },
+        );
+      gif = id;
+    }
+    const events = this.hub.setGif(personId, gif, this.now());
+    if (!events) return json({ error: "not found" }, { status: 404 });
+    this.publish(events);
+    this.transport.scheduleAlarm(this.hub.nextDeadline());
+    return json({ personId, gif: gif ?? null } satisfies SetGifResponse);
   }
 
   private async uploadSnapshot(req: Request): Promise<Response> {
