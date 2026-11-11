@@ -405,13 +405,17 @@ export class Hub {
     const stored = this.storedAvatar(personId);
     p.selfDescription = description;
     // keep the text with the automatic look right away, so it survives a restart even if
-    // the AI call fails (the `:fallback` key then retries it on the next join)
-    this.store.putAvatar(
-      personId,
-      stored?.avatar ?? avatarFromSeed(personId),
-      stored?.key ?? "",
-      description,
-    );
+    // the AI call fails (the `:fallback` key then retries it on the next join). Skipped when
+    // the row already holds this text (no row reads back as ""), so repeated Generates with
+    // the AI off or the cap reached write nothing.
+    const kept = stored ? stored.selfDescription : "";
+    if (kept !== description)
+      this.store.putAvatar(
+        personId,
+        stored?.avatar ?? avatarFromSeed(personId),
+        stored?.key ?? "",
+        description,
+      );
     const keyFn = this.cfg.avatarKey ?? defaultAvatarKey;
     const key = keyFn(personId, description);
     p.lookKey = key;
