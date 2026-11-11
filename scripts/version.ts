@@ -11,8 +11,13 @@ import { resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dirname, "..");
 
-const git = (...args: string[]) =>
-  execFileSync("git", args, { cwd: ROOT, stdio: ["ignore", "pipe", "ignore"] })
+const git = (args: string[], timeout = 10_000) =>
+  execFileSync("git", args, {
+    cwd: ROOT,
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+  })
     .toString()
     .trim();
 
@@ -28,17 +33,17 @@ export function versionBase(): string {
 /** null when git or the full history is missing: better no version than a wrong one. */
 export function releaseVersion(): string | null {
   try {
-    const shallow = () => git("rev-parse", "--is-shallow-repository") === "true";
+    const shallow = () => git(["rev-parse", "--is-shallow-repository"]) === "true";
     if (shallow()) {
       // CI checkouts (Cloudflare Workers Builds, actions/checkout) are often shallow
       try {
-        git("fetch", "--unshallow", "--quiet");
+        git(["fetch", "--unshallow", "--quiet"], 60_000);
       } catch {
         // no remote or offline: checked below
       }
       if (shallow()) return null;
     }
-    return `${versionBase()}.${git("rev-list", "--count", "HEAD")}`;
+    return `${versionBase()}.${git(["rev-list", "--count", "HEAD"])}`;
   } catch {
     return null;
   }

@@ -35,6 +35,8 @@ env:
 jobs:
   release:
     name: Build connector + GitHub Release
+    # a run on another branch would publish that branch's count as the latest release
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -115,6 +117,8 @@ jobs:
 
       - uses: actions/checkout@v4
         if: steps.secrets.outputs.ok == 'true'
+        with:
+          fetch-depth: 0 # the web build counts commits for its version
 
       - uses: oven-sh/setup-bun@v2
         if: steps.secrets.outputs.ok == 'true'
