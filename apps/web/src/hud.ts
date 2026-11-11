@@ -14,6 +14,8 @@ import {
 import { iconUrl } from "./art/icons.ts";
 import type { ConnectionStatus } from "./net/viewer.ts";
 import type { OfficeModel, OfficeStats, PersonState, SessionState } from "./state/officeModel.ts";
+import { PasswordStore } from "./ui/customize.ts";
+import { CustomizeSection, type PutGif } from "./ui/customizeSection.ts";
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: string) => {
   const e = document.createElement(tag);
@@ -115,6 +117,11 @@ export class Hud {
     joins?: string[];
   }[] = [];
   private panel: HTMLElement;
+  /** the re-rendered part of the panel (innerHTML); the Customize section sits after it */
+  private panelBody: HTMLElement;
+  /** person card "Customize" section, kept across re-renders while the same person is open */
+  private customize: CustomizeSection | null = null;
+  private passwords = new PasswordStore(() => window.localStorage);
   private reconnect: HTMLElement;
   readonly minimapHost: HTMLElement;
   private panelPerson: string | null = null;
@@ -125,6 +132,8 @@ export class Hud {
   portrait: (personId: string) => HTMLCanvasElement | null = () => null;
   /** "today" numbers for a person (GET /api/people/:id); null = not available (demo) */
   fetchDay: (personId: string) => Promise<PersonDayResponse | null> = async () => null;
+  /** set / remove a person's head GIF (PUT /api/people/:id/gif); null = no server (demo) */
+  putGif: PutGif | null = null;
   /** the panel opened, closed or switched between person and agent card */
   onPanelChange: () => void = () => {};
   /** a session row in the person panel was clicked */
@@ -147,6 +156,8 @@ export class Hud {
     top.append(this.name, this.chips, this.clock);
     this.banner = el("div", "hud-banner pixel-box");
     this.panel = el("div", "hud-panel pixel-box");
+    this.panelBody = el("div", "panel-body");
+    this.panel.append(this.panelBody);
     this.reconnect = el(
       "div",
       "hud-reconnect pixel-box",
@@ -156,6 +167,7 @@ export class Hud {
     host.append(top, this.banner, this.panel, this.reconnect, this.minimapHost);
     this.panel.addEventListener("pointerdown", (e) => e.stopPropagation());
     this.panel.addEventListener("wheel", (e) => e.stopPropagation());
+    // (Escape inside the Customize inputs only blurs them, see CustomizeSection)
     window.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && this.panelOpen) this.closePanel();
     });
@@ -340,7 +352,7 @@ export class Hud {
     const badges = badgesFor(p, sessions, now)
       .map((b) => `<span class="badge">${esc(b)}</span>`)
       .join("");
-    this.panel.innerHTML = `
+    this.panelBody.innerHTML = `
       <button class="pixel-btn close" aria-label="Close">x</button>
       <header><div class="portrait-slot"></div><div>
         <h2>${esc(p.name)}</h2>
@@ -362,9 +374,24 @@ export class Hud {
         if (e.key === "Enter" || e.key === " ") open();
       });
     }
+    this.mountCustomize(p);
     this.panel.classList.remove("card");
     this.panel.classList.add("show");
     this.onPanelChange();
+  }
+
+  /**
+   * Keep the person's Customize section mounted below the re-rendered card: the same element
+   * (so a half-typed link and focus survive refreshes), a fresh one for a different person.
+   * Not in kiosk mode, not without a server (demo).
+   */
+  private mountCustomize(p: PersonState) {
+    if (this.opts.kiosk || !this.putGif) return;
+    if (this.customize?.personId !== p.personId) {
+      this.customize?.root.remove();
+      this.customize = new CustomizeSection(p.personId, p.gif, this.putGif, this.passwords);
+    } else this.customize.update(p.gif);
+    if (this.customize.root.parentElement !== this.panel) this.panel.append(this.customize.root);
   }
 
   /** The agent card: one session in detail. */
@@ -412,7 +439,7 @@ export class Hud {
       `<div class="tile"><b>${n}</b><span>${label}</span></div>`;
     const fact = (k: string, v: string) =>
       `<div class="fact"><span class="k">${k}</span><span class="v">${v}</span></div>`;
-    this.panel.innerHTML = `
+    this.panelBody.innerHTML = `
       <button class="pixel-btn close" aria-label="Close">&times;</button>
       <div class="card-head">
         <div class="agent-tile" style="--j-light:${pal.light};--j-main:${pal.main};--j-shade:${pal.shade}">
@@ -443,6 +470,7 @@ export class Hud {
         ${tile(today.peak, "at once")}
         ${tile(today.helpers, today.helpers === 1 ? "helper" : "helpers")}
       </div>`;
+    this.customize?.root.remove();
     const portrait = this.portrait(p.personId);
     if (portrait) {
       portrait.className = "portrait-mini";
