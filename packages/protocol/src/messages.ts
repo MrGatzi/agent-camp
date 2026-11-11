@@ -11,6 +11,7 @@
 import { z } from "zod";
 import { AvatarSpec } from "./catalog.ts";
 import { PROTOCOL_VERSION } from "./constants.ts";
+import { GiphyId } from "./giphy.ts";
 
 // ---- building blocks ----------------------------------------------------------------------
 export const AGENTS = ["claude", "codex", "pi", "unknown"] as const;
@@ -76,6 +77,8 @@ export const PersonView = z.object({
   avatar: AvatarSpec,
   sessions: z.array(SessionView),
   joinedAt: EpochMs,
+  /** Giphy media id of the GIF shown over the person's head; omitted when none */
+  gif: GiphyId.optional(),
 });
 export type PersonView = z.infer<typeof PersonView>;
 
@@ -104,6 +107,11 @@ export const ConnectorHello = msg(
     platform: z.string().max(40).optional(),
     /** user-chosen machine label shown on the agent card; older connectors omit it */
     machine: MachineName.optional(),
+    /**
+     * Giphy media id for the GIF over the person's head; "" removes it. Omitted (old
+     * connectors, or never set on this machine) leaves the person's GIF as it is.
+     */
+    gif: z.union([GiphyId, z.literal("")]).optional(),
   }),
 );
 export const PresenceSnapshot = msg(
@@ -183,6 +191,12 @@ export const AvatarUpdated = msg(
   z.object({ personId: PersonId, avatar: AvatarSpec }),
 );
 
+/** The person's head GIF changed; `gif` omitted = removed. */
+export const GifUpdated = msg(
+  "gif.updated",
+  z.object({ personId: PersonId, gif: GiphyId.optional() }),
+);
+
 export const ServerToViewer = z.discriminatedUnion("type", [
   OfficeSnapshot,
   PersonJoined,
@@ -193,6 +207,7 @@ export const ServerToViewer = z.discriminatedUnion("type", [
   SubagentSpawned,
   SubagentFinished,
   AvatarUpdated,
+  GifUpdated,
 ]);
 export type ServerToViewer = z.infer<typeof ServerToViewer>;
 

@@ -117,13 +117,31 @@ clothes and props, so everyone stays in the same pixel style. Your jacket colour
 which agent a session runs (Claude, Codex, Pi). Every extra session is a sibling of you
 with tiny variations, and your pod has one desk per running session (at least 2, up to 6).
 
+### A GIF over your head
+
+Pick any GIF on [giphy.com](https://giphy.com), copy its link and run:
+
+```sh
+agent-office gif https://giphy.com/gifs/cat-typing-JIX9t2j0ZTN9S
+agent-office gif          # show the current one
+agent-office gif off      # remove it
+```
+
+It floats over your main character (your oldest session) for everyone watching. Page links,
+media links (`media.giphy.com/...`, `i.giphy.com/...`) and bare ids all work; the command
+restarts the background connector so it shows up right away. Like the description, it
+belongs to the person: the last machine that set one (or `off`) wins, and a machine that
+never set one leaves it alone. Only the Giphy id is sent; viewers load the GIF straight from
+Giphy's CDN.
+
 ### Privacy
 
 Sent: agent kind (Claude/Codex/Pi), a salted hash of the session id, the project **folder
 name** (turn off with `share_project_names = false` in `~/.config/agent-office/config.toml`),
 an activity verb (typing/reading/thinking/running/waiting/idle), the subagent count, when the
 session started, the connector version, and the **machine name** you chose (`machine_name`,
-defaults to the short hostname, e.g. `martins-mbp`; set it to anything you like).
+defaults to the short hostname, e.g. `martins-mbp`; set it to anything you like), and the
+Giphy id of your head GIF if you set one.
 
 Never sent: prompts, responses, code, file contents or paths, commands, tool output, or
 anything else from a transcript. A unit test feeds a transcript containing a fake secret and

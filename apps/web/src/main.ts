@@ -32,6 +32,7 @@ import { Minimap } from "./ui/minimap.ts";
 import { OfficeCat } from "./world/cat.ts";
 import { CharacterManager } from "./world/characters.ts";
 import { Effects } from "./world/effects.ts";
+import { HeadGifs } from "./world/gifs.ts";
 import { OfficeLife } from "./world/life.ts";
 import { Living } from "./world/living.ts";
 import {
@@ -111,6 +112,7 @@ async function boot() {
   app.stage.addChild(scene.root);
   const effects = new Effects(scene.fx);
   const chars = new CharacterManager(scene, model, effects);
+  const gifs = new HeadGifs(scene.fx, model, chars);
   const party = demo === "party" || flag("lively");
   // the party demo runs the waiting thresholds 10x faster and starts at lunch time
   if (party) {
@@ -203,6 +205,7 @@ async function boot() {
       snapshotSeen = true;
       chars.syncSlots();
     }
+    gifs.sync();
     hud.setStats(model.stats());
     if (hud.panelOpen && changes.length > 0) hud.refresh();
     living.poke();
@@ -350,6 +353,7 @@ async function boot() {
     time += dt;
     scene.update(time, dt);
     chars.update(dt, time);
+    gifs.update(dt);
     cat.update(dt, time);
     life.update(dt, time);
     effects.update(dt);

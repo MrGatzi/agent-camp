@@ -512,3 +512,62 @@ describe("hub: same name on two machines = one persona", () => {
     expect(hub2.onConnectorMessage("c", hello("martin", "devbox"), 2).avatarJob).toBeUndefined();
   });
 });
+
+describe("hub: head gif", () => {
+  const GIF = "JIX9t2j0ZTN9S";
+  const OTHER = "l0HlBO7eyXzSZkJri";
+
+  test("hello carries the gif into the person view", () => {
+    const { hub } = setup();
+    const r = hub.onConnectorMessage("s1", hello("Anna", "c1", { gif: GIF }), 0);
+    const joined = r.events.find((e) => e.type === "person.joined");
+    expect(joined?.type === "person.joined" && joined.data.person.gif).toBe(GIF);
+    expect(hub.state().people[0]!.gif).toBe(GIF);
+    expect(hub.snapshot(1).data.people[0]!.gif).toBe(GIF);
+  });
+
+  test("change -> gif.updated; omitted leaves it; empty removes it", () => {
+    const { hub, lines } = setup();
+    hub.onConnectorMessage("s1", hello("Anna", "c1", { gif: GIF }), 0);
+    // a second machine that never set a gif does not touch it
+    expect(types(hub.onConnectorMessage("s2", hello("Anna", "c2"), 1).events)).toEqual([]);
+    expect(hub.state().people[0]!.gif).toBe(GIF);
+
+    const changed = hub.onConnectorMessage("s1", hello("Anna", "c1", { gif: OTHER }), 2).events;
+    expect(types(changed)).toEqual(["gif.updated"]);
+    expect(changed[0]!.type === "gif.updated" && changed[0]!.data.gif).toBe(OTHER);
+    expect(parseViewerMessage(JSON.parse(JSON.stringify(changed[0]))).ok).toBe(true);
+    expect(lines).toContain(`gif.updated anna ${OTHER}`);
+
+    const removed = hub.onConnectorMessage("s1", hello("Anna", "c1", { gif: "" }), 3).events;
+    expect(types(removed)).toEqual(["gif.updated"]);
+    expect(removed[0]!.type === "gif.updated" && "gif" in removed[0]!.data).toBe(false);
+    expect(hub.state().people[0]!.gif).toBeUndefined();
+  });
+
+  test("gif changes are not written to history", () => {
+    const { hub, store } = setup();
+    hub.onConnectorMessage("s1", hello("Anna", "c1"), 0);
+    const before = store.history().length;
+    hub.onConnectorMessage("s1", hello("Anna", "c1", { gif: GIF }), 1);
+    expect(store.history().length).toBe(before);
+  });
+
+  test("survives a restart", () => {
+    const { hub, store } = setup();
+    hub.onConnectorMessage("s1", hello("Anna", "c1", { gif: GIF }), 0);
+    const hub2 = new Hub(CFG, store);
+    hub2.restore(1_000, [{ socketId: "s1", binding: hub.bindingOf("s1")! }]);
+    expect(hub2.state().people[0]!.gif).toBe(GIF);
+  });
+
+  test("a hello with a URL instead of an id is rejected", () => {
+    const { hub } = setup();
+    const r = hub.onConnectorMessage(
+      "s1",
+      hello("Anna", "c1", { gif: `https://i.giphy.com/${GIF}.gif` }),
+      0,
+    );
+    expect(r.close?.code).toBe(CLOSE_BAD_MESSAGE);
+  });
+});

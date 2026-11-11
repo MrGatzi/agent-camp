@@ -1,10 +1,16 @@
 /**
- * `agent-office <command>`: run | configure | status | logs | install-service | uninstall |
- * version | help.
+ * `agent-office <command>`: run | configure | gif | status | logs | install-service |
+ * uninstall | version | help.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { envelope, type MessageData, PresenceSnapshot } from "@agent-office/protocol";
+import {
+  envelope,
+  giphyPageUrl,
+  type MessageData,
+  PresenceSnapshot,
+  parseGiphyId,
+} from "@agent-office/protocol";
 import {
   CONFIG_KEYS,
   type Config,
@@ -78,7 +84,12 @@ Commands:
   configure         write ~/.config/agent-office/config.toml
       --server URL --password PW --name NAME --description TEXT
       --machine-name LABEL  (default: short hostname; "" resets to it)
+      --gif GIPHY-LINK|off  GIF over your head (see \`gif\`)
       --share-project-names true|false     --get KEY (print one value)
+  gif [GIPHY-LINK|off]
+                    show any GIF from giphy.com over your head (paste the page or media
+                    link, or the id); "off" removes it; no argument prints the current one.
+                    Restarts the background connector so the office updates right away.
   status            connection state and live sessions
   logs              follow the daemon log
   install-service   register the launchd agent (macOS) so it runs at login
@@ -88,7 +99,7 @@ Commands:
 
 Only status metadata is sent: agent kind, hashed session id, project folder name
 (disable with share_project_names = false), activity, subagent count, start time,
-and the machine label you chose (machine_name).`;
+the machine label you chose (machine_name) and the Giphy id of your head GIF (gif).`;
 
 export async function main(argv: string[]): Promise<number> {
   const args = parseArgs(argv);
@@ -101,6 +112,8 @@ export async function main(argv: string[]): Promise<number> {
       return cmdRun(args);
     case "configure":
       return cmdConfigure(args);
+    case "gif":
+      return cmdGif(args);
     case "status":
       return cmdStatus();
     case "logs":
@@ -135,6 +148,12 @@ async function cmdRun(args: Args): Promise<number> {
   const machine = machineName({
     machine_name: flagStr(flags, "machine-name") ?? config.machine_name,
   });
+  const gifFlag = flagStr(flags, "gif");
+  const gif = gifFlag !== undefined ? gifSetting(gifFlag) : config.gif;
+  if (gif === null) {
+    console.error(`--gif: not a Giphy link or id: ${gifFlag}`);
+    return 2;
+  }
   const home = flagStr(flags, "home");
   const assumeProcesses =
     flags["assume-processes"] === true || env.AGENT_OFFICE_ASSUME_PROCESSES === "1";
@@ -183,6 +202,12 @@ async function cmdRun(args: Args): Promise<number> {
     const d = description?.trim();
     if (d) h.selfDescription = d.slice(0, 200);
     if (machine) h.machine = machine;
+    // a stored id that no longer parses (hand-edited config) is simply not sent
+    if (gif === "") h.gif = "";
+    else if (gif) {
+      const id = parseGiphyId(gif);
+      if (id) h.gif = id;
+    }
     return h;
   };
 
@@ -266,12 +291,70 @@ function cmdConfigure(args: Args): number {
   if (next.self_description && next.self_description.length > 200) {
     next.self_description = next.self_description.slice(0, 200);
   }
+  const gifFlag = flagStr(flags, "gif");
+  if (gifFlag !== undefined) {
+    const gif = gifSetting(gifFlag);
+    if (gif === null) {
+      console.error(`not a Giphy link or id: ${gifFlag}`);
+      return 2;
+    }
+    next.gif = gif;
+  }
   saveConfig(path, next);
   console.log(
     `saved ${path} (server: ${next.server ?? "-"}, name: ${next.name ?? "-"}, ` +
       `password: ${next.password ? "set" : "not set"})`,
   );
   return 0;
+}
+
+// ---- gif ----------------------------------------------------------------------------------
+const GIF_OFF = new Set(["off", "none", "no", "clear", "remove", "-"]);
+
+/** Config value for what the user typed: a Giphy id, "" for off, null when unrecognized. */
+export function gifSetting(input: string): string | null {
+  const v = input.trim();
+  if (v === "" || GIF_OFF.has(v.toLowerCase())) return "";
+  return parseGiphyId(v);
+}
+
+async function cmdGif(args: Args): Promise<number> {
+  const path = configPath();
+  const { config, existed } = loadConfig(path);
+  const input = args.rest.length > 0 ? args.rest.join(" ") : flagStr(args.flags, "gif");
+  if (input === undefined) {
+    console.log(config.gif ? giphyPageUrl(config.gif) : "no GIF set");
+    return 0;
+  }
+  const gif = gifSetting(input);
+  if (gif === null) {
+    console.error(
+      `not a Giphy link or id: ${input}\n` +
+        "Open a GIF on https://giphy.com and copy its link, e.g.\n" +
+        "  agent-office gif https://giphy.com/gifs/cat-typing-JIX9t2j0ZTN9S",
+    );
+    return 2;
+  }
+  if (!existed) {
+    console.error("agent-office is not configured yet. Run the installer first.");
+    return 1;
+  }
+  saveConfig(path, { ...config, gif });
+  console.log(gif ? `GIF set: ${giphyPageUrl(gif)}` : "GIF removed");
+  if (await restartService()) console.log("connector restarted; the office updates in a moment");
+  else console.log("restart the connector (`agent-office run`) to apply it");
+  return 0;
+}
+
+/**
+ * Restart the launchd agent so a new hello goes out; false when it isn't installed. A custom
+ * AGENT_OFFICE_CONFIG_DIR is not the config the service reads, so it is left alone then.
+ */
+async function restartService(): Promise<boolean> {
+  if (process.platform !== "darwin" || process.env.AGENT_OFFICE_CONFIG_DIR) return false;
+  if (!existsSync(plistPath())) return false;
+  const r = await sh(["launchctl", "kickstart", "-k", `gui/${uid()}/${LAUNCHD_LABEL}`]);
+  return r.code === 0;
 }
 
 // ---- status -------------------------------------------------------------------------------

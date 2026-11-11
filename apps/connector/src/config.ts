@@ -15,6 +15,8 @@ export type Config = {
   self_description?: string;
   /** label of this machine on the agent card; default: the short hostname */
   machine_name?: string;
+  /** Giphy id of the GIF over your head; "" = explicitly none (removes it everywhere) */
+  gif?: string;
   share_project_names: boolean;
   client_id: string;
 };
@@ -25,6 +27,7 @@ export const CONFIG_KEYS = [
   "name",
   "self_description",
   "machine_name",
+  "gif",
   "share_project_names",
   "client_id",
 ] as const;
@@ -138,6 +141,7 @@ export function toConfig(values: Record<string, TomlValue>): Config {
     name: s("name"),
     self_description: s("self_description"),
     machine_name: s("machine_name"),
+    gif: s("gif"),
     share_project_names: !(share === false || share === "false"),
     client_id: clientId && /^[A-Za-z0-9_-]{1,64}$/.test(clientId) ? clientId : newClientId(),
   };
@@ -164,6 +168,7 @@ export function saveConfig(path: string, config: Config): void {
       name: config.name,
       self_description: config.self_description,
       machine_name: config.machine_name,
+      gif: config.gif,
       share_project_names: config.share_project_names,
       client_id: config.client_id,
     }),

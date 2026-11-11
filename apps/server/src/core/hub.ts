@@ -54,6 +54,8 @@ export type Binding = {
   connectorVersion: string;
   /** user-chosen machine label, copied into every SessionView of this connector */
   machine?: string;
+  /** Giphy id from this connector's hello; "" = remove, undefined = leave as is */
+  gif?: string;
 };
 
 type ConnectorRec = Binding & {
@@ -74,6 +76,8 @@ type PersonRec = {
    * connectors wins; a hello without one never changes it. Missing in old persisted state.
    */
   selfDescription?: string;
+  /** Giphy id of the GIF over the head; set by the latest hello that carried one */
+  gif?: string;
   /** avatar key of the look stored or already requested (not persisted) */
   lookKey?: string;
 };
@@ -307,6 +311,7 @@ export class Hub {
       connectorVersion: d.connectorVersion,
       ...(desc ? { selfDescription: desc } : {}),
       ...(machine ? { machine } : {}),
+      ...(d.gif !== undefined ? { gif: d.gif } : {}),
     };
     // a hello on a socket that was bound to another clientId: drop the old binding
     this.sockets.set(socketId, binding);
@@ -374,6 +379,11 @@ export class Hub {
     }
     p.goneSince = null;
     p.name = this.displayName(b.personId, b.name, p.name);
+    // head GIF: the latest hello that says anything wins ("" removes it)
+    if (b.gif !== undefined) {
+      if (b.gif) p.gif = b.gif;
+      else delete p.gif;
+    }
     if (this.names[b.personId] !== p.name) {
       this.names[b.personId] = p.name;
       this.store.kvPut(NAMES_KEY, JSON.stringify(this.names));
@@ -508,6 +518,7 @@ export class Hub {
         avatar: p.avatar,
         sessions,
         joinedAt: p.joinedAt,
+        ...(p.gif ? { gif: p.gif } : {}),
       });
     }
     return { people };
@@ -521,6 +532,7 @@ export class Hub {
       c.name,
       c.selfDescription ?? "",
       c.machine ?? "",
+      c.gif ?? "-",
       c.socketId ?? "",
       c.sessions.map((s) => s.sessionKey).join(","),
     ]);
@@ -530,6 +542,7 @@ export class Hub {
       p.goneSince,
       p.joinedAt,
       p.selfDescription ?? "",
+      p.gif ?? "",
     ]);
     return JSON.stringify([cs, ps]);
   }
