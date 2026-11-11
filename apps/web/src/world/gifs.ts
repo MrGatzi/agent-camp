@@ -3,8 +3,10 @@
  * and it floats over their main character (their oldest session). Activity bubbles and
  * markers stay on top; when a bubble pops up the GIF eases up to make room.
  *
- * GIFs are fetched from Giphy's CDN (CORS enabled), decoded once per id and shared by
- * everyone showing it. Frames are drawn on a plain Sprite driven by the office clock.
+ * GIFs are fetched from Giphy's CDN (CORS enabled, the 100w rendition, no referrer, no
+ * cookies), decoded once per id and shared by everyone showing it. Long GIFs are thinned to
+ * a texture budget. Frames are drawn on a plain Sprite driven by the office clock.
+ * `?gifs=0` turns them off for that screen (main.ts never creates this).
  */
 import { giphyGifUrl } from "@agent-office/protocol";
 import { Container, Sprite, type Texture } from "pixi.js";
@@ -17,8 +19,13 @@ export const GIF_MAX_W = 36;
 export const GIF_MAX_H = 30;
 /** Gap between the top of the head and the GIF. */
 const GIF_GAP = 3;
-/** Refuse absurdly large files (the 200w rendition is usually well under 1 MB). */
+/** Refuse absurdly large files (the 100w rendition is usually a few hundred KB). */
 const MAX_BYTES = 4 * 1024 * 1024;
+/**
+ * Decoded frames are full RGBA canvases (w × h × 4 bytes each); past this budget a GIF keeps
+ * only every n-th frame (same total duration), so a long GIF can't eat the kiosk iPad's memory.
+ */
+export const MAX_TEXTURE_BYTES = 6 * 1024 * 1024;
 /** A failed load is retried after this long. */
 const RETRY_MS = 60_000;
 
@@ -43,6 +50,22 @@ export function frameEnds(delays: readonly number[]): number[] {
   });
 }
 
+/**
+ * Which frames to keep so that at most `max` remain, spread evenly, and their new end times:
+ * a kept frame lasts until the next kept one starts, so the loop keeps its length.
+ */
+export function thinFrames(
+  ends: readonly number[],
+  max: number,
+): { keep: number[]; ends: number[] } {
+  const n = ends.length;
+  const k = Math.max(1, Math.min(n, Math.floor(max)));
+  const keep: number[] = [];
+  for (let i = 0; i < k; i++) keep.push(Math.floor((i * n) / k));
+  const out = keep.map((_, j) => ends[(j + 1 < k ? keep[j + 1]! : n) - 1]!);
+  return { keep, ends: out };
+}
+
 /** Index of the frame showing at `ms` into a looping animation. */
 export function frameAt(ends: readonly number[], ms: number): number {
   const duration = ends[ends.length - 1] ?? 0;
@@ -65,20 +88,35 @@ export function fitScale(w: number, h: number): number {
 }
 
 export const loadGiphy: GifLoader = async (id) => {
-  const res = await fetch(giphyGifUrl(id), { mode: "cors" });
+  // like the <img> previews: Giphy learns neither the office URL nor gets any cookies
+  const res = await fetch(giphyGifUrl(id, 100), {
+    mode: "cors",
+    credentials: "omit",
+    referrerPolicy: "no-referrer",
+  });
   if (!res.ok) throw new Error(`giphy ${id}: HTTP ${res.status}`);
   const buf = await res.arrayBuffer();
   if (buf.byteLength > MAX_BYTES) throw new Error(`giphy ${id}: too large`);
   // smooth scaling: a photo-like GIF shrunk with "nearest" looks like noise
   const src = GifSource.from(buf, { scaleMode: "linear" });
-  const ends = frameEnds(src.frames.map((f) => f.end - f.start));
+  const all = frameEnds(src.frames.map((f) => f.end - f.start));
+  const frameBytes = Math.max(1, src.width * src.height * 4);
+  const { keep, ends } = thinFrames(all, MAX_TEXTURE_BYTES / frameBytes);
+  const kept = new Set(keep);
+  // free the dropped frames right away; the kept ones go with destroy()
+  src.textures.forEach((t, i) => {
+    if (!kept.has(i)) t.destroy(true);
+  });
+  const textures = keep.map((i) => src.textures[i]!);
   return {
-    textures: src.textures,
+    textures,
     ends,
     duration: ends[ends.length - 1] ?? 0,
     width: src.width,
     height: src.height,
-    destroy: () => src.destroy(),
+    destroy: () => {
+      for (const t of textures) t.destroy(true);
+    },
   };
 };
 

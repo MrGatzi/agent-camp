@@ -113,6 +113,8 @@ declare global {
 const params = new URLSearchParams(location.search);
 const flag = (k: string) => params.get(k) === "1" || params.get(k) === "true";
 const kiosk = flag("kiosk");
+// `?gifs=0`: this screen shows no head GIFs (e.g. the wall); client-only, nothing is sent
+const showGifs = !["0", "false", "off"].includes(params.get("gifs") ?? "");
 const nohud = flag("nohud");
 const recorder = flag("recorder");
 const demo = parseDemoMode(params.get("demo"));
@@ -159,7 +161,7 @@ async function boot() {
   app.stage.addChild(scene.root);
   const effects = new Effects(scene.fx);
   const chars = new CharacterManager(scene, model, effects);
-  const gifs = new HeadGifs(scene.fx, model, chars);
+  const gifs = showGifs ? new HeadGifs(scene.fx, model, chars) : null;
   const partyWorld = new PartyWorld(scene, chars, model);
   // Friday after work (`?demo=feierabend`, or `?feierabend=1` on a live feed): happy hour at
   // 17:30, office life at party speed, the weed shop sells more
@@ -325,7 +327,7 @@ async function boot() {
       }
       chars.syncSlots();
     }
-    gifs.sync();
+    gifs?.sync();
     hud.setStats(model.stats());
     if (hud.panelOpen && changes.some((change) => change.kind !== "partyChanged")) hud.refresh();
     living.poke();
@@ -970,7 +972,7 @@ async function boot() {
     time += dt;
     scene.update(time, dt);
     chars.update(dt, time);
-    gifs.update(dt);
+    gifs?.update(dt);
     partyWorld.update(dt, time);
     colony.update(dt, time);
     // cats coming in or going home get the door opened too

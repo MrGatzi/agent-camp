@@ -53,6 +53,7 @@ describe("parseGiphyId", () => {
 
   test("viewer URL is built from the id only", () => {
     expect(giphyGifUrl(ID)).toBe(`https://media.giphy.com/media/${ID}/200w.gif`);
+    expect(giphyGifUrl(ID, 100)).toBe(`https://media.giphy.com/media/${ID}/100w.gif`);
   });
 });
 

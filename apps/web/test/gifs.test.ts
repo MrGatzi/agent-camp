@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { avatarFromSeed, envelope, type PersonView } from "@agent-office/protocol";
 import { OfficeModel } from "../src/state/officeModel.ts";
-import { fitScale, frameAt, frameEnds, GIF_MAX_H, GIF_MAX_W } from "../src/world/gifs.ts";
+import {
+  fitScale,
+  frameAt,
+  frameEnds,
+  GIF_MAX_H,
+  GIF_MAX_W,
+  thinFrames,
+} from "../src/world/gifs.ts";
 
 const GIF = "JIX9t2j0ZTN9S";
 
@@ -19,6 +26,20 @@ describe("gif timing", () => {
     expect(frameAt(ends, 300)).toBe(0);
     expect(frameAt(ends, 1_250)).toBe(0);
     expect(frameAt([], 500)).toBe(0);
+  });
+
+  test("thinFrames keeps every n-th frame and the loop length", () => {
+    const ends = [100, 200, 300, 400, 500, 600];
+    expect(thinFrames(ends, 10)).toEqual({ keep: [0, 1, 2, 3, 4, 5], ends });
+    expect(thinFrames(ends, 3)).toEqual({ keep: [0, 2, 4], ends: [200, 400, 600] });
+    expect(thinFrames(ends, 4)).toEqual({ keep: [0, 1, 3, 4], ends: [100, 300, 400, 600] });
+    expect(thinFrames(ends, 0.5)).toEqual({ keep: [0], ends: [600] });
+    // a 1000-frame GIF fits the budget and still loops in the same time
+    const long = Array.from({ length: 1000 }, (_, i) => (i + 1) * 40);
+    const t = thinFrames(long, 150.7);
+    expect(t.keep.length).toBe(150);
+    expect(t.ends.at(-1)).toBe(40_000);
+    expect(t.ends.every((e, i) => i === 0 || e > t.ends[i - 1]!)).toBe(true);
   });
 
   test("fitScale keeps the aspect ratio inside the box", () => {

@@ -208,7 +208,9 @@ media links (`media.giphy.com/...`, `i.giphy.com/...`) and bare ids all work; th
 restarts the background connector so it shows up right away. Like the description, it
 belongs to the person: the last machine that set one (or `off`) wins, and a machine that
 never set one leaves it alone. Only the Giphy id is sent; viewers load the GIF straight from
-Giphy's CDN.
+Giphy's CDN (no referrer, no cookies), so every screen showing the office contacts Giphy. GIFs
+are not rating-filtered: a screen that should never show them (the wall, a meeting room) adds
+`?gifs=0` to its URL, which hides every head GIF there and loads nothing from Giphy.
 
 You can also do it from the office page: click your nameplate, confirm **It's me** once (a
 code pops up on your Mac, the same step as for the look editor), then paste a Giphy link under
@@ -216,6 +218,16 @@ code pops up on your Mac, the same step as for the look editor), then paste a Gi
 Only your own GIF can be changed this way. A GIF set on the page sticks across connector restarts and reconnects, until
 you run `agent-office gif ...` again with a different value (or `off`). The wall/iPad
 kiosk (`?kiosk=1`) and the demo (`?demo=...`) don't show this section.
+
+To take down someone's GIF without their **It's me** (say, an unfortunate pick on the wall),
+anyone with the connector password can remove it. The person id is their name as a
+lowercase slug ("Anna Müller" → `anna-muller`):
+
+```sh
+curl -X PUT https://<office>/api/people/<personId>/gif \
+  -H "Authorization: Bearer $CONNECTOR_PASSWORD" \
+  -H "content-type: application/json" -d '{"link":null}'
+```
 
 ### Privacy
 
@@ -303,6 +315,7 @@ It writes desktop/mobile screenshots to `/private/tmp/agent-office-party-shots` 
 | -------------------- | --------------------------------------------------------------------- |
 | `/`                  | The office. Drag to pan, wheel/pinch to zoom. Click a character for its agent card, a nameplate for the person. Both have buttons to wave, ask for a coffee, cheer or send a short message (it pops up as a notification on their Mac), send a cat to sit on their desk, or throw a paper ball (office only). There is one office cat, plus one for every two people (up to 10): click one to pet it and open its card, then feed it, toss it a yarn ball, or get out the laser pointer and tap the floor. |
 | `/?kiosk=1`          | Wall/iPad mode: no chrome, bigger text, auto camera tour. Add it to the iPad home screen; it also records the timelapse (`&recorder=1`). |
+| `/?kiosk=1&gifs=0`   | The kiosk without head GIFs (nothing is loaded from Giphy on that screen). |
 | `/?kiosk=1&view=overview` | Big wall screen: the whole office most of the time, a 12 s close-up of the busiest pod (or whoever waits) every 2 min (`&every=<seconds>`); events still get a short look. |
 | `/stats`             | Weekday × hour heatmap, leaderboards, Claude vs Codex vs Pi, CSV export. |
 | `/timelapse`         | Snapshots of the office every 15 minutes, with a play button.          |

@@ -57,11 +57,12 @@ export function parseGiphyId(input: string): string | null {
 }
 
 /**
- * Media URL a viewer loads for a Giphy id: the 200 px wide rendition (small, CORS enabled,
- * plenty for a few dozen world pixels).
+ * Media URL a viewer loads for a Giphy id (CORS enabled): the 200 px wide rendition for the
+ * card previews, the 100 px one (`fixed_width_small`) for the canvas, plenty for a 36×30
+ * world px box and a quarter of the texture memory.
  */
-export function giphyGifUrl(id: string): string {
-  return `https://media.giphy.com/media/${encodeURIComponent(id)}/200w.gif`;
+export function giphyGifUrl(id: string, width: 100 | 200 = 200): string {
+  return `https://media.giphy.com/media/${encodeURIComponent(id)}/${width}w.gif`;
 }
 
 /** Page link for a Giphy id (shown on the person card / in the CLI). */
