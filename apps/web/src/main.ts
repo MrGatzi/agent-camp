@@ -792,6 +792,10 @@ async function boot() {
     return true;
   };
   /** Overview close-ups: someone waiting longest, else the pod with the most busy agents. */
+  const podCenter = (pod: number) => {
+    const span = podDeskSpan(pod, Math.max(2, scene.slotDesks(pod)));
+    return { x: span.x + span.w / 2, y: podOrigin(pod).y * 16 + 30 };
+  };
   camera.hotSpot = () => {
     let best: { personId: string; score: number } | null = null;
     for (const p of model.people.values()) {
@@ -805,11 +809,13 @@ async function boot() {
       if (score > 0 && (!best || score > best.score)) best = { personId: p.personId, score };
     }
     const p = best && model.people.get(best.personId);
-    if (!p) return null;
-    const n = Math.max(2, scene.slotDesks(p.pod));
-    const span = podDeskSpan(p.pod, n);
-    return { x: span.x + span.w / 2, y: podOrigin(p.pod).y * 16 + 30 };
+    return p ? podCenter(p.pod) : null;
   };
+  camera.busyDesks = () =>
+    [...model.people.values()]
+      .filter((p) => model.sessionsOf(p.personId).some((s) => !s.offline && s.activity !== "idle"))
+      .sort((a, b) => a.pod - b.pod)
+      .map((p) => podCenter(p.pod));
   const focusParam = params.get("focus");
   games = new PartyPanel(host, model, {
     demo: !!demo,
