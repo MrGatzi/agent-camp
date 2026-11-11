@@ -13,3 +13,5 @@ section is what the "New version!" banner shows after a deploy.
 - Look studio: fullscreen editor with ◀ ▶ carousels
 - East street block: Feierabend bar, weed shop and smokers' corner
 - Prom queen: a teammate without a coding agent pages the developers
+- Cowork sessions of the Claude desktop app now get a desk too (project "Cowork")
+- Claude Design can get its own pink desk while its window is open: `agent-office configure --design-window true` (it shows that you are there, not what Claude is doing)

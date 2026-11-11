@@ -43,8 +43,10 @@ same password the first time you open it.
 
 Paste it where Claude can run commands on your Mac: the **Code** tab of the Claude desktop
 app, or Claude Code in a terminal or IDE. A normal chat or Claude Design can't install it. The
-office shows sessions of Claude Code, Codex and Pi running on your Mac; Claude Design and
-claude.ai chats run in the cloud and don't appear.
+office shows sessions of Claude Code, Codex and Pi running on your Mac, and Cowork sessions of
+the Claude desktop app. Claude Design can get a desk too if you turn it on (see
+[Claude Design and Cowork](#claude-design-and-cowork)). claude.ai chats run in the cloud and
+don't appear.
 
 ### By hand
 
@@ -133,6 +135,34 @@ without one never changes your look, and the last description you set wins. The 
 name (`agent-office configure --machine-name devbox`, or `AO_MACHINE=` for the installer)
 shows up on the agent card so you can tell the sessions apart.
 
+### Claude Design and Cowork
+
+For teammates who work in the Claude desktop app instead of a terminal.
+
+**Cowork** needs no setup. While the Claude app runs, each Cowork session is a Claude desk
+with the project name "Cowork" and real activity (typing, reading, thinking, waiting). A
+quiet session keeps its desk for 30 minutes.
+
+**Claude Design** runs on Anthropic's servers, so the connector can't see what Claude is
+doing there. It can only see that a Design window of the Claude app is open. Turn that on
+with:
+
+```sh
+agent-office configure --design-window true
+launchctl kickstart -k gui/$(id -u)/dev.agentoffice.connector
+```
+
+Then open a Design window in the Claude app. macOS asks whether `agent-office` may control
+"System Events": allow it, and also allow `agent-office` under **System Settings → Privacy &
+Security → Accessibility**. `agent-office status` tells you whether the permission is still
+missing.
+
+You then get a pink "Claude Design" desk: **thinking** while the Design window is in front,
+**idle** after it has been in the background for two minutes, and gone when you close it. It
+never shows "waiting", because the connector can't know that. This works when the Claude app
+is set to English or German (the window must be titled "Design"), and only in the desktop
+app, not in a browser.
+
 ### How do I look?
 
 The server picks your look. With AI off it comes from a hash of your name. With AI on it is
@@ -142,10 +172,10 @@ clothing with its collar, buttons, pockets, pattern and embroidery, socks, shoes
 expression and a pose. Exact colours (`#1f3d2b`, "forest green") are used as given. All of it
 is painted by the same renderer at the same pixel size, so everyone stays in one style.
 
-Which agent a session runs (Claude, Codex, Pi) shows in its colour: if you don't name a
-jacket colour, your jacket takes the agent's colour as before; if you do, you keep your
-jacket and get a badge on the chest (and a patch across the shoulders from behind) in the
-agent's colour instead. Every extra
+Which agent a session runs (Claude, Codex, Pi, Claude Design) shows in its colour: if you
+don't name a jacket colour, your jacket takes the agent's colour as before; if you do, you
+keep your jacket and get a badge on the chest (and a patch across the shoulders from behind)
+in the agent's colour instead. Every extra
 session is a sibling of you with tiny variations, and your pod has one desk per running
 session (at least 2, up to 6).
 
@@ -175,6 +205,11 @@ defaults to the short hostname, e.g. `martins-mbp`; set it to anything you like)
 **look description** (up to 8000 characters, if you set one). The server keeps the
 description to draw your avatar (with AI on it goes to the configured AI provider) and never
 shows it to viewers; they only see the finished avatar.
+
+With `design_window` on (see [Claude Design and Cowork](#claude-design-and-cowork)), the
+connector asks macOS for the Claude app's window titles and sends only whether a Design
+window is open and in front. The titles stay on your Mac. For Cowork sessions the project
+name is always "Cowork".
 
 Optional: `agent-office configure --birthday MM-DD` and the office brings you a cake that day
 (only "it's your birthday today" is ever shown, never the date).
