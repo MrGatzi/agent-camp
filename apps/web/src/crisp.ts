@@ -16,6 +16,7 @@ export function crispFactor(zoom: number, resolution: number): number {
 export class CrispView {
   private readonly rt: RenderTexture;
   private readonly display: Sprite;
+  private readonly enabled: boolean;
 
   constructor(
     private readonly app: Application,
@@ -27,6 +28,7 @@ export class CrispView {
       resolution: app.renderer.resolution,
       scaleMode: "linear",
     });
+    this.enabled = !softwareGl(app);
     this.display = new Sprite(this.rt);
     this.display.visible = false;
     app.stage.addChild(this.display);
@@ -36,7 +38,7 @@ export class CrispView {
   update() {
     const world = this.world;
     const res = this.app.renderer.resolution;
-    const f = crispFactor(world.scale.x, res);
+    const f = this.enabled ? crispFactor(world.scale.x, res) : 1;
     if (f === 1) {
       world.visible = true;
       this.display.visible = false;
@@ -58,4 +60,13 @@ export class CrispView {
     this.display.scale.set(1 / f);
     this.display.visible = true;
   }
+}
+
+/** Without a GPU (SwiftShader, llvmpipe) the extra pass costs about a third of the frame rate. */
+function softwareGl(app: Application): boolean {
+  const gl = (app.renderer as { gl?: WebGLRenderingContext }).gl;
+  if (!gl) return false;
+  const info = gl.getExtension("WEBGL_debug_renderer_info");
+  const name = String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
+  return /swiftshader|llvmpipe|softpipe|software/i.test(name);
 }
