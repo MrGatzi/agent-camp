@@ -479,11 +479,11 @@ async function boot() {
       if (!demo) void poke({ kind: "pet" });
       return;
     }
-    if (queen.hit(wx, wy)) {
+    const c = chars.pick(wx, wy);
+    if (queen.hit(wx, wy) && (!c || queen.y > c.y)) {
       queen.poke();
       return;
     }
-    const c = chars.pick(wx, wy);
     if (c) {
       openSession(c.sessionId);
       return;

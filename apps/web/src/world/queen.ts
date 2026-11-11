@@ -193,7 +193,8 @@ export class OfficeQueen {
               : QUEEN.walkDown;
       fps = 6;
       if (this.path.length === 0) {
-        if (this.heading) this.startPage(this.heading);
+        const t = this.heading && this.pageable().find((p) => p.id === this.heading?.id);
+        if (t) this.startPage(t);
         else {
           this.mode = "stand";
           this.timer = 6 + this.rand() * 14;
