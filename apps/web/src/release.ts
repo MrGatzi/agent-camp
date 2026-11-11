@@ -19,7 +19,12 @@ export function parseChangelog(md: string): ChangelogSection[] {
   return out.filter((s) => s.items.length > 0);
 }
 
-export type SeenRelease = { build: string; version?: string };
+export type SeenRelease = { build: string; version?: string; notes?: string };
+
+/** Identifies what the banner would show, so a deploy without a new changelog line stays quiet. */
+export function notesKey(section: ChangelogSection | undefined): string {
+  return section ? `${section.title}#${section.items.length}` : "";
+}
 
 const SEEN_KEY = "ao-seen-release";
 
@@ -41,9 +46,12 @@ export function saveSeen(seen: SeenRelease) {
   }
 }
 
-/** Celebrate a build only if this browser ran an older one before (never on a first visit). */
-export function shouldCelebrate(seen: SeenRelease | null, build: string): boolean {
-  return build !== "dev" && seen !== null && seen.build !== build;
+/**
+ * Celebrate only when the changelog's top section changed since this browser last looked
+ * (never on a first visit). Every push to main is a new build, most of them without news.
+ */
+export function shouldCelebrate(seen: SeenRelease | null, build: string, notes: string): boolean {
+  return build !== "dev" && seen !== null && seen.build !== build && seen.notes !== notes;
 }
 
 /**
@@ -65,6 +73,7 @@ export function mayAutoReload(s: {
   busy: boolean;
   idleMs: number;
 }): boolean {
-  if (s.kiosk || s.hidden) return true;
-  return !s.busy && s.idleMs >= IDLE_BEFORE_RELOAD_MS;
+  if (s.kiosk) return true;
+  if (s.busy) return false;
+  return s.hidden || s.idleMs >= IDLE_BEFORE_RELOAD_MS;
 }

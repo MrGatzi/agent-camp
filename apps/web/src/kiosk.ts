@@ -27,7 +27,8 @@ export function keepAwake() {
   return () => void lock?.release();
 }
 
-const BUILD_CHECK_MS = 2 * 60_000;
+const BUILD_CHECK_MS = 30 * 60_000;
+const VISIBLE_CHECK_MIN_MS = 10 * 60_000;
 const RELOADED_FOR = "ao-reloaded-for";
 
 /** The entry module of a built page (`<script type="module" src="./assets/index-<hash>.js">`). */
@@ -40,15 +41,18 @@ const runningSrc = () =>
 
 /**
  * Call `onNewBuild` once the server serves a different entry module than the one running here.
- * Checks every 2 minutes, when the tab comes back into view, and whenever the returned
- * function is called (after a reconnect).
+ * Checks whenever the returned function is called (after a reconnect, which every deploy
+ * causes), every 30 minutes while visible, and when the tab comes back into view. Each check is
+ * a billed Worker request, so it stays rare.
  */
 export function watchForNewBuild(onNewBuild: (served: string) => void): () => void {
   const running = runningSrc();
   let busy = false;
+  let last = 0;
   const check = async () => {
     if (!running || busy) return;
     busy = true;
+    last = Date.now();
     try {
       const r = await fetch(location.href, { cache: "no-store", headers: { accept: "text/html" } });
       if (!r.ok || r.redirected) return;
@@ -60,9 +64,12 @@ export function watchForNewBuild(onNewBuild: (served: string) => void): () => vo
       busy = false;
     }
   };
-  setInterval(() => void check(), BUILD_CHECK_MS);
-  document.addEventListener("visibilitychange", () => {
+  setInterval(() => {
     if (document.visibilityState === "visible") void check();
+  }, BUILD_CHECK_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && Date.now() - last >= VISIBLE_CHECK_MIN_MS)
+      void check();
   });
   return () => void check();
 }

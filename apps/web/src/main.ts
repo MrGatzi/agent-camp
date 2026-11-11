@@ -42,7 +42,14 @@ import { connectViewer, loginIfLoggedOut } from "./net/viewer.ts";
 import { PartyPanel } from "./partyPanel.ts";
 import { registerServiceWorker } from "./pwa.ts";
 import { captureSnapshot, startRecorder } from "./recorder.ts";
-import { loadSeen, mayAutoReload, newVersionLabel, saveSeen, shouldCelebrate } from "./release.ts";
+import {
+  loadSeen,
+  mayAutoReload,
+  newVersionLabel,
+  notesKey,
+  saveSeen,
+  shouldCelebrate,
+} from "./release.ts";
 import { type ModelChange, OfficeModel } from "./state/officeModel.ts";
 import { Celebration } from "./ui/celebration.ts";
 import { Minimap } from "./ui/minimap.ts";
@@ -218,7 +225,8 @@ async function boot() {
   const hud = new Hud(host, model, { kiosk });
   const celebration = new Celebration(host);
   const seenRelease = loadSeen();
-  let celebrate = !demo && shouldCelebrate(seenRelease, __BUILD__);
+  const notes = notesKey(CHANGELOG[0]);
+  let celebrate = !demo && !nohud && shouldCelebrate(seenRelease, __BUILD__, notes);
   hud.onWhatsNew = () =>
     celebration.show({
       heading: "What's new",
@@ -297,7 +305,7 @@ async function boot() {
           celebrate = false;
           celebration.show({ heading: "New version!", version: label, section: CHANGELOG[0] });
         } else if (label && celebration.open) celebration.setVersion(label);
-        saveSeen({ build: __BUILD__, version: model.version ?? seenRelease?.version });
+        saveSeen({ build: __BUILD__, version: model.version ?? seenRelease?.version, notes });
       }
       chars.syncSlots();
     }

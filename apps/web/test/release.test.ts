@@ -3,6 +3,7 @@ import {
   IDLE_BEFORE_RELOAD_MS,
   mayAutoReload,
   newVersionLabel,
+  notesKey,
   parseChangelog,
   shouldCelebrate,
 } from "../src/release.ts";
@@ -31,10 +32,17 @@ Intro line, not an item.
 
 describe("shouldCelebrate", () => {
   test("only when this browser ran an older build before", () => {
-    expect(shouldCelebrate(null, "abc1234")).toBe(false);
-    expect(shouldCelebrate({ build: "abc1234" }, "abc1234")).toBe(false);
-    expect(shouldCelebrate({ build: "old0000" }, "abc1234")).toBe(true);
-    expect(shouldCelebrate({ build: "old0000" }, "dev")).toBe(false);
+    const notes = notesKey({ title: "2026-11-12", items: ["Cats"] });
+    expect(shouldCelebrate(null, "abc1234", notes)).toBe(false);
+    expect(shouldCelebrate({ build: "abc1234", notes: "old" }, "abc1234", notes)).toBe(false);
+    expect(shouldCelebrate({ build: "old0000", notes: "old" }, "abc1234", notes)).toBe(true);
+    expect(shouldCelebrate({ build: "old0000", notes: "old" }, "dev", notes)).toBe(false);
+  });
+  test("a deploy without a new changelog line stays quiet", () => {
+    const notes = notesKey({ title: "2026-11-12", items: ["Cats"] });
+    expect(shouldCelebrate({ build: "old0000", notes }, "abc1234", notes)).toBe(false);
+    const more = notesKey({ title: "2026-11-12", items: ["Cats", "Bar"] });
+    expect(shouldCelebrate({ build: "old0000", notes }, "abc1234", more)).toBe(true);
   });
 });
 
@@ -51,7 +59,10 @@ describe("mayAutoReload", () => {
   const base = { kiosk: false, hidden: false, busy: false, idleMs: IDLE_BEFORE_RELOAD_MS };
   test("kiosk and hidden tabs reload right away", () => {
     expect(mayAutoReload({ ...base, kiosk: true, busy: true, idleMs: 0 })).toBe(true);
-    expect(mayAutoReload({ ...base, hidden: true, busy: true, idleMs: 0 })).toBe(true);
+    expect(mayAutoReload({ ...base, hidden: true, idleMs: 0 })).toBe(true);
+  });
+  test("a hidden tab with a draft or the look studio open is left alone", () => {
+    expect(mayAutoReload({ ...base, hidden: true, busy: true, idleMs: 0 })).toBe(false);
   });
   test("a visible page waits for a minute without input and nothing in progress", () => {
     expect(mayAutoReload(base)).toBe(true);
