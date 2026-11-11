@@ -51,8 +51,9 @@ export function reloadOnNewBuild(): () => void {
       const served = moduleScriptSrc(await r.text());
       if (!served || served === running) return;
       // a reload that still runs the old build (stale cache) must not loop
-      if (sessionStorage.getItem(RELOADED_FOR) === served) return;
-      sessionStorage.setItem(RELOADED_FOR, served);
+      const move = `${running} -> ${served}`;
+      if (sessionStorage.getItem(RELOADED_FOR) === move) return;
+      sessionStorage.setItem(RELOADED_FOR, move);
       location.reload();
     } catch {
       // offline or storage blocked: try again later
