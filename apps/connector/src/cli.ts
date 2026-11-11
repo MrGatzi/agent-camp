@@ -13,6 +13,7 @@ import {
   newClientId,
   saveConfig,
   validBirthday,
+  validHelpers,
 } from "./config.ts";
 import { Daemon, type StatusFile } from "./daemon.ts";
 import { Detector } from "./detect/index.ts";
@@ -83,6 +84,7 @@ Commands:
       --share-project-names true|false     --get KEY (print one value)
       --notifications true|false   show waves/messages from the office (default true)
       --birthday MM-DD     opt-in: the office brings you a cake that day ("" removes it)
+      --helpers robots|cats   what your subagents look like in the office (default robots)
   status            connection state and live sessions
   logs              follow the daemon log
   install-service   register the launchd agent (macOS) so it runs at login
@@ -188,6 +190,7 @@ async function cmdRun(args: Args): Promise<number> {
     if (d) h.selfDescription = d.slice(0, 200);
     if (machine) h.machine = machine;
     if (config.birthday) h.birthday = config.birthday;
+    if (config.helpers === "cats") h.helpers = "cats";
     return h;
   };
 
@@ -269,6 +272,15 @@ function cmdConfigure(args: Args): number {
       return 2;
     }
     next.birthday = validBirthday(bday);
+  }
+  const helpers = flagStr(flags, "helpers");
+  if (helpers !== undefined) {
+    const skin = helpers.trim() === "" ? "robots" : validHelpers(helpers);
+    if (!skin) {
+      console.error("helpers must be robots or cats");
+      return 2;
+    }
+    next.helpers = skin;
   }
   const notify = flags.notifications;
   if (notify !== undefined) next.notifications = !(notify === "false" || notify === "0");

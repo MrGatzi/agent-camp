@@ -168,7 +168,12 @@ export function badgesFor(
   if (kinds.size >= 2) out.push("Multi-agent");
   const helpers = sessions.reduce((a, s) => a + s.subagents, 0);
   if (sessions.some((s) => (s.context ?? 0) >= 0.8)) out.push("On fire");
-  if (helpers >= 5) out.push(`Swarm boss (${helpers} helpers)`);
+  if (helpers >= 5)
+    out.push(
+      person.helpers === "cats"
+        ? `Cat herder (${helpers} kittens)`
+        : `Swarm boss (${helpers} helpers)`,
+    );
   else if (helpers > 0) out.push("Delegator");
   const projects = new Set(sessions.map((s) => s.project).filter(Boolean));
   if (projects.size >= 3) out.push("Juggler");

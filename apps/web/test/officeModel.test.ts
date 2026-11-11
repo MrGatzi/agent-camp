@@ -29,6 +29,21 @@ const snap = (people: PersonView[]) =>
   envelope("office.snapshot", { officeName: "Camp", serverTime: T0, people }, { ts: T0 });
 
 describe("OfficeModel", () => {
+  test("helper skin: robots by default, cats from snapshot and event", () => {
+    const m = new OfficeModel(() => T0);
+    m.apply(snap([person("Anna"), { ...person("Bob"), helpers: "cats" }]));
+    expect(m.people.get("anna")?.helpers).toBe("robots");
+    expect(m.people.get("bob")?.helpers).toBe("cats");
+    const ch = m.apply(envelope("person.helpersChanged", { personId: "anna", helpers: "cats" }));
+    expect(ch).toEqual([{ kind: "helpersChanged", personId: "anna", helpers: "cats" }]);
+    expect(
+      m.apply(envelope("person.helpersChanged", { personId: "anna", helpers: "cats" })),
+    ).toEqual([]);
+    // a resync snapshot without the field turns Bob back to robots
+    const back = m.apply(snap([{ ...person("Anna"), helpers: "cats" }, person("Bob")]));
+    expect(back).toContainEqual({ kind: "helpersChanged", personId: "bob", helpers: "robots" });
+  });
+
   test("cat interactions carry the cat and the floor spot", () => {
     const m = new OfficeModel(() => T0);
     m.apply(snap([person("Anna")]));

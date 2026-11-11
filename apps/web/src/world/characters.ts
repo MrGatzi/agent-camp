@@ -75,6 +75,7 @@ import {
   ZOMBIE_AFTER_MS,
 } from "./dramaRules.ts";
 import type { Effects } from "./effects.ts";
+import { helperArea } from "./helperRules.ts";
 import { HelperSwarm, type HelperWorld } from "./helpers.ts";
 import {
   type EndedSession,
@@ -148,18 +149,6 @@ const ERRANDS: readonly Point[] = [
 function dayKey(ts: number): string {
   const d = new Date(ts);
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-}
-
-/** Helpers stay within a few steps of their agent's chair, inside the pod's aisle. */
-export function helperArea(
-  aisle: { x: number; y: number; w: number; h: number },
-  seat: { x: number; y: number },
-): { x: number; y: number; w: number; h: number } {
-  const x0 = Math.max(aisle.x, seat.x - 22);
-  const x1 = Math.min(aisle.x + aisle.w, seat.x + 22);
-  const y0 = Math.max(aisle.y, seat.y - 4);
-  const y1 = Math.min(aisle.y + aisle.h, seat.y + 18);
-  return x1 - x0 < 8 || y1 - y0 < 4 ? aisle : { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
 /** Context-window share where a session starts smoking / catches fire. */
@@ -407,6 +396,10 @@ export class CharacterManager {
         if (c && (ch.context ?? 0) >= FIRE_AT) this.effects.puff(c.x, c.y - 20);
         break;
       }
+      case "helpersChanged":
+        for (const c of this.chars.values())
+          if (c.personId === ch.personId && !c.removed) c.helpers.setSkin(ch.helpers, true);
+        break;
       case "officeRenamed":
       case "interaction":
       case "birthdayChanged":
@@ -486,7 +479,7 @@ export class CharacterManager {
       }
       if (!changed.includes(c.pod)) continue;
       const seat = this.seatOf(c.pod, c.desk);
-      c.helpers.setArea(helperArea(podAisle(c.pod), seat), seat);
+      c.helpers.setArea((n) => helperArea(podAisle(c.pod), seat, n), seat);
       if (c.mode === "seated" && c.hasDesk) this.sit(c);
       else if (c.mode === "walking" && c.goal === "desk") this.goToDesk(c);
     }
@@ -686,10 +679,11 @@ export class CharacterManager {
       this.scene.fx,
       this.effects,
       s.agent,
-      helperArea(podAisle(p.pod), seat),
+      (n) => helperArea(podAisle(p.pod), seat, n),
       seat,
       seededRandom(`helpers:${sessionId}`),
       this.helperWorld,
+      p.helpers,
     );
     const c = new SessionCharacter(
       sessionId,

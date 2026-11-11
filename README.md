@@ -129,6 +129,11 @@ defaults to the short hostname, e.g. `martins-mbp`; set it to anything you like)
 Optional: `agent-office configure --birthday MM-DD` and the office brings you a cake that day
 (only "it's your birthday today" is ever shown, never the date).
 
+Fun: every live subagent shows up as its own little helper scurrying around your desk. They
+are robots by default; `agent-office configure --helpers cats` turns them into kittens
+(`--helpers robots` switches back). Restart the connector to apply it:
+`launchctl kickstart -k gui/$(id -u)/dev.agentoffice.connector`.
+
 Received: when someone in the office waves at you, sends you a short message or sends a cat
 to sit on your keyboard, the connector shows it as a macOS notification (at most one every 5 s; macOS may list it under
 "Script Editor"). Turn it off with `agent-office configure --notifications false`.

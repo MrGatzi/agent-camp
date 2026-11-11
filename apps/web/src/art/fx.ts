@@ -1,6 +1,6 @@
 /**
  * Small animated bits: speech bubbles with activity icons, "!" and "..." bubbles,
- * puff clouds, confetti, helper bots, the office cat, glows and badges.
+ * puff clouds, confetti, helper bots and kittens, the office cat, glows and badges.
  */
 import { type Activity, AGENT_PALETTES, type AgentKind } from "@agent-office/protocol";
 import { Rectangle, Texture } from "pixi.js";
@@ -365,6 +365,61 @@ export function catTextures(coat: CatCoat = CAT_COATS[0]!): Texture[] {
   for (let f = 6; f < 8; f++) pc.mirrorFrom((f - 2) * fw, 0, fw, fh, f * fw, 0);
   const frames = framesOf(pc, fw, fh, 8);
   catFrames.set(coat.id, frames);
+  return frames;
+}
+
+const kittenCache = new Map<string, Texture[]>();
+/**
+ * Helper kitten (2 trot frames, 12x12, facing right like a helper bot walking right): a tiny
+ * cat in one of the office coats with a collar in the agent color and a bell.
+ */
+export function kittenTextures(agent: AgentKind, coat: CatCoat = CAT_COATS[0]!): Texture[] {
+  const key = `${agent}:${coat.id}`;
+  const hit = kittenCache.get(key);
+  if (hit) return hit;
+  const fw = 12;
+  const pc = new PixelCanvas(fw * 2, fw);
+  const O = coat.main;
+  const S = coat.stripe;
+  const B = coat.belly;
+  const E = coat.eye;
+  const P = coat.patch?.color;
+  const points = coat.patch?.style === "points";
+  const collar = AGENT_PALETTES[agent].main;
+  for (let f = 0; f < 2; f++) {
+    pc.at(f * fw + 1, 1);
+    // tail up behind the body, flicking between frames
+    pc.vline(0, 2 + f, 3, points && P ? P : S);
+    pc.set(1, 5, O);
+    // body with two stripes and a light belly
+    pc.rect(1, 5, 6, 3, O);
+    pc.set(3, 5, S);
+    pc.set(5, 5, S);
+    pc.hline(2, 7, 4, B);
+    if (P && !points) pc.rect(2, 5, 2, 2, P);
+    // head and ears
+    pc.rect(5, 1, 5, 4, O);
+    pc.set(5, 0, points && P ? P : O);
+    pc.set(9, 0, points && P ? P : O);
+    if (P && points) pc.rect(6, 2, 4, 3, P);
+    pc.set(6, 2, E);
+    pc.set(8, 2, E);
+    pc.set(7, 3, C.pink);
+    pc.hline(6, 4, 3, B);
+    // collar in the agent color, with a bell
+    pc.hline(5, 5, 4, collar);
+    pc.set(7, 6, C.lemon);
+    // legs trot: near legs in coat, far legs in shade
+    const step = f;
+    pc.vline(2 - step, 8, 2, S);
+    pc.vline(3 + step, 8, 2, O);
+    pc.vline(5 + step, 8, 2, S);
+    pc.vline(6 - step, 8, 2, O);
+    pc.at(0, 0);
+    pc.outline(f * fw, 0, fw, fw);
+  }
+  const frames = framesOf(pc, fw, fw, 2);
+  kittenCache.set(key, frames);
   return frames;
 }
 

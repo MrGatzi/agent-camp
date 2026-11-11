@@ -10,6 +10,7 @@ import {
   type AgentKind,
   type AvatarSpec,
   avatarFromSeed,
+  type HelperSkin,
   type InteractionKind,
   type PersonView,
   type ServerToViewer,
@@ -24,6 +25,8 @@ export type PersonState = {
   pod: number;
   /** it's their birthday today (opt-in on their connector) */
   birthday: boolean;
+  /** what their subagents look like (connector `helpers`) */
+  helpers: HelperSkin;
 };
 
 export type SessionState = {
@@ -61,6 +64,7 @@ export type ModelChange =
   | { kind: "personRemoved"; personId: string; instant: boolean }
   | { kind: "avatarChanged"; personId: string }
   | { kind: "birthdayChanged"; personId: string; birthday: boolean }
+  | { kind: "helpersChanged"; personId: string; helpers: HelperSkin }
   | { kind: "sessionAdded"; personId: string; sessionId: string; instant: boolean }
   | { kind: "sessionRemoved"; personId: string; sessionId: string; instant: boolean }
   | {
@@ -299,6 +303,11 @@ export class OfficeModel {
         }
         break;
       }
+      case "person.helpersChanged": {
+        const p = this.people.get(msg.data.personId);
+        if (p) this.setHelpers(p, msg.data.helpers, out);
+        break;
+      }
       case "session.contextChanged": {
         const s = this.sessions.get(msg.data.sessionId);
         if (s) this.setContext(s, msg.data.context ?? undefined, out);
@@ -393,6 +402,12 @@ export class OfficeModel {
     return i;
   }
 
+  private setHelpers(p: PersonState, helpers: HelperSkin, out: ModelChange[]) {
+    if (p.helpers === helpers) return;
+    p.helpers = helpers;
+    out.push({ kind: "helpersChanged", personId: p.personId, helpers });
+  }
+
   private addPerson(pv: PersonView, instant: boolean, out: ModelChange[]) {
     this.people.set(pv.personId, {
       personId: pv.personId,
@@ -401,6 +416,7 @@ export class OfficeModel {
       joinedAt: pv.joinedAt,
       pod: this.freePod(),
       birthday: !!pv.birthday,
+      helpers: pv.helpers ?? "robots",
     });
     out.push({ kind: "personAdded", personId: pv.personId, instant });
   }
@@ -415,6 +431,7 @@ export class OfficeModel {
         existing.birthday = !!pv.birthday;
         out.push({ kind: "birthdayChanged", personId: pv.personId, birthday: existing.birthday });
       }
+      this.setHelpers(existing, pv.helpers ?? "robots", out);
       if (JSON.stringify(existing.avatar) !== JSON.stringify(pv.avatar)) {
         existing.avatar = pv.avatar;
         out.push({ kind: "avatarChanged", personId: pv.personId });

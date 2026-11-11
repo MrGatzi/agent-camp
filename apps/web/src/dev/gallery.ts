@@ -12,6 +12,7 @@ import {
   CAT_COATS,
   catTextures,
   dotsTextures,
+  kittenTextures,
 } from "../art/fx.ts";
 import type { ObjectKind } from "../world/map.ts";
 
@@ -86,13 +87,20 @@ export function showGallery(app: Application) {
     root.addChild(s);
     x2 += t.width + 3;
   }
-  // every cat coat, then the cat toys
+  // every cat coat (cat, then helper kittens for each agent), then the cat toys
   const y3 = y2 + 30;
   CAT_COATS.forEach((coat, row) => {
     catTextures(coat).forEach((t, i) => {
       const s = new Sprite(t);
       s.position.set(4 + i * 20, y3 + row * 16);
       root.addChild(s);
+    });
+    AGENTS.forEach((agent, k) => {
+      kittenTextures(agent, coat).forEach((t, i) => {
+        const s = new Sprite(t);
+        s.position.set(4 + 8 * 20 + 8 + k * 28 + i * 13, y3 + 18 + row * 16);
+        root.addChild(s);
+      });
     });
   });
   let x4 = 4 + 8 * 20 + 8;

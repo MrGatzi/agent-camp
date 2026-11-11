@@ -42,6 +42,10 @@ export const ProjectName = z.string().max(80);
 export const ContextShare = z.number().min(0).max(1);
 /** User-chosen label of the machine a connector runs on ("laptop", "devbox"). Optional. */
 export const MachineName = z.string().trim().max(40);
+/** What a person's subagents look like in the office (connector `helpers`); default robots. */
+export const HELPER_SKINS = ["robots", "cats"] as const;
+export const HelperSkin = z.enum(HELPER_SKINS);
+export type HelperSkin = z.infer<typeof HelperSkin>;
 
 export function sessionIdOf(clientId: string, sessionKey: string): string {
   return `${clientId}:${sessionKey}`;
@@ -84,6 +88,8 @@ export const PersonView = z.object({
   joinedAt: EpochMs,
   /** opt-in (connector `birthday = "MM-DD"`): it is their birthday in the office time zone */
   birthday: z.boolean().optional(),
+  /** opt-in (connector `helpers = "cats"`): their subagents are kittens; omitted = robots */
+  helpers: HelperSkin.optional(),
 });
 export type PersonView = z.infer<typeof PersonView>;
 
@@ -117,6 +123,8 @@ export const ConnectorHello = msg(
       .string()
       .regex(/^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/)
       .optional(),
+    /** what this person's subagents look like; older connectors omit it (= robots) */
+    helpers: HelperSkin.optional(),
   }),
 );
 export const PresenceSnapshot = msg(
@@ -226,6 +234,11 @@ export const PersonBirthdayChanged = msg(
   "person.birthdayChanged",
   z.object({ personId: PersonId, birthday: z.boolean() }),
 );
+/** The person's helper skin changed (robots <-> cats). */
+export const PersonHelpersChanged = msg(
+  "person.helpersChanged",
+  z.object({ personId: PersonId, helpers: HelperSkin }),
+);
 export const SessionConnectionChanged = msg(
   "session.connectionChanged",
   z.object({ personId: PersonId, sessionId: SessionId, offline: z.boolean() }),
@@ -309,6 +322,7 @@ export const ServerToViewer = z.discriminatedUnion("type", [
   SessionConnectionChanged,
   SessionContextChanged,
   PersonBirthdayChanged,
+  PersonHelpersChanged,
   InteractionHappened,
 ]);
 export type ServerToViewer = z.infer<typeof ServerToViewer>;
