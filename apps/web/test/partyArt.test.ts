@@ -6,6 +6,7 @@ import {
   AvatarSpec,
   avatarFromSeed,
   HELD_ITEMS,
+  LOOK_FIXTURES,
   OUTFITS,
   VEHICLES,
   WRISTWEAR,
@@ -13,6 +14,7 @@ import {
 import { FH, FW } from "../src/art/avatar/geometry.ts";
 import { lookFor, lookKey, paintSheet } from "../src/art/characters.ts";
 import { vehiclePixels } from "../src/art/party.ts";
+import { packColor } from "../src/art/pixel.ts";
 
 const base = {
   ...avatarFromSeed("anna"),
@@ -76,6 +78,43 @@ describe("integrated avatar costumes", () => {
         for (const index of [0, 6, 10, 14, 18]) {
           expect(frame({ ...base, [hand]: item.id }, index)).not.toBe(frame(base, index));
         }
+  });
+
+  test("flannel + beer + mint cap: plaid, a beer on the left, the white cap logo", () => {
+    const avatar = {
+      ...base,
+      accessory: "cap-mint",
+      outfit: "flannel",
+      leftHand: "beer",
+      rightHand: "joint",
+    } as const;
+    const sheet = paintSheet(lookFor(avatar, "codex", null));
+    const at = (x: number, y: number) => sheet.data[y * sheet.width + x]!;
+    const has = (hex: string, x0: number, x1: number, y0: number, y1: number) => {
+      const want = packColor(hex);
+      for (let y = y0; y < y1; y++)
+        for (let x = x0; x < x1; x++) if (at(x, y) === want) return true;
+      return false;
+    };
+    expect(has("#feae34", 0, 8, 28, 46)).toBe(true); // the beer next to the viewer's-left hand
+    expect(has("#ffffff", 13, 19, 6, 16)).toBe(true); // cap logo
+    expect(has("#2ce8f5", 8, 24, 2, 16)).toBe(true); // mint crown
+    expect(has("#3a4466", 8, 24, 24, 36)).toBe(true); // plaid bands on the flannel
+    expect(frame(avatar, 0)).not.toBe(frame({ ...base, accessory: "cap" }, 0));
+  });
+
+  test("a posed detailed look shows what its hand-in-pocket hand holds", () => {
+    const tracht = LOOK_FIXTURES.tracht;
+    const holding = {
+      ...tracht,
+      look: { ...tracht.look, extras: { ...tracht.look.extras!, leftHand: "beer" as const } },
+    };
+    const sheet = paintSheet(lookFor(holding, "codex", null));
+    const beer = packColor("#feae34");
+    let found = false;
+    for (let y = 28; y < 46; y++)
+      for (let x = 0; x < 9; x++) if (sheet.data[y * sheet.width + x] === beer) found = true;
+    expect(found).toBe(true);
   });
 
   test("old avatar payloads receive neutral defaults", () => {

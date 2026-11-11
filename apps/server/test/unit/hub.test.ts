@@ -10,10 +10,12 @@ import {
   envelope,
   hashString,
   LOOK_FIXTURES,
+  lookFromCatalog,
   MAX_SELF_DESCRIPTION,
   PERSON_GRACE_MS,
   parseServerToConnector,
   parseViewerMessage,
+  resolveLook,
   type SessionInfo,
   type ViewerEvent,
 } from "@agent-office/protocol";
@@ -896,5 +898,86 @@ describe("hub: custom looks", () => {
     expect(hub.setAvatar("tom", generated, r.avatarJob!.key, 2_000)).toEqual([]);
     expect(store.getAvatar("tom")!.avatar).toEqual(generated);
     expect(hub.setCustomAvatar("tom", null, 3_000)!.avatar).toEqual(generated);
+  });
+});
+
+describe("hub: custom looks win over GenUI (detailed looks)", () => {
+  const TRACHT = LOOK_FIXTURES.tracht;
+  /** what the editor sends: the avatar it was opened with (GenUI look included) + picks */
+  const edited: AvatarSpec = {
+    ...TRACHT,
+    accessory: "cap-mint",
+    outfit: "flannel",
+    leftHand: "beer",
+    rightHand: "joint",
+  };
+  const { look: _l, ...picked } = edited;
+
+  test("a custom look is stored and shown with catalog ids only", () => {
+    const { hub, store } = setup();
+    hub.onConnectorMessage("s1", hello("Tom", "mac"), 1_000);
+    const r = hub.setCustomAvatar("tom", edited, 2_000)!;
+    expect(r.avatar).toEqual(picked);
+    expect(store.getCustomAvatar("tom")).toEqual(picked);
+    const shown = hub.snapshot(2_000).data.people[0]!.avatar;
+    expect(shown).toEqual(picked);
+    // so the renderer derives the look from the picks: flannel, beer, mint cap
+    const look = resolveLook(shown);
+    expect(look).toEqual(lookFromCatalog(picked));
+    expect(look.outer.pattern.kind).toBe("plaid");
+    expect(look.extras).toMatchObject({ leftHand: "beer", rightHand: "joint" });
+  });
+
+  test("a custom row stored with a detailed look is shown without it", () => {
+    const { hub, store } = setup();
+    store.putCustomAvatar("tom", edited); // e.g. written before this rule
+    hub.onConnectorMessage("s1", hello("Tom", "mac"), 1_000);
+    expect(hub.snapshot(1_000).data.people[0]!.avatar).toEqual(picked);
+    const hub2 = new Hub(CFG, store);
+    hub2.restore(2_000, [{ socketId: "s1", binding: hub.bindingOf("s1")! }]);
+    expect(hub2.snapshot(2_000).data.people[0]!.avatar).toEqual(picked);
+  });
+
+  test("a detailed GenUI answer while custom fills the automatic row, never the shown look", () => {
+    const { hub, store } = setup();
+    const r = hub.onConnectorMessage(
+      "s1",
+      hello("Tom", "mac", { selfDescription: "tracht", lookDescription: "Tracht. ".repeat(40) }),
+      1_000,
+    );
+    const job = r.avatarJob!;
+    hub.setCustomAvatar("tom", edited, 1_500);
+    // the job that was in flight comes back with a detailed look
+    expect(hub.setAvatar("tom", TRACHT, job.key, 2_000)).toEqual([]);
+    expect(hub.snapshot(2_000).data.people[0]!.avatar).toEqual(picked);
+    expect(store.getAvatar("tom")!.avatar).toEqual(TRACHT);
+    // a reconnect neither asks GenUI nor swaps the look
+    expect(hub.onConnectorMessage("s2", hello("Tom", "mac"), 3_000).avatarJob).toBeUndefined();
+    expect(hub.snapshot(3_000).data.people[0]!.avatar).toEqual(picked);
+    // Automatic brings the detailed look back for free
+    const back = hub.setCustomAvatar("tom", null, 4_000)!;
+    expect(back.avatarJob).toBeUndefined();
+    expect(back.avatar).toEqual(TRACHT);
+  });
+
+  test("a new description while custom never writes the custom look into the automatic row", () => {
+    const { hub, store } = setup();
+    hub.onConnectorMessage("s1", hello("Tom", "mac"), 1_000); // no automatic row yet
+    hub.setCustomAvatar("tom", edited, 1_500);
+    const r = hub.onConnectorMessage(
+      "s2",
+      hello("Tom", "laptop", { selfDescription: "red scarf, blue beanie" }),
+      2_000,
+    );
+    expect(r.avatarJob).toBeUndefined();
+    const auto = store.getAvatar("tom")!;
+    expect(auto.selfDescription).toBe("red scarf, blue beanie");
+    expect(auto.avatar).toEqual(avatarFromSeed("tom"));
+    // Automatic generates for the new description, with the automatic row as `previous`
+    const back = hub.setCustomAvatar("tom", null, 3_000)!;
+    expect(back.avatarJob).toMatchObject({
+      selfDescription: "red scarf, blue beanie",
+      previous: avatarFromSeed("tom"),
+    });
   });
 });

@@ -19,6 +19,8 @@ export type Ctx = {
   posed: boolean;
   /** sleeve colours: outer garment if any, else shirt */
   sleeve: Ramp;
+  /** painters that run after the outline (thin held items and their smoke) */
+  after: (() => void)[];
 };
 
 /** Torso columns per build and view. */

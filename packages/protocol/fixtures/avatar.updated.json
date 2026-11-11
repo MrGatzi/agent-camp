@@ -59,7 +59,8 @@
             "shadow": "#262b44",
             "light": "#5a6988"
           },
-          "accent": "#ffffff"
+          "accent": "#ffffff",
+          "logo": "none"
         },
         "earrings": {
           "style": "none",
@@ -189,6 +190,13 @@
           "hands": "hand-in-pocket",
           "stance": "wide",
           "headTilt": true
+        },
+        "extras": {
+          "leftHand": "none",
+          "rightHand": "none",
+          "costume": "none",
+          "wrist": "none",
+          "accent": "#2ce8f5"
         }
       }
     }

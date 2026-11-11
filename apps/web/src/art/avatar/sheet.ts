@@ -5,6 +5,7 @@
 import { PixelCanvas } from "../pixel.ts";
 import { drawArmSide, drawArmsBack, drawArmsFront, drawMug, drawRaisedHand } from "./arms.ts";
 import { type Ctx, torsoCols } from "./ctx.ts";
+import { drawCostumeHead, drawCostumeTorso, drawExtras } from "./extras.ts";
 import { drawEyewear } from "./eyewear.ts";
 import { FH, type FrameSpec, FW, SEAT_DROP, SPECS, type View } from "./geometry.ts";
 import { drawHair } from "./hair.ts";
@@ -14,7 +15,7 @@ import { drawLegsSeatedFront, drawLegsSide, drawLegsStanding, drawSeatBackHip } 
 import type { RenderLook } from "./renderLook.ts";
 import { drawTorsoBack, drawTorsoFront, drawTorsoSide, type TorsoBox, torsoBox } from "./torso.ts";
 
-function makeCtx(pc: PixelCanvas, r: RenderLook, f: FrameSpec): Ctx {
+function makeCtx(pc: PixelCanvas, r: RenderLook, f: FrameSpec, after: (() => void)[]): Ctx {
   const L = r.look;
   const view: View = f.seat === "back" ? "up" : f.view;
   const [tl, tr] = torsoCols(L.build, view);
@@ -29,6 +30,7 @@ function makeCtx(pc: PixelCanvas, r: RenderLook, f: FrameSpec): Ctx {
     tr,
     posed: !!f.posed,
     sleeve: L.outer.kind !== "none" ? L.outer.ramp : L.shirt.ramp,
+    after,
   };
 }
 
@@ -43,6 +45,7 @@ function drawHead(c: Ctx, view: View, hy: number) {
   drawHeadSkin(pc, L, view, hy);
   drawEarrings(pc, L, view, hy);
   drawHair(pc, L, view, hy);
+  drawCostumeHead(pc, L, view, hy);
   drawEyewear(pc, L, view, hy);
   drawHeadwear(pc, L, view, hy, c.r.hat);
   if (!tilt) return;
@@ -57,19 +60,23 @@ function drawHead(c: Ctx, view: View, hy: number) {
   }
 }
 
-function paintFrame(pc: PixelCanvas, r: RenderLook, f: FrameSpec) {
-  const c = makeCtx(pc, r, f);
+function paintFrame(pc: PixelCanvas, r: RenderLook, f: FrameSpec, after: (() => void)[]) {
+  const c = makeCtx(pc, r, f, after);
   const b: TorsoBox = torsoBox(c);
   if (f.seat === "none") {
     if (c.view === "left") {
       drawLegsSide(c, b, f.phase);
       drawTorsoSide(c, b);
+      drawCostumeTorso(c, b);
       drawArmSide(c, b, f.phase);
+      drawExtras(c, b, f.arms, f.phase);
       if (r.mug && f.phase === 0) drawMug(c, 9, b.T + 6);
     } else if (c.view === "down") {
       drawLegsStanding(c, b, false, f.phase);
       drawTorsoFront(c, b);
+      drawCostumeTorso(c, b);
       drawArmsFront(c, b, f.arms, f.phase);
+      drawExtras(c, b, f.arms, f.phase);
       if (
         r.mug &&
         f.arms === "down" &&
@@ -81,7 +88,9 @@ function paintFrame(pc: PixelCanvas, r: RenderLook, f: FrameSpec) {
     } else {
       drawLegsStanding(c, b, true, f.phase);
       drawTorsoBack(c, b);
+      drawCostumeTorso(c, b);
       drawArmsBack(c, b, f.arms, f.phase);
+      drawExtras(c, b, f.arms, f.phase);
     }
     drawHead(c, c.view, c.dy);
     if (c.view === "down") drawRaisedHand(c, b, f.arms);
@@ -90,14 +99,18 @@ function paintFrame(pc: PixelCanvas, r: RenderLook, f: FrameSpec) {
   if (f.seat === "back") {
     drawSeatBackHip(c, b);
     drawTorsoBack(c, b);
+    drawCostumeTorso(c, b);
     drawArmsBack(c, b, f.arms, 0);
+    drawExtras(c, b, f.arms, 0);
     drawHead(c, "up", c.dy);
     return;
   }
   // seated, facing the camera
   drawLegsSeatedFront(c, b);
   drawTorsoFront(c, b);
+  drawCostumeTorso(c, b);
   drawArmsFront(c, b, f.arms === "rest" ? "down" : f.arms, 0);
+  drawExtras(c, b, f.arms === "rest" ? "down" : f.arms, 0);
   if (r.mug && f.arms === "rest") drawMug(c, c.tr - 1, b.T + 4);
   drawHead(c, "down", c.dy);
   drawRaisedHand(c, b, f.arms);
@@ -108,13 +121,23 @@ export function paintSheet(r: RenderLook): PixelCanvas {
   const pc = new PixelCanvas(FW * SPECS.length, FH);
   SPECS.forEach((spec, i) => {
     if (spec.mirror !== undefined) return;
+    const after: (() => void)[] = [];
+    const clip = { x0: i * FW, y0: 0, x1: (i + 1) * FW, y1: FH };
     pc.at(i * FW, 0);
-    pc.clip = { x0: i * FW, y0: 0, x1: (i + 1) * FW, y1: FH };
-    paintFrame(pc, r, spec);
+    pc.clip = clip;
+    paintFrame(pc, r, spec, after);
     pc.clip = null;
     pc.at(0, 0);
     pc.outline(i * FW, 0, FW, FH);
     pc.outline(i * FW, 0, FW, FH);
+    // thin things stay thin: painted over the outline
+    if (after.length) {
+      pc.at(i * FW, 0);
+      pc.clip = clip;
+      for (const paint of after) paint();
+      pc.clip = null;
+      pc.at(0, 0);
+    }
   });
   SPECS.forEach((spec, i) => {
     if (spec.mirror !== undefined) pc.mirrorFrom(spec.mirror * FW, 0, FW, FH, i * FW, 0);

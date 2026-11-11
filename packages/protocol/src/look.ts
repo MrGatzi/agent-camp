@@ -126,6 +126,16 @@ export const HEADWEAR_STYLES = [
   "headband",
   "bow",
   "headphones",
+  // novelty headwear (catalog accessories of the same name, look editor / party)
+  "cat-ears",
+  "fox-ears",
+  "bunny-ears",
+  "devil-horns",
+  "halo",
+  "crown",
+  "wizard-hat",
+  "party-hat",
+  "antenna",
 ] as const;
 export const EARRING_STYLES = ["none", "stud", "hoop"] as const;
 export const SHIRT_KINDS = [
@@ -220,6 +230,53 @@ export const HAND_POSES = [
 ] as const;
 export const STANCES = ["neutral", "wide"] as const;
 
+// ---- extras: things from the look editor catalog (same ids as catalog.ts) ------------------
+/** Something held in a hand (catalog `HELD_ITEMS`). */
+export const HELD_KINDS = [
+  "none",
+  "beer",
+  "joint",
+  "phone",
+  "coffee",
+  "lightsaber",
+  "confetti",
+  "cigarette",
+  "bubble-wand",
+  "disco-ball",
+  "magic-wand",
+  "balloon",
+  "water-pistol",
+  "maracas",
+  "umbrella",
+] as const;
+/** Costume details drawn over the clothes (catalog outfits that are costumes). */
+export const COSTUME_KINDS = [
+  "none",
+  "cat",
+  "robot",
+  "astronaut",
+  "pirate",
+  "vampire",
+  "disco",
+] as const;
+/** Bracelets (catalog `WRISTWEAR`). */
+export const WRIST_KINDS = ["none", "neon-cyan", "neon-pink", "neon-lime", "rainbow"] as const;
+
+export const Extras = z
+  .object({
+    leftHand: z
+      .enum(HELD_KINDS)
+      .describe("held in the hand on the viewer's left in the front view; none = empty"),
+    rightHand: z.enum(HELD_KINDS).describe("held in the other hand; none = empty"),
+    costume: z.enum(COSTUME_KINDS).describe("costume details over the clothes; none = no costume"),
+    wrist: z.enum(WRIST_KINDS).describe("bracelets on both wrists; none = no bracelets"),
+    accent: Hex.describe(
+      "#rrggbb accent colour of coloured held items (lightsaber, balloon, umbrella), the party hat and costume lights",
+    ),
+  })
+  .describe("held items, costume details, bracelets: none unless the description asks for them");
+export type Extras = z.infer<typeof Extras>;
+
 export const CharacterLook = z.object({
   v: z.literal(LOOK_VERSION),
   build: z.enum(BUILDS).describe("body width: slim / average / broad"),
@@ -259,8 +316,12 @@ export const CharacterLook = z.object({
     style: z.enum(HEADWEAR_STYLES),
     ramp: Ramp,
     accent: Hex.describe(
-      "#rrggbb secondary colour: beanie pompom, cap brim/logo, hat band, headband stripe, bow knot, headphones band",
+      "#rrggbb secondary colour: beanie pompom, cap brim, hat band, headband stripe, bow knot, headphones band",
     ),
+    /** added later: missing in stored looks; a bad value is dropped, not the whole look */
+    logo: OptHex.optional()
+      .catch(undefined)
+      .describe('#rrggbb small logo on the front of a cap, or "none"'),
   }),
   earrings: z.object({ style: z.enum(EARRING_STYLES), color: Hex }),
   shirt: z.object({
@@ -342,6 +403,11 @@ export const CharacterLook = z.object({
     stance: z.enum(STANCES).describe("wide = feet shoulder-width apart, toes out"),
     headTilt: z.boolean().describe("head tilted very slightly"),
   }),
+  /**
+   * Added later (look editor items): missing in stored looks. Without it the renderer takes
+   * them from the avatar's catalog fields (`resolveLook`). A bad value drops only this section.
+   */
+  extras: Extras.optional().catch(undefined),
 });
 export type CharacterLook = z.infer<typeof CharacterLook>;
 

@@ -6,6 +6,7 @@ import type { CharacterLook } from "@agent-office/protocol";
 import { C } from "../palette.ts";
 import type { PixelCanvas } from "../pixel.ts";
 import { mix, NIGHT } from "./color.ts";
+import { drawNoveltyHeadwear } from "./extras.ts";
 import type { View } from "./geometry.ts";
 import { scale2x } from "./hair.ts";
 import { faceSides } from "./head.ts";
@@ -182,9 +183,14 @@ export function drawHeadwear(
       // knit ribs on the cuff
       for (let x = 5; x < 27; x += 2) pc.set(x, 9 + hy, mix(light, shadow, 0.5));
       break;
-    case "cap":
+    case "cap": {
       pc.sprite(0, hy, up2(`cap/${view}`, ACC.cap[view]), { A: base, a: light, N: hw.accent });
+      // small logo on the front panel (the mint cap's white logo)
+      const logo = hw.logo && hw.logo !== "none" ? hw.logo : null;
+      if (logo && view === "down") pc.rect(14, 6 + hy, 4, 2, logo);
+      if (logo && view === "left") pc.rect(8, 6 + hy, 2, 2, logo);
       break;
+    }
     case "cap-backwards": {
       const v: View = view === "down" ? "up" : view === "up" ? "down" : "left";
       if (view === "left") {
@@ -214,6 +220,17 @@ export function drawHeadwear(
     }
     case "bow":
       pc.sprite(0, hy, up2(`bow/${view}`, ACC.bow[view]), { R: base, r: hw.accent });
+      break;
+    case "cat-ears":
+    case "fox-ears":
+    case "bunny-ears":
+    case "devil-horns":
+    case "halo":
+    case "crown":
+    case "wizard-hat":
+    case "party-hat":
+    case "antenna":
+      drawNoveltyHeadwear(pc, L, view, hy);
       break;
     case "headphones":
       if (!hat)

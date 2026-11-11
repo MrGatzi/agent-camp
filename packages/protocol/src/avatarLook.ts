@@ -26,7 +26,14 @@ import {
   Vehicle,
   Wristwear,
 } from "./catalog.ts";
-import { CharacterLook, LOOK_SECTIONS, LOOK_VERSION, MAX_BUTTONS, type Ramp } from "./look.ts";
+import {
+  CharacterLook,
+  type Extras,
+  LOOK_SECTIONS,
+  LOOK_VERSION,
+  MAX_BUTTONS,
+  type Ramp,
+} from "./look.ts";
 
 // Endesga 32 colours today's renderer uses for the fixed parts (apps/web/src/art/palette.ts).
 const NIGHT = "#181425";
@@ -47,6 +54,12 @@ const PINE = "#193c3e";
 const PLUM = "#68386c";
 const BERRY = "#b55088";
 const PINK = "#f6757a";
+const RED = "#e43b44";
+const WINE = "#a22633";
+const SKY = "#0099db";
+const CYAN = "#2ce8f5";
+const LEMON = "#fee761";
+const LEAF = "#63c74d";
 
 const ramp = (base: string, shadow: string, light: string): Ramp => ({ base, shadow, light });
 const NO_PATTERN = (a: string) => ({ kind: "none" as const, a, b: "none" as const });
@@ -57,13 +70,46 @@ const NO_BUTTONS = (color: string) => ({
   size: "small" as const,
 });
 
+/** Catalog accent colours (look editor), as the 1× renderer drew them. */
+export const ACCENT_HEX: Record<AvatarCatalogSpec["accentColor"], string> = {
+  cyan: CYAN,
+  pink: PINK,
+  lime: LEAF,
+  gold: LEMON,
+  purple: BERRY,
+  red: RED,
+};
+
+/** Accessories drawn as novelty headwear of the same name. */
+const NOVELTY_HEADWEAR = [
+  "cat-ears",
+  "fox-ears",
+  "bunny-ears",
+  "devil-horns",
+  "halo",
+  "crown",
+  "wizard-hat",
+  "party-hat",
+  "antenna",
+] as const satisfies readonly AvatarCatalogSpec["accessory"][] &
+  readonly CharacterLook["headwear"]["style"][];
+const isNoveltyHeadwear = (
+  acc: AvatarCatalogSpec["accessory"],
+): acc is (typeof NOVELTY_HEADWEAR)[number] =>
+  (NOVELTY_HEADWEAR as readonly string[]).includes(acc);
+
 /** Headwear for catalog accessories, in today's colours. */
 function catalogHeadwear(acc: AvatarCatalogSpec["accessory"]): CharacterLook["headwear"] {
+  if (isNoveltyHeadwear(acc))
+    // drawn in their own fixed colours (the party hat in the accent colour)
+    return { style: acc, ramp: ramp(DUSK, INK, SLATE), accent: WHITE };
   switch (acc) {
     case "beanie": // plum knit, berry cuff, cream pompom
       return { style: "beanie", ramp: ramp(PLUM, COCOA, BERRY), accent: CREAM };
     case "cap": // forest crown with a moss highlight, pine brim
       return { style: "cap", ramp: ramp(FOREST, PINE, MOSS), accent: PINE };
+    case "cap-mint": // mint/aqua crown with a white highlight, sky brim, white logo
+      return { style: "cap", ramp: ramp(CYAN, SKY, WHITE), accent: SKY, logo: WHITE };
     case "bow": // pink ribbon, berry knot
       return { style: "bow", ramp: ramp(PINK, BERRY, PEACH), accent: BERRY };
     case "headphones": // berry cups, pink cushions, ink band
@@ -87,6 +133,134 @@ function catalogEyewear(g: AvatarCatalogSpec["glasses"]): CharacterLook["eyewear
   }
 }
 
+type OutfitId = AvatarCatalogSpec["outfit"];
+type Layers = Pick<CharacterLook, "shirt" | "outer">;
+
+/** Garment colours of the outfits that are not agent coloured (as the 1× renderer drew them). */
+const OUTFIT_RAMPS: Record<Exclude<OutfitId, "jacket" | "hoodie">, Ramp> = {
+  flannel: ramp(GREY, SLATE, SILVER),
+  "flannel-red": ramp(RED, WINE, PINK),
+  tee: ramp(DUSK, INK, SLATE),
+  cat: ramp(SLATE, INK, SILVER),
+  robot: ramp(SILVER, SLATE, WHITE),
+  astronaut: ramp(WHITE, SILVER, CYAN),
+  pirate: ramp(WINE, NIGHT, RED),
+  vampire: ramp(NIGHT, WINE, RED),
+  disco: ramp(BERRY, PLUM, PINK),
+};
+
+/** Outfits that are costumes: a closed garment in the costume colours plus costume details. */
+export const COSTUME_OUTFITS = new Set<OutfitId>([
+  "cat",
+  "robot",
+  "astronaut",
+  "pirate",
+  "vampire",
+  "disco",
+]);
+
+const tee = (r: Ramp, sleeves: CharacterLook["shirt"]["sleeves"]): CharacterLook["shirt"] => ({
+  kind: "tshirt",
+  ramp: r,
+  pattern: NO_PATTERN(r.base),
+  collar: "crew",
+  collarColor: "none",
+  neckwear: "none",
+  neckwearColor: WHITE,
+  sleeves,
+  buttons: NO_BUTTONS(r.base),
+  peeksAtWaist: false,
+});
+
+const NO_OUTER: CharacterLook["outer"] = {
+  kind: "none",
+  agentColored: false,
+  ramp: ramp(GREY, SLATE, SILVER),
+  pattern: NO_PATTERN(GREY),
+  open: false,
+  length: "hip",
+  collar: "none",
+  collarColor: "none",
+  collarPiping: "none",
+  piping: "none",
+  buttons: NO_BUTTONS(SLATE),
+  pockets: "none",
+  pocketPiping: "none",
+  yoke: false,
+};
+
+/**
+ * Shirt + outer layer of a catalog outfit:
+ *   jacket       white tee, closed jacket in the agent colour (the original look)
+ *   hoodie       closed zip hoodie with hood and kangaroo pocket in the agent colour
+ *   flannel      open grey plaid flannel (white threads, dusk bands) over a navy tee
+ *   flannel-red  open red lumberjack plaid (pink threads, night bands) over a navy tee
+ *   tee          plain dusk-navy t-shirt with short sleeves, no outer layer
+ *   costumes     closed garment in the costume colours (details: `extras.costume`)
+ * Everything but jacket/hoodie keeps its colours and shows the agent as armband + pin.
+ */
+function outfitLayers(outfit: OutfitId): Layers {
+  const whiteTee = tee(ramp(WHITE, SILVER, WHITE), "long");
+  const agent = ramp(GREY, SLATE, SILVER); // placeholder: agentColored -> AGENT_PALETTES
+  switch (outfit) {
+    case "jacket":
+      return {
+        shirt: whiteTee,
+        outer: { ...NO_OUTER, kind: "jacket", agentColored: true, ramp: agent },
+      };
+    case "hoodie":
+      return {
+        shirt: whiteTee,
+        outer: {
+          ...NO_OUTER,
+          kind: "zip-hoodie",
+          agentColored: true,
+          ramp: agent,
+          collar: "hood",
+          pockets: "kangaroo",
+        },
+      };
+    case "flannel":
+    case "flannel-red": {
+      const red = outfit === "flannel-red";
+      const r = OUTFIT_RAMPS[outfit];
+      return {
+        shirt: tee(ramp(INK, NIGHT, DUSK), "long"),
+        outer: {
+          ...NO_OUTER,
+          kind: "jacket",
+          ramp: r,
+          // plaid: light threads down (a), dark bands across (b)
+          pattern: { kind: "plaid", a: red ? PINK : WHITE, b: red ? NIGHT : DUSK },
+          open: true,
+          collar: "shirt",
+          pockets: "flap",
+        },
+      };
+    }
+    case "tee":
+      return { shirt: tee(OUTFIT_RAMPS.tee, "short"), outer: NO_OUTER };
+    default: {
+      const r = OUTFIT_RAMPS[outfit];
+      return {
+        shirt: whiteTee,
+        outer: { ...NO_OUTER, kind: "jacket", ramp: r, pattern: NO_PATTERN(r.base) },
+      };
+    }
+  }
+}
+
+/** The look-editor items of a catalog avatar (held items, costume, bracelets, accent). */
+export function extrasFromCatalog(a: AvatarCatalogSpec): Extras {
+  return {
+    leftHand: a.leftHand,
+    rightHand: a.rightHand,
+    costume: COSTUME_OUTFITS.has(a.outfit) ? (a.outfit as Extras["costume"]) : "none",
+    wrist: a.wrist,
+    accent: ACCENT_HEX[a.accentColor],
+  };
+}
+
 /**
  * The look of a catalog-only avatar: reproduces today's characters (skin + hair from the
  * avatar, white tee at the neck, jacket in the agent colour, dusk trousers, cocoa shoes).
@@ -97,7 +271,7 @@ export function lookFromCatalog(a: AvatarCatalogSpec): CharacterLook {
   const hc = hairColorHex(a.hairColor);
   const skin = ramp(sk.hex, sk.shade, sk.light);
   const hair = ramp(hc.hex, hc.shade, hc.light);
-  const agent = ramp(GREY, SLATE, SILVER); // placeholder: agentColored -> renderer uses AGENT_PALETTES
+  const { shirt, outer } = outfitLayers(a.outfit);
   return {
     v: LOOK_VERSION,
     build: "average",
@@ -120,18 +294,7 @@ export function lookFromCatalog(a: AvatarCatalogSpec): CharacterLook {
     eyewear: catalogEyewear(a.glasses),
     headwear: catalogHeadwear(a.accessory),
     earrings: { style: a.accessory === "earring" ? "stud" : "none", color: AMBER },
-    shirt: {
-      kind: "tshirt",
-      ramp: ramp(WHITE, SILVER, WHITE),
-      pattern: NO_PATTERN(WHITE),
-      collar: "crew",
-      collarColor: "none",
-      neckwear: "none",
-      neckwearColor: WHITE,
-      sleeves: "long",
-      buttons: NO_BUTTONS(WHITE),
-      peeksAtWaist: false,
-    },
+    shirt,
     vest: {
       kind: "none",
       ramp: ramp(WHITE, SILVER, WHITE),
@@ -140,22 +303,7 @@ export function lookFromCatalog(a: AvatarCatalogSpec): CharacterLook {
       piping: "none",
       buttons: NO_BUTTONS(WHITE),
     },
-    outer: {
-      kind: "jacket",
-      agentColored: true,
-      ramp: agent,
-      pattern: NO_PATTERN(GREY),
-      open: false,
-      length: "hip",
-      collar: "none",
-      collarColor: "none",
-      collarPiping: "none",
-      piping: "none",
-      buttons: NO_BUTTONS(SLATE),
-      pockets: "none",
-      pocketPiping: "none",
-      yoke: false,
-    },
+    outer,
     bottoms: {
       kind: "trousers",
       ramp: ramp(DUSK, INK, SLATE),
@@ -177,12 +325,27 @@ export function lookFromCatalog(a: AvatarCatalogSpec): CharacterLook {
       laces: "none",
     },
     pose: { hands: "relaxed", stance: "neutral", headTilt: false },
+    extras: extrasFromCatalog(a),
   };
 }
 
-/** The look the renderer draws for an avatar. */
+/**
+ * The look the renderer draws for an avatar. A detailed look without `extras` (stored before
+ * they existed, or a model answer without them) takes them from the catalog fields.
+ */
 export function resolveLook(a: AvatarSpec): CharacterLook {
-  return a.look ?? lookFromCatalog(a);
+  if (!a.look) return lookFromCatalog(a);
+  return a.look.extras ? a.look : { ...a.look, extras: extrasFromCatalog(a) };
+}
+
+/**
+ * The avatar with catalog ids only (no detailed `look`): what a look picked in the look editor
+ * is stored and shown as, so its look always comes from the picked ids (`lookFromCatalog`)
+ * and never from a GenUI answer it was edited from.
+ */
+export function catalogAvatar(a: AvatarSpec): AvatarSpec {
+  const { look: _l, ...catalog } = a;
+  return { ...catalog, deskProps: [...catalog.deskProps] };
 }
 
 // ---- repair -------------------------------------------------------------------------------

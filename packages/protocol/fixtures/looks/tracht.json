@@ -37,7 +37,8 @@
     "headwear": {
       "style": "none",
       "ramp": { "base": "#3a4466", "shadow": "#262b44", "light": "#5a6988" },
-      "accent": "#ffffff"
+      "accent": "#ffffff",
+      "logo": "none"
     },
     "earrings": { "style": "none", "color": "#feae34" },
     "shirt": {
@@ -96,6 +97,13 @@
       "accent": "#1e2a44",
       "laces": "#ffffff"
     },
-    "pose": { "hands": "hand-in-pocket", "stance": "wide", "headTilt": true }
+    "pose": { "hands": "hand-in-pocket", "stance": "wide", "headTilt": true },
+    "extras": {
+      "leftHand": "none",
+      "rightHand": "none",
+      "costume": "none",
+      "wrist": "none",
+      "accent": "#2ce8f5"
+    }
   }
 }

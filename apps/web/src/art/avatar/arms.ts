@@ -5,6 +5,7 @@
 import type { Ramp } from "@agent-office/protocol";
 import { C } from "../palette.ts";
 import type { Ctx } from "./ctx.ts";
+import { heldFront } from "./extras.ts";
 import type { Arms } from "./geometry.ts";
 import type { TorsoBox } from "./torso.ts";
 
@@ -75,6 +76,11 @@ function posedArm(c: Ctx, b: TorsoBox, side: -1 | 1, dark: boolean) {
   const pose = c.L.pose.hands;
   const T = b.T;
   const x = side < 0 ? c.tl - 2 : c.tr + 1;
+  // a hand that holds something hangs relaxed (extras.ts draws the item at its hand)
+  if (heldFront(c.L, side) !== "none") {
+    armColumn(c, x, T, 10, dark);
+    return;
+  }
   const inPocket = pose === "hands-in-pockets" || (pose === "hand-in-pocket" && side < 0);
   if (inPocket) {
     // upper arm hangs, elbow slightly out, forearm angles in, only knuckles show

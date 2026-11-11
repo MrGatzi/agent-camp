@@ -12,6 +12,7 @@ import {
   CLOSE_TOO_OLD,
   CONNECTOR_STALE_MS,
   CONNECTOR_TIMEOUT_MS,
+  catalogAvatar,
   compareVersions,
   envelope,
   hashString,
@@ -338,10 +339,12 @@ export class Hub {
     const stored = this.storedAvatar(personId);
     if (p.selfDescription === undefined) p.selfDescription = stored?.selfDescription ?? "";
     if (avatar) {
-      this.store.putCustomAvatar(personId, avatar);
-      p.avatar = avatar;
+      // catalog ids only: the look comes from them, never from a GenUI answer
+      const custom = catalogAvatar(avatar);
+      this.store.putCustomAvatar(personId, custom);
+      p.avatar = custom;
       this.log(`look ${personId} custom`);
-      return { events: this.commit(now), avatar };
+      return { events: this.commit(now), avatar: custom };
     }
     this.store.putCustomAvatar(personId, null);
     const keyFn = this.cfg.avatarKey ?? defaultAvatarKey;
@@ -610,9 +613,15 @@ export class Hub {
     this.store.kvPut(CLIENT_DESCS_KEY, JSON.stringify(this.clientDescs));
   }
 
-  /** The look picked in the look editor, if any. */
+  /**
+   * The look picked in the look editor, if any. It is catalog ids only: a detailed `look` (say
+   * one copied from the GenUI avatar it was edited from, or a row stored before this rule) is
+   * dropped, so the look is derived from the picked ids (`lookFromCatalog`) and no GenUI
+   * answer can show through.
+   */
   private customAvatar(personId: string): AvatarSpec | null {
-    return this.store.getCustomAvatar(personId);
+    const custom = this.store.getCustomAvatar(personId);
+    return custom ? catalogAvatar(custom) : null;
   }
 
   /** Stored avatar row with its look repaired (rows are not validated when written/read). */

@@ -2,18 +2,27 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  ACCENT_COLORS,
+  ACCESSORIES,
+  type AvatarCatalogSpec,
   AvatarSpec,
   avatarFromSeed,
   CharacterLook,
+  COSTUME_KINDS,
+  catalogAvatar,
   envelope,
   HAIR_COLORS,
   HAIR_CUTS,
   HairStyle,
+  HELD_ITEMS,
+  HELD_KINDS,
   LOOK_FIXTURES,
   LOOK_SECTIONS,
   lookFromCatalog,
   MAX_SELF_DESCRIPTION,
   normalizeHex,
+  OUTFITS,
+  Outfit,
   parseConnectorMessage,
   parseViewerMessage,
   repairAvatar,
@@ -22,6 +31,8 @@ import {
   resolveLook,
   SHORT_SELF_DESCRIPTION,
   SKIN_TONES,
+  WRIST_KINDS,
+  WRISTWEAR,
 } from "../src/index.ts";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
@@ -97,6 +108,175 @@ describe("lookFromCatalog", () => {
 
   test("avatarFromSeed output has no look", () => {
     expect("look" in avatarFromSeed("anna")).toBe(false);
+  });
+});
+
+describe("lookFromCatalog: look editor items (#11 and later)", () => {
+  const a = avatarFromSeed("tom");
+  const of = (extra: Partial<AvatarCatalogSpec>) => lookFromCatalog({ ...a, ...extra });
+
+  test("every outfit maps to its own layers and colours", () => {
+    const jacket = of({ outfit: "jacket" });
+    expect(jacket).toEqual(lookFromCatalog(a)); // the original look
+    expect(jacket.outer).toMatchObject({ kind: "jacket", agentColored: true, open: false });
+    expect(jacket.shirt).toMatchObject({ kind: "tshirt", sleeves: "long" });
+    expect(jacket.shirt.ramp.base).toBe("#ffffff");
+
+    expect(of({ outfit: "hoodie" }).outer).toMatchObject({
+      kind: "zip-hoodie",
+      agentColored: true,
+      collar: "hood",
+      pockets: "kangaroo",
+    });
+
+    const flannel = of({ outfit: "flannel" });
+    expect(flannel.outer).toMatchObject({
+      kind: "jacket",
+      agentColored: false, // own colours: the agent shows as armband + pin
+      open: true,
+      collar: "shirt",
+      ramp: { base: "#8b9bb4", shadow: "#5a6988", light: "#c0cbdc" },
+      pattern: { kind: "plaid", a: "#ffffff", b: "#3a4466" },
+    });
+    expect(flannel.shirt).toMatchObject({ kind: "tshirt", ramp: { base: "#262b44" } }); // navy tee
+
+    const red = of({ outfit: "flannel-red" });
+    expect(red.outer).toMatchObject({
+      open: true,
+      agentColored: false,
+      ramp: { base: "#e43b44", shadow: "#a22633" },
+      pattern: { kind: "plaid", a: "#f6757a", b: "#181425" },
+    });
+
+    const tee = of({ outfit: "tee" });
+    expect(tee.outer.kind).toBe("none");
+    expect(tee.shirt).toMatchObject({
+      kind: "tshirt",
+      sleeves: "short",
+      ramp: { base: "#3a4466" },
+    });
+
+    for (const costume of ["cat", "robot", "astronaut", "pirate", "vampire", "disco"] as const) {
+      const l = of({ outfit: costume });
+      expect(l.outer).toMatchObject({ kind: "jacket", agentColored: false, open: false });
+      expect(l.extras?.costume).toBe(costume);
+    }
+    // every outfit is a different look, and none is a costume unless it is one
+    const looks = OUTFITS.map(({ id }) => JSON.stringify(of({ outfit: id })));
+    expect(new Set(looks).size).toBe(OUTFITS.length);
+    for (const o of ["jacket", "hoodie", "flannel", "flannel-red", "tee"] as const)
+      expect(of({ outfit: o }).extras?.costume).toBe("none");
+  });
+
+  test("every held item lands in the matching hand", () => {
+    for (const { id } of HELD_ITEMS) {
+      expect(of({ leftHand: id }).extras).toMatchObject({ leftHand: id, rightHand: "none" });
+      expect(of({ rightHand: id }).extras).toMatchObject({ leftHand: "none", rightHand: id });
+    }
+    expect(of({}).extras).toEqual({
+      leftHand: "none",
+      rightHand: "none",
+      costume: "none",
+      wrist: "none",
+      accent: "#2ce8f5",
+    });
+  });
+
+  test("bracelets and accent colours carry over", () => {
+    for (const { id } of WRISTWEAR) expect(of({ wrist: id }).extras?.wrist).toBe(id);
+    const accents = ACCENT_COLORS.map(({ id }) => of({ accentColor: id }).extras?.accent);
+    expect(new Set(accents).size).toBe(ACCENT_COLORS.length);
+    expect(of({ accentColor: "pink" }).extras?.accent).toBe("#f6757a");
+  });
+
+  test("cap-mint is a mint cap with a white logo, not the default", () => {
+    expect(of({ accessory: "cap-mint" }).headwear).toEqual({
+      style: "cap",
+      ramp: { base: "#2ce8f5", shadow: "#0099db", light: "#ffffff" },
+      accent: "#0099db",
+      logo: "#ffffff",
+    });
+    expect(of({ accessory: "cap-mint" }).headwear).not.toEqual(of({ accessory: "none" }).headwear);
+    expect(of({ accessory: "cap" }).headwear.logo).toBeUndefined();
+  });
+
+  test("every accessory maps to its own headwear or earring", () => {
+    const parts = ACCESSORIES.map(({ id }) => {
+      const l = of({ accessory: id });
+      return JSON.stringify([l.headwear, l.earrings]);
+    });
+    expect(new Set(parts).size).toBe(ACCESSORIES.length);
+    for (const id of ["cat-ears", "halo", "crown", "party-hat", "antenna"] as const)
+      expect(of({ accessory: id }).headwear.style).toBe(id);
+  });
+
+  test("flannel + beer (the review case): plaid flannel, beer in hand, mint cap", () => {
+    const look = of({
+      accessory: "cap-mint",
+      outfit: "flannel",
+      leftHand: "beer",
+      rightHand: "joint",
+    });
+    expect(CharacterLook.parse(look)).toEqual(look);
+    expect(look.outer.pattern.kind).toBe("plaid");
+    expect(look.outer.open).toBe(true);
+    expect(look.extras).toMatchObject({ leftHand: "beer", rightHand: "joint" });
+    expect(look.headwear).toMatchObject({ style: "cap", logo: "#ffffff" });
+    // not a plain jacket with empty hands
+    expect(look.outer).not.toEqual(lookFromCatalog(a).outer);
+  });
+
+  test("look id lists match the catalog", () => {
+    expect([...HELD_KINDS]).toEqual(HELD_ITEMS.map((e) => e.id));
+    expect([...WRIST_KINDS]).toEqual(WRISTWEAR.map((e) => e.id));
+    for (const c of COSTUME_KINDS) if (c !== "none") expect(Outfit.options).toContain(c);
+  });
+
+  test("resolveLook fills missing extras from the catalog fields", () => {
+    const { extras: _e, ...noExtras } = tracht.look;
+    const avatar = { ...tracht, leftHand: "coffee", look: noExtras } as const;
+    const parsed = AvatarSpec.parse(avatar);
+    expect(parsed.look?.extras).toBeUndefined();
+    expect(resolveLook(parsed).extras?.leftHand).toBe("coffee");
+    expect(resolveLook(parsed).outer).toEqual(tracht.look.outer);
+  });
+
+  test("a bad extras section drops only itself", () => {
+    const bad = { ...clone(tracht.look), extras: { leftHand: "sword" } };
+    const r = CharacterLook.parse(bad);
+    expect(r.extras).toBeUndefined();
+    expect(r.outer).toEqual(tracht.look.outer);
+  });
+
+  test("catalogAvatar drops the detailed look and keeps every id", () => {
+    const edited = { ...tracht, outfit: "flannel", leftHand: "beer" } as const;
+    const c = catalogAvatar(edited);
+    expect("look" in c).toBe(false);
+    expect(c).toMatchObject({ outfit: "flannel", leftHand: "beer", hairStyle: tracht.hairStyle });
+    expect(resolveLook(c)).toEqual(lookFromCatalog(c));
+  });
+
+  test("repairAvatar keeps outfit, hands, wrist, accent and vehicle", () => {
+    const candidate = {
+      ...avatarFromSeed("x"),
+      outfit: "flannel",
+      leftHand: "beer",
+      rightHand: "joint",
+      wrist: "rainbow",
+      accentColor: "gold",
+      vehicle: "skateboard",
+      hairColor: "plaid", // one bad field forces a repair
+    };
+    const { avatar, repaired } = repairAvatar(candidate, "x");
+    expect(repaired).toBe(true);
+    expect(avatar).toMatchObject({
+      outfit: "flannel",
+      leftHand: "beer",
+      rightHand: "joint",
+      wrist: "rainbow",
+      accentColor: "gold",
+      vehicle: "skateboard",
+    });
   });
 });
 

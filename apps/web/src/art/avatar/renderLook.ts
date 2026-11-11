@@ -69,7 +69,11 @@ export function lookFor(
     accent: !agentOnOuter(look),
     // as before: the little hat replaces headphones and sits next to a bow; other headwear wins
     hat: !!variation?.hat && HAT_OK.has(look.headwear.style),
-    mug: !!variation?.mug,
+    // hands already full: no session mug
+    mug:
+      !!variation?.mug &&
+      (look.extras?.leftHand ?? "none") === "none" &&
+      (look.extras?.rightHand ?? "none") === "none",
   };
 }
 
