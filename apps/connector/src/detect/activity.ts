@@ -74,7 +74,7 @@ const RUNNING = new Set([
 ]);
 
 /** Tools that put a question to the human and wait for the answer (MCP prefixes allowed). */
-const ASKING = /(^|_)(ask_?user_?question|ask_?question|request_?user_?input)$/;
+const ASKING = /(^|_)(ask_?user_?question|purrness_ask_question|request_?user_?input)$/;
 
 /** Tool name -> activity. Case-insensitive; unknown tools (incl. MCP tools) -> thinking. */
 export function toolActivity(name: string): Activity {

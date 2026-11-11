@@ -146,6 +146,13 @@ describe("detectors on fixtures/home", () => {
       "claude:website",
       "pi:pi-proj",
     ]);
+    // resumed natively (`claude --resume <id>`): a top-level pid owns it -> visible again
+    procs = [
+      { pid: 778, agent: "pi" },
+      { pid: 12345, agent: "claude" },
+    ];
+    sessions = await d.poll();
+    expect(byProject(sessions)["agent-office"]?.agent).toBe("claude");
     // a standalone Claude on the same pid file is a desk as usual
     sessions = await detector({ procs: [{ pid: 12345, agent: "claude" }] }).poll();
     expect(byProject(sessions)["agent-office"]?.agent).toBe("claude");
@@ -181,6 +188,13 @@ describe("detectors on fixtures/home", () => {
     // nothing hosted: the quiet transcript is idle again
     const idle = await detector({ procs: [host], cwds }).poll();
     expect(idle[0]).toMatchObject({ activity: "idle", subagents: 0 });
+    // a long-lived hosted process (e.g. `claude mcp serve`) keeps it busy for 10 min at most
+    h.age(P.pi, 11 * 60_000);
+    const stale = await detector({
+      procs: [host, { pid: 810, agent: "pi", hostPid: 778 }],
+      cwds,
+    }).poll();
+    expect(stale[0]).toMatchObject({ activity: "idle", subagents: 0 });
   });
 
   test("subagents older than 60 s are not counted", async () => {
@@ -318,7 +332,14 @@ describe("activity mapping", () => {
     ]) {
       expect(toolActivity(t)).toBe("waiting");
     }
-    for (const t of ["ask_questions_later", "task"]) expect(toolActivity(t)).toBe("thinking");
+    for (const t of [
+      "ask_questions_later",
+      "task",
+      "ask_question",
+      "mcp__deepwiki__ask_question",
+    ]) {
+      expect(toolActivity(t)).toBe("thinking");
+    }
   });
 
   test("events + time", () => {
@@ -449,6 +470,22 @@ describe("helpers", () => {
       { pid: 20, agent: "pi" },
       { pid: 40, agent: "pi", hostPid: 20 },
       { pid: 50, agent: "claude" },
+    ]);
+    // npm Codex: `node …/bin/codex` and its vendored native binary are one agent, not a host
+    // + hosted helper; an agent below the native binary is hosted by the launcher
+    const vendored = "/x/@openai/codex/vendor/aarch64-apple-darwin/codex/codex";
+    expect(
+      parsePs(
+        `60 1 node /opt/homebrew/bin/codex\n61 60 ${vendored} --sandbox\n62 61 /bin/zsh -c x\n63 62 claude -p hi\n`,
+      ),
+    ).toEqual([
+      { pid: 60, agent: "codex" },
+      { pid: 63, agent: "claude", hostPid: 60 },
+    ]);
+    // a JS-run pi worker under a JS-run pi (Linux argv) is still a hosted helper
+    expect(parsePs("70 1 node /x/bin/pi\n71 70 node /x/bin/pi --mode json\n")).toEqual([
+      { pid: 70, agent: "pi" },
+      { pid: 71, agent: "pi", hostPid: 70 },
     ]);
     // parent cycles and missing parents never hang
     expect(

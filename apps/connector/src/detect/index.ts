@@ -14,7 +14,8 @@
  * never counts as running, and a session its pid file ties it to is hidden for good, so the
  * host's session is the only desk. Hosted agents that are not model backends (e.g. purrness
  * subagent workers, `pi` under `pi`) are the host session's helpers (robots), and any live
- * hosted process keeps the host session from going idle while its transcript is quiet.
+ * hosted process keeps the host session from going idle while its transcript is quiet, for at
+ * most HOSTED_BUSY_MAX_MS. A hidden session shows again once a top-level pid owns it.
  */
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
@@ -58,6 +59,9 @@ export function projectName(cwd: string | undefined): string | undefined {
 
 const MAX_SESSIONS = 200;
 
+/** Hosted processes keep a quiet desk busy for at most this much transcript silence. */
+export const HOSTED_BUSY_MAX_MS = 10 * 60_000;
+
 export class Detector {
   private tail = new TailReader();
   private metaCache: MetaCache = new Map();
@@ -94,7 +98,12 @@ export class Detector {
     procs = allProcs.filter((p) => p.hostPid === undefined);
     const idOf = (c: Candidate) => `${c.agent}:${c.rawId}`;
     for (const c of scanned) {
-      if (c.pids.some((pid) => hostedPids.has(pid))) this.hostedIds.add(idOf(c));
+      const topLevel = c.pids.some((pid) =>
+        procs.some((p) => p.pid === pid && p.agent === c.agent),
+      );
+      // a top-level pid owning it (e.g. `claude --resume <id>`) makes the session visible again
+      if (topLevel) this.hostedIds.delete(idOf(c));
+      else if (c.pids.some((pid) => hostedPids.has(pid))) this.hostedIds.add(idOf(c));
     }
     // remembered after the hosted process exits: its transcript stays fresh for a while
     const present = new Set(scanned.map(idOf));
@@ -160,7 +169,7 @@ export class Detector {
       }
       const c = top && top.hostPid === undefined ? owner.get(top.pid) : undefined;
       if (!c) continue;
-      busy.add(c);
+      if (now - c.mtimeMs < HOSTED_BUSY_MAX_MS) busy.add(c);
       if (!h.backend) helpers.set(c, (helpers.get(c) ?? 0) + 1);
     }
 

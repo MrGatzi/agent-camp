@@ -24,7 +24,14 @@ export type ProcInfo = {
 };
 
 /** Any process: its parent pid and, if it is a coding agent, which one. */
-export type ProcRow = { pid: number; ppid: number; agent: AgentKind | null; backend?: boolean };
+export type ProcRow = {
+  pid: number;
+  ppid: number;
+  agent: AgentKind | null;
+  backend?: boolean;
+  /** argv0 is a JS runtime (`node …/bin/codex`), not the agent's native binary */
+  launcher?: boolean;
+};
 
 /** The Claude Agent SDK's bundled `claude` (`@anthropic-ai/claude-agent-sdk-<platform>/claude`). */
 export function isAgentSdkBackend(argv: readonly string[]): boolean {
@@ -35,6 +42,7 @@ function row(pid: number, ppid: number, argv: readonly string[]): ProcRow {
   const agent = classifyArgv(argv);
   const r: ProcRow = { pid, ppid, agent };
   if (agent === "claude" && isAgentSdkBackend(argv)) r.backend = true;
+  if (agent && RUNTIMES.has(basename(argv[0] ?? ""))) r.launcher = true;
   return r;
 }
 
@@ -86,19 +94,28 @@ async function run(cmd: string[]): Promise<string> {
 /**
  * Agent processes of a process table, each with the pid of its nearest agent ancestor
  * (`hostPid`) when it runs inside another coding agent.
+ *
+ * A JS launcher's own native binary is the same agent, not a hosted one: npm-installed Codex
+ * runs as `node …/bin/codex` plus a child `…/vendor/…/codex/codex`. Such a child (same kind,
+ * native, direct parent a launcher) is left out, and agents below it see the launcher as host.
  */
 export function agentProcesses(rows: readonly ProcRow[]): ProcInfo[] {
   const byPid = new Map<number, ProcRow>();
   for (const r of rows) byPid.set(r.pid, r);
+  const wrapped = (r: ProcRow) => {
+    const parent = byPid.get(r.ppid);
+    return !r.launcher && parent?.launcher === true && parent.agent === r.agent;
+  };
+  const isAgent = (r: ProcRow) => r.agent !== null && !wrapped(r);
   const procs: ProcInfo[] = [];
   for (const r of rows) {
-    if (!r.agent) continue;
+    if (!r.agent || !isAgent(r)) continue;
     const info: ProcInfo = { pid: r.pid, agent: r.agent };
     if (r.backend) info.backend = true;
     const seen = new Set<number>([r.pid]);
     let parent = byPid.get(r.ppid);
     while (parent && !seen.has(parent.pid)) {
-      if (parent.agent) {
+      if (isAgent(parent)) {
         info.hostPid = parent.pid;
         break;
       }
