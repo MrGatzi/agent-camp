@@ -170,7 +170,10 @@ desk.
 The studio also has a **Describe your look** box: write how you look (a few words or a whole
 paragraph) and press **Generate look**; your Mac draws you from it (as above) within a
 minute or two, replacing a look picked in the studio. Pressing it again with the same text is
-a fresh try (one per person every 20 s). Like editing your look, this needs **It's me** first:
+a fresh try (one per person every 20 s, and one at a time: a new one waits until the last one
+is drawn). Without a Mac that can draw it, the office's own AI draws it, at most 5 times per
+person per day (`GENUI_MAX_CALLS_PER_PERSON`), so nobody uses up the shared daily cap; looks
+drawn on your own Mac do not count. Like editing your look, this needs **It's me** first:
 only your own browser can ask, only your own Mac's answer is taken. The text becomes your description, just
 like one set with `agent-office configure --description-file` (a connector that keeps sending
 its old, unchanged description does not undo it). If AI looks are off on the server, the box
@@ -389,9 +392,11 @@ Deploys keep what you add there; only the variables listed in `apps/server/wrang
 reset to its values.
 With AI on, a described person costs one call per description change (default model
 `claude-haiku-4-5`, roughly $0.02-0.04 per call); `GENUI_MAX_CALLS_PER_DAY` (default 50)
-bounds the day. People without a description never cause a call. For more faithful looks set
-the *Text* variable `GENUI_MODEL=claude-opus-5-5` (roughly $0.10-0.15 and 30-90 s per call at
-the default `GENUI_EFFORT=low`). A deploy that bumps the look revision regenerates every
+bounds the day, and `GENUI_MAX_CALLS_PER_PERSON` (default 5) the look studio's Generates per
+person per day on it (looks drawn on a person's own Mac count against neither). People
+without a description never cause a call. For more faithful looks set the *Text* variable
+`GENUI_MODEL=claude-opus-5-5` (roughly $0.10-0.15 and 30-90 s per call at the default
+`GENUI_EFFORT=low`). A deploy that bumps the look revision regenerates every
 described person once, within the same daily cap.
 
 **Order when a change touches both sides:** release the connector before the server is

@@ -7,14 +7,21 @@ import {
   resolveLook,
 } from "@agent-office/protocol";
 import { LOOK_FIXTURES } from "@agent-office/protocol/fixtures";
-import { OfficeApp, SNAPSHOT_MAX_BYTES, SNAPSHOT_MIN_INTERVAL_MS } from "../../src/core/app.ts";
-import { MemoryStore } from "../../src/core/store.ts";
+import {
+  LOOK_GENERATES_PER_DAY,
+  LOOK_LOCAL_RETRY_MS,
+  OfficeApp,
+  SNAPSHOT_MAX_BYTES,
+  SNAPSHOT_MIN_INTERVAL_MS,
+} from "../../src/core/app.ts";
+import { MemoryStore, type Store } from "../../src/core/store.ts";
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]);
 
 function setup(
   env: Record<string, string> = { CONNECTOR_PASSWORD: "pw" },
   fetch?: typeof globalThis.fetch,
+  store: Store = new MemoryStore(),
 ) {
   let now = 1_000_000;
   const sent: string[] = [];
@@ -25,7 +32,7 @@ function setup(
   const toConnector: { socketId: string; data: string }[] = [];
   const app = new OfficeApp(
     env,
-    new MemoryStore(),
+    store,
     {
       broadcast: (d) => sent.push(d),
       scheduleAlarm: (a) => alarms.push(a),
@@ -40,6 +47,8 @@ function setup(
   return { app, sent, alarms, toConnector, pending, advance: (ms: number) => (now += ms) };
 }
 const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);
+/** a connector's heartbeat: keeps it live across long `advance`s */
+const beat = JSON.stringify(envelope("presence.snapshot", { sessions: [] }));
 
 describe("OfficeApp", () => {
   test("connector flow broadcasts events and arms the alarm", async () => {
@@ -692,7 +701,8 @@ describe("OfficeApp look editor", () => {
       // the older answer first: dropped, the picked look stays until the newer one is there
       const first = describeLook(app, "tom", { description: "Tracht" });
       await ai.calls(1);
-      advance(20_000);
+      advance(LOOK_LOCAL_RETRY_MS); // a Generate this old no longer blocks a new one
+      app.connectorMessage("s1", beat);
       const second = describeLook(app, "tom", { description: "Tracht" });
       await ai.calls(2);
       ai.held[0]!(LOOK_FIXTURES.tracht);
@@ -707,7 +717,8 @@ describe("OfficeApp look editor", () => {
       advance(20_000);
       const third = describeLook(app, "tom", { description: "Tracht" });
       await ai.calls(3);
-      advance(20_000);
+      advance(LOOK_LOCAL_RETRY_MS);
+      app.connectorMessage("s1", beat);
       const fourth = describeLook(app, "tom", { description: "Tracht" });
       await ai.calls(4);
       ai.held[3]!(LOOK_FIXTURES.tracht);
@@ -715,6 +726,58 @@ describe("OfficeApp look editor", () => {
       ai.held[2]!(newer);
       expect(await (await third)!.json()).toMatchObject({ result: "superseded" });
       expect(app.hub.state().people[0]!.avatar.hairColor).toBe(LOOK_FIXTURES.tracht.hairColor);
+    });
+
+    test("one Generate at a time: a second one while the AI still draws is refused", async () => {
+      const ai = heldProvider();
+      const { app, advance } = await customTom(ai.fetch);
+      const first = describeLook(app, "tom", { description: "Tracht" });
+      await ai.calls(1);
+      advance(60_000);
+      const r = (await describeLook(app, "tom", { description: "blue mohawk" }))!;
+      expect(r.status).toBe(429);
+      expect(((await r.json()) as { error: string }).error).toContain("still drawing");
+      expect(app.hub.descriptionOf("tom")).toBe("Tracht"); // refused: nothing changed
+      ai.held[0]!(LOOK_FIXTURES.tracht);
+      expect(await (await first)!.json()).toMatchObject({ result: "ai" });
+      // done: the next one goes through
+      const next = describeLook(app, "tom", { description: "blue mohawk" });
+      await ai.calls(2);
+      ai.held[1]!(LOOK_FIXTURES.tracht);
+      expect((await next)!.status).toBe(200);
+    });
+
+    test(`the server's AI draws ${LOOK_GENERATES_PER_DAY} Generates per person a day, kept in the store`, async () => {
+      const bodies: unknown[] = [];
+      const t = setup(aiEnv, traceFetch(bodies));
+      t.app.connectorMessage("s1", hello("Tom", "red hoodie"));
+      await Promise.all(t.pending);
+      expect(bodies).toHaveLength(1); // the join's look is not a Generate
+      me = await claim(t, "tom");
+      for (let i = 0; i < LOOK_GENERATES_PER_DAY; i++) {
+        t.advance(20_000);
+        expect((await describeLook(t.app, "tom", { description: `look ${i}` }))!.status).toBe(200);
+      }
+      expect(bodies).toHaveLength(1 + LOOK_GENERATES_PER_DAY);
+      t.advance(20_000);
+      const r = (await describeLook(t.app, "tom", { description: "one more" }))!;
+      expect(r.status).toBe(429);
+      expect(((await r.json()) as { error: string }).error).toContain("midnight UTC");
+      expect(r.headers.get("retry-after")).not.toBeNull();
+      expect(bodies).toHaveLength(1 + LOOK_GENERATES_PER_DAY);
+      expect(t.app.hub.descriptionOf("tom")).toBe(`look ${LOOK_GENERATES_PER_DAY - 1}`);
+
+      // a restart (new instance, same store) still knows; the next day starts over
+      const again = setup(aiEnv, traceFetch(bodies), t.app.store);
+      again.app.connectorMessage("s1", hello("Tom"));
+      await Promise.all(again.pending);
+      const calls = bodies.length;
+      again.advance(20_000);
+      expect((await describeLook(again.app, "tom", { description: "one more" }))!.status).toBe(429);
+      again.advance(86_400_000);
+      again.app.connectorMessage("s1", hello("Tom"));
+      expect((await describeLook(again.app, "tom", { description: "one more" }))!.status).toBe(200);
+      expect(bodies).toHaveLength(calls + 1);
     });
 
     test("a new description from the Mac meanwhile drops the answer, the picked look stays", async () => {
@@ -928,6 +991,89 @@ describe("OfficeApp look editor", () => {
       await Promise.all(off.pending);
       expect(off.app.hub.state().people[0]!.avatar).toEqual(seeded);
       expect(off.app.store.getAvatar("anna")?.key).toEndWith(":fallback");
+    });
+
+    test("Generates on your own Mac are not limited; at the limit a failed one stays", async () => {
+      const bodies: unknown[] = [];
+      const t = setup(
+        {
+          CONNECTOR_PASSWORD: "pw",
+          GENUI_PROVIDER: "anthropic",
+          ANTHROPIC_API_KEY: "k",
+          LATEST_CONNECTOR_VERSION: "1.0.0",
+          GENUI_MAX_CALLS_PER_PERSON: "1",
+        },
+        (async (_u: unknown, init: RequestInit) => {
+          bodies.push(init.body);
+          return Response.json({
+            stop_reason: "end_turn",
+            content: [{ type: "text", text: JSON.stringify(LOOK_FIXTURES.tracht) }],
+          });
+        }) as unknown as typeof globalThis.fetch,
+      );
+      const { app, toConnector, pending, advance } = t;
+      app.connectorMessage("s1", helloLocal("Tom"));
+      await Promise.all(pending);
+      me = await claim(t, "tom");
+      const generate = async (reply: Record<string, unknown>) => {
+        advance(20_000);
+        app.connectorMessage("s1", beat);
+        const r = (await describeLook(app, "tom", "Tracht"))!;
+        expect(await r.json()).toMatchObject({ result: "pending" });
+        app.connectorMessage(
+          "s1",
+          answer(lookRequests(toConnector).at(-1)!.msg.data.requestId, reply),
+        );
+        await Promise.all(pending);
+      };
+      for (let i = 0; i < 3; i++) await generate({ avatar: LOOK_FIXTURES.tracht });
+      expect(bodies).toHaveLength(0);
+      // the Mac fails: the server's AI tries, once (the limit here is 1)
+      await generate({ error: "exit 1: not logged in" });
+      expect(bodies).toHaveLength(1);
+      const before = app.hub.state().people[0]!.avatar;
+      await generate({ error: "exit 1: not logged in" });
+      expect(bodies).toHaveLength(1);
+      expect(app.hub.state().people[0]!.avatar).toEqual(before);
+      // no Mac to draw it: refused up front, with the hint
+      app.connectorClosed("s1");
+      advance(20_000);
+      const r = (await describeLook(app, "tom", "Tracht"))!;
+      expect(r.status).toBe(429);
+      expect(((await r.json()) as { error: string }).error).toContain("own subscription");
+      expect(bodies).toHaveLength(1);
+    });
+
+    test("a Generate waits while the Mac still draws the last one", async () => {
+      const t = setup();
+      const { app, toConnector, pending, advance } = t;
+      app.connectorMessage("s1", helloLocal("Tom"));
+      await Promise.all(pending);
+      me = await claim(t, "tom");
+      const generate = async () => {
+        app.connectorMessage("s1", beat);
+        return (await describeLook(app, "tom", "Tracht"))!;
+      };
+      expect((await generate()).status).toBe(200);
+      advance(20_000);
+      const r = await generate();
+      expect(r.status).toBe(429);
+      expect(((await r.json()) as { error: string }).error).toContain("Mac is still drawing");
+      // answered: the next one may start
+      const ask = lookRequests(toConnector).at(-1)!;
+      app.connectorMessage("s1", answer(ask.msg.data.requestId, { avatar: LOOK_FIXTURES.tracht }));
+      await Promise.all(pending);
+      expect((await generate()).status).toBe(200);
+      // never answered: blocks until it is stale
+      advance(20_000);
+      expect((await generate()).status).toBe(429);
+      advance(LOOK_LOCAL_RETRY_MS);
+      expect((await generate()).status).toBe(200);
+      // a look picked meanwhile cancels it (its answer is dropped), so no need to wait
+      advance(20_000);
+      expect((await put(app, "tom", { avatar: tomLook }))!.status).toBe(200);
+      expect((await generate()).status).toBe(200);
+      expect(lookRequests(toConnector)).toHaveLength(4);
     });
 
     test("a request the Mac never answered is asked again on a later hello", async () => {

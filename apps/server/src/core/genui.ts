@@ -70,6 +70,8 @@ export type GenuiEnv = {
   GENUI_PROVIDER?: string;
   GENUI_MODEL?: string;
   GENUI_MAX_CALLS_PER_DAY?: string;
+  /** look studio Generates per person per day on the server's provider (app.ts), default 5 */
+  GENUI_MAX_CALLS_PER_PERSON?: string;
   /**
    * anthropic only: low (default) | medium | high | xhigh | max; not sent to models without
    * effort, such as the default claude-haiku-4-5 (it matters with e.g. claude-opus-5-5)
@@ -492,9 +494,13 @@ export class AvatarService {
   /**
    * Resolve a look for a Hub avatar job. No description or no provider -> no call, previous
    * look kept. On failure the returned key is marked so the next join retries (still bounded
-   * by the cap).
+   * by the cap). `take` is asked right before a call is counted (the studio's per-person
+   * limit, see app.ts): false keeps the current look, as the daily cap does.
    */
-  async resolve(job: AvatarJob | (AvatarRequest & { key?: string })): Promise<AvatarResult> {
+  async resolve(
+    job: AvatarJob | (AvatarRequest & { key?: string }),
+    opts: { take?: () => boolean } = {},
+  ): Promise<AvatarResult> {
     const key = job.key ?? this.cacheKey(job.name, job.selfDescription);
     const keep = job.previous ?? avatarFromSeed(job.personId);
     if (!job.selfDescription?.trim()) return { avatar: keep, key, source: "seed" };
@@ -505,6 +511,12 @@ export class AvatarService {
     if (used >= this.maxCallsPerDay) {
       this.log(
         `genui ${this.providerId} daily cap reached (${used}), keeping current look for ${job.personId}`,
+      );
+      return fallback;
+    }
+    if (opts.take && !opts.take()) {
+      this.log(
+        `genui ${this.providerId} ${job.personId} used their looks for today, kept current look`,
       );
       return fallback;
     }

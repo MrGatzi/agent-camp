@@ -86,6 +86,12 @@ export const LOOK_MIN_INTERVAL_MS = 1_000;
 export const LOOK_DESCRIBE_MIN_INTERVAL_MS = 20_000;
 /** A look request a Mac never answered is asked again on that person's next hello after this. */
 export const LOOK_LOCAL_RETRY_MS = 5 * 60_000;
+/**
+ * Look studio Generates per person per day (UTC) drawn by the server's provider
+ * (GENUI_MAX_CALLS_PER_PERSON overrides), so one person cannot use up the shared
+ * GENUI_MAX_CALLS_PER_DAY. Looks drawn on their own Mac (their own subscription) do not count.
+ */
+export const LOOK_GENERATES_PER_DAY = 5;
 
 /** A look request sent to a person's connector (one per person, kept in the store). */
 type PendingLook = {
@@ -146,6 +152,9 @@ export class OfficeApp {
   readonly party: Party;
   private lastLook = new Map<string, number>();
   private lastDescribe = new Map<string, number>();
+  /** studio Generates the server's provider is drawing: person -> its studio token, start */
+  private generating = new Map<string, { studio: string; at: number }>();
+  private readonly maxGenerates: number;
   private lastClaim = new Map<string, number>();
 
   constructor(
@@ -157,6 +166,9 @@ export class OfficeApp {
     this.party = new Party(store);
     const log = opts.log ?? ((l: string) => console.log(l));
     this.timezone = env.OFFICE_TIMEZONE || "Europe/Vienna";
+    const maxGenerates = Number.parseInt(env.GENUI_MAX_CALLS_PER_PERSON ?? "", 10);
+    this.maxGenerates =
+      Number.isFinite(maxGenerates) && maxGenerates >= 0 ? maxGenerates : LOOK_GENERATES_PER_DAY;
     this.genui = createAvatarService(env, store, {
       log,
       ...(opts.fetch ? { fetch: opts.fetch } : {}),
@@ -338,7 +350,7 @@ export class OfficeApp {
       this.hub.log(
         `look ${g.personId}: their Mac could not draw it (${g.error ?? "unusable answer"}), trying the server`,
       );
-      res = await this.genui.resolve(pending.job);
+      res = await this.serverLook(pending.job, pending.studio);
     }
     this.applyLook(pending.job, res, pending.studio);
   }
@@ -352,11 +364,61 @@ export class OfficeApp {
     if (!pending || this.now() - pending.at < LOOK_LOCAL_RETRY_MS) return;
     this.store.kvPut(pendingLookKey(personId), "");
     if (this.requestLocalLook(pending.job, { prefer: socketId, studio: pending.studio })) return;
-    const p = this.genui
-      .resolve(pending.job)
+    const p = this.serverLook(pending.job, pending.studio)
       .then((res) => this.applyLook(pending.job, res, pending.studio))
       .catch((err) => console.error("avatar job failed", err));
     this.transport.waitUntil?.(p);
+  }
+
+  // ---- look studio limits -----------------------------------------------------------------
+
+  private generatesKey(personId: string): string {
+    return `look.generates.${personId}.${new Date(this.now()).toISOString().slice(0, 10)}`;
+  }
+
+  private generatesToday(personId: string): number {
+    return Number(this.store.kvGet(this.generatesKey(personId)) ?? 0);
+  }
+
+  /**
+   * The server's provider draws a look. For a studio Generate (`studio`, directly or after
+   * their Mac failed) it counts against the person's daily limit (at the limit the current
+   * look stays, as at the daily cap) and is marked as running, so the studio cannot start
+   * another one meanwhile.
+   */
+  private async serverLook(job: AvatarJob, studio?: string): Promise<AvatarResult> {
+    if (!studio) return this.genui.resolve(job);
+    const { personId } = job;
+    this.generating.set(personId, { studio, at: this.now() });
+    try {
+      return await this.genui.resolve(job, {
+        take: () => {
+          const used = this.generatesToday(personId);
+          if (used >= this.maxGenerates) return false;
+          this.store.kvPut(this.generatesKey(personId), String(used + 1));
+          return true;
+        },
+      });
+    } finally {
+      if (this.generating.get(personId)?.studio === studio) this.generating.delete(personId);
+    }
+  }
+
+  /** Why a new studio Generate must wait for the last one (null = it need not). */
+  private generateRunning(personId: string, now: number): string | null {
+    // both bounded by LOOK_LOCAL_RETRY_MS: a hung call or a gone Mac never locks anyone out
+    const g = this.generating.get(personId);
+    if (g && now - g.at < LOOK_LOCAL_RETRY_MS)
+      return "the AI is still drawing your last look, wait for it first";
+    const pending = this.pendingLook(personId);
+    // a look picked since then cancelled it (its answer is dropped), so that one is not waited for
+    if (
+      pending?.studio &&
+      pending.studio === this.store.kvGet(studioKey(personId)) &&
+      now - pending.at < LOOK_LOCAL_RETRY_MS
+    )
+      return "your Mac is still drawing your last look, wait for it first";
+    return null;
   }
 
   /**
@@ -735,9 +797,10 @@ export class OfficeApp {
   }
 
   /**
-   * Look studio: the owner describes their look, the server's GenUI turns it into one. Waits
-   * for the AI (up to its timeout) so the studio can show the result. The description is
-   * saved even when AI looks are off, so it is used as soon as they are turned on.
+   * Look studio: the owner describes their look, their Mac or the server's GenUI turns it
+   * into one. Waits for the server's AI (up to its timeout) so the studio can show the result.
+   * The description is saved even when AI looks are off, so it is used as soon as they are
+   * turned on. One Generate at a time per person, and LOOK_GENERATES_PER_DAY on the server's AI.
    */
   private async describeLook(req: Request, personId: string): Promise<Response> {
     let body: unknown;
@@ -750,12 +813,29 @@ export class OfficeApp {
     if (!parsed.success)
       return json({ error: z.prettifyError(parsed.error).slice(0, 500) }, { status: 400 });
     const now = this.now();
+    const running = this.generateRunning(personId, now);
+    if (running) return json({ error: running }, { status: 429 });
     const retryIn = (this.lastDescribe.get(personId) ?? 0) + LOOK_DESCRIBE_MIN_INTERVAL_MS - now;
     if (retryIn > 0)
       return json(
         { error: `one new look at a time, try again in ${Math.ceil(retryIn / 1000)} s` },
         { status: 429, headers: { "retry-after": String(Math.ceil(retryIn / 1000)) } },
       );
+    // no Mac of theirs can draw it, so the server's AI would: refused up front at their limit
+    const mac = !!this.transport.sendToConnector && !!this.hub.lookSocketOf(personId, now);
+    if (
+      !mac &&
+      this.genui.providerId !== "off" &&
+      this.generatesToday(personId) >= this.maxGenerates
+    ) {
+      const resetIn = Math.ceil((86_400_000 - (now % 86_400_000)) / 1000);
+      return json(
+        {
+          error: `you used today's ${this.maxGenerates} looks from the office's AI, more after midnight UTC (or connect a Mac with Claude Code or Codex: it draws them on your own subscription)`,
+        },
+        { status: 429, headers: { "retry-after": String(resetIn) } },
+      );
+    }
     const job = this.hub.describeLook(personId, parsed.data.description);
     if (!job) return json({ error: "not in the office" }, { status: 404 });
     this.lastDescribe.set(personId, now);
@@ -777,7 +857,7 @@ export class OfficeApp {
         } satisfies LookDescribeResponse);
     }
 
-    const res = await this.genui.resolve(job);
+    const res = await this.serverLook(job, studio);
     // a new AI look replaces a look picked in the editor: that is what "Generate" asked for
     const shown = this.applyLook(job, res, studio);
     const avatar = current() ?? res.avatar;
