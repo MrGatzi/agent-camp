@@ -43,6 +43,7 @@ describe("config.toml", () => {
         machine_name: "devbox",
         share_project_names: false,
         helpers: "cats" as const,
+        design_window: true,
         cowork: true,
       };
       saveConfig(path, written);
@@ -85,6 +86,7 @@ describe("config.toml", () => {
         notifications: true,
         look_generator: "auto",
         helpers: "robots",
+        design_window: false,
         cowork: false,
         client_id: "c_abc",
         name: "Zoe",
@@ -197,6 +199,42 @@ describe("cowork", () => {
       expect((await run("configure", "--get", "cowork")).out).toBe("true");
       expect((await run("configure", "--cowork", "false")).code).toBe(0);
       expect((await run("configure", "--get", "cowork")).out).toBe("false");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("design window", () => {
+  test("off by default; only true turns it on", () => {
+    expect(toConfig({}).design_window).toBe(false);
+    expect(toConfig({ design_window: true }).design_window).toBe(true);
+    expect(toConfig({ design_window: "true" }).design_window).toBe(true);
+    expect(toConfig({ design_window: "yes" }).design_window).toBe(false);
+  });
+
+  test("configure --design-window writes it and explains the permission", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ao-cfg-"));
+    try {
+      const main = join(import.meta.dir, "..", "src", "main.ts");
+      const env = { ...process.env, AGENT_OFFICE_CONFIG_DIR: dir };
+      const run = async (...args: string[]) => {
+        const p = Bun.spawn([process.execPath, main, ...args], {
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const out = await new Response(p.stdout).text();
+        return { code: await p.exited, out: out.trim() };
+      };
+      expect((await run("configure", "--get", "design_window")).out).toBe("false");
+      const on = await run("configure", "--design-window", "true");
+      expect(on.code).toBe(0);
+      expect(on.out).toContain("Accessibility");
+      expect((await run("configure", "--get", "design_window")).out).toBe("true");
+      const off = await run("configure", "--design-window", "false");
+      expect(off.out).not.toContain("Accessibility");
+      expect((await run("configure", "--get", "design_window")).out).toBe("false");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

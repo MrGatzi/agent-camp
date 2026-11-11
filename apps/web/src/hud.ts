@@ -52,6 +52,7 @@ const AGENT_LABEL: Record<AgentKind, string> = {
   claude: "Claude",
   codex: "Codex",
   pi: "Pi",
+  design: "Design",
   unknown: "Agent",
 };
 const ACTIVITY_LABEL: Record<(typeof ACTIVITIES)[number], string> = {
@@ -76,6 +77,7 @@ const AGENT_TITLE: Record<AgentKind, string> = {
   claude: "Claude Code",
   codex: "Codex",
   pi: "Pi",
+  design: "Claude Design",
   unknown: "Agent",
 };
 export type PokeRequest = {

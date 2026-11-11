@@ -18,11 +18,16 @@ import {
   type LookRequested,
   type Welcomed,
 } from "./client.ts";
+import type { DesignWatchStatus } from "./desktop.ts";
 import { snapshotKey } from "./detect/index.ts";
 import type { Logger } from "./log.ts";
 import { isNewer, type Updater } from "./update.ts";
 
-export type Poller = { poll(): Promise<SessionInfo[]> };
+export type Poller = {
+  poll(): Promise<SessionInfo[]>;
+  /** state of the Claude Design watch; undefined when it is off */
+  readonly designStatus?: DesignWatchStatus | undefined;
+};
 
 export type DaemonOptions = {
   server: string;
@@ -56,10 +61,22 @@ export type StatusFile = {
   updatedAt: number;
   /** local AI that draws the look, e.g. "claude (/Users/x/.local/bin/claude)" or "off" */
   looks?: string;
+  /** Claude Design watch (only when `design_window` is on) */
+  designWindow?: DesignWatchStatus;
   sessions: Omit<SessionInfo, "sessionKey">[];
 };
 
-const label = (s: SessionInfo) => `${s.agent} ${s.project ?? "(hidden)"}`;
+/** What the Claude Design watch states mean, for the log and `agent-office status`. */
+export const DESIGN_STATUS_TEXT: Record<DesignWatchStatus, string> = {
+  watching: "watching the Claude app for a Claude Design canvas",
+  "needs-permission":
+    "needs permission: allow agent-office under System Settings > Privacy & Security > " +
+    "Accessibility",
+  error: "could not ask macOS what the Claude app shows (will retry)",
+};
+
+const label = (s: SessionInfo) =>
+  s.agent === "design" ? "design window" : `${s.agent} ${s.project ?? "(hidden)"}`;
 
 /** Human-readable change lines between two snapshots. */
 export function describeChanges(prev: SessionInfo[], next: SessionInfo[]): string[] {
@@ -90,6 +107,7 @@ export class Daemon {
   private stopped = false;
   /** a drawn look that could not be sent (connection dropped meanwhile): sent on the next welcome */
   private unsentLook: MessageData<"connector.lookGenerated"> | null = null;
+  private designStatus: DesignWatchStatus | undefined;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -151,6 +169,11 @@ export class Daemon {
       }
     } catch (e) {
       this.opts.log(`poll error: ${(e as Error).message}`);
+    }
+    const design = this.opts.detector.designStatus;
+    if (design !== this.designStatus) {
+      this.designStatus = design;
+      if (design) this.opts.log(`design window: ${DESIGN_STATUS_TEXT[design]}`);
     }
     this.writeStatus();
     if (!this.stopped) {
@@ -222,6 +245,8 @@ export class Daemon {
       ...(this.opts.looksLabel ? { looks: this.opts.looksLabel } : {}),
       sessions: this.sessions.map(({ sessionKey: _k, ...rest }) => rest),
     };
+    const design = this.opts.detector.designStatus;
+    if (design) status.designWindow = design;
     try {
       mkdirSync(dirname(file), { recursive: true });
       const tmp = `${file}.tmp`;
