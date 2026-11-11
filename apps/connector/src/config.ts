@@ -21,7 +21,7 @@ export type Config = {
   /** opt-in "MM-DD": the office brings a cake that day */
   birthday?: string;
   /**
-   * opt-in: show a desk while a Claude Design window of the Claude desktop app is open
+   * opt-in: show a desk while a Claude Design canvas is open in the Claude desktop app
    * (macOS; needs the Accessibility permission)
    */
   design_window: boolean;

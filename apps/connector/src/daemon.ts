@@ -18,7 +18,7 @@ import { isNewer, type Updater } from "./update.ts";
 
 export type Poller = {
   poll(): Promise<SessionInfo[]>;
-  /** state of the Claude Design window watch; undefined when it is off */
+  /** state of the Claude Design watch; undefined when it is off */
   readonly designStatus?: DesignWatchStatus | undefined;
 };
 
@@ -48,18 +48,18 @@ export type StatusFile = {
   personId?: string;
   lastError?: string;
   updatedAt: number;
-  /** Claude Design window watch (only when `design_window` is on) */
+  /** Claude Design watch (only when `design_window` is on) */
   designWindow?: DesignWatchStatus;
   sessions: Omit<SessionInfo, "sessionKey">[];
 };
 
-/** What the Design window watch states mean, for the log and `agent-office status`. */
+/** What the Claude Design watch states mean, for the log and `agent-office status`. */
 export const DESIGN_STATUS_TEXT: Record<DesignWatchStatus, string> = {
-  watching: "watching the Claude app for a Design window",
+  watching: "watching the Claude app for a Claude Design canvas",
   "needs-permission":
     "needs permission: allow agent-office under System Settings > Privacy & Security > " +
-    "Accessibility, and let it control System Events",
-  error: "could not ask macOS for the Claude app's windows (will retry)",
+    "Accessibility",
+  error: "could not ask macOS what the Claude app shows (will retry)",
 };
 
 const label = (s: SessionInfo) =>

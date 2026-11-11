@@ -93,7 +93,7 @@ describe("privacy", () => {
     await waitFor(() => srv.of("presence.snapshot").length >= 1, 3000, "snapshot");
     await d.stop(true);
     await waitFor(() => srv.of("connector.bye").length === 1, 2000, "bye");
-    // `agent-office status` reads the Design window watch state from the status file
+    // `agent-office status` reads the Claude Design watch state from the status file
     const status = JSON.parse(readFileSync(join(h.home, "cfg", "status.json"), "utf8"));
     expect(status.designWindow).toBe("watching");
 
@@ -115,7 +115,7 @@ describe("privacy", () => {
     expect((helloMsg.data.selfDescription as string).length).toBe(200);
     expect(helloMsg.data.machine).toBe("devbox");
     const snap = srv.of("presence.snapshot")[0]!;
-    // 4 from fixtures/home + the Cowork session + the Claude Design window
+    // 4 from fixtures/home + the Cowork session + the Claude Design canvas
     const sent = snap.data.sessions as Record<string, unknown>[];
     expect(sent.length).toBe(6);
     expect(sent.find((s) => s.project === "Cowork")).toMatchObject({ agent: "claude" });

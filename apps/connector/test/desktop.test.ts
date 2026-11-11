@@ -1,14 +1,16 @@
-/** Claude desktop app: Cowork sessions (transcripts) and the Claude Design window (presence). */
+/** Claude desktop app: Cowork sessions (transcripts) and Claude Design canvases (presence). */
 import { afterEach, describe, expect, test } from "bun:test";
 import { IDLE_AFTER_MS, type SessionInfo } from "@agent-office/protocol";
 import {
   DESIGN_IDLE_QUERY_MS,
   DESIGN_QUERY_MS,
   DESIGN_RETRY_MS,
+  DESIGN_SCRIPT,
   DESIGN_TIMEOUTS_MEAN_BLOCKED,
   DesignWatcher,
   type DesignWindowState,
   fakeDesignWindows,
+  isDesignPath,
   isPermissionError,
   parseDesignWindows,
   systemDesignWindows,
@@ -199,38 +201,50 @@ describe("Cowork sessions", () => {
   });
 });
 
-describe("Claude Design window: reading macOS's answer", () => {
-  test("a window titled Design counts; front needs the app and the window in front", () => {
+describe("Claude Design canvas: reading macOS's answer", () => {
+  test("a Design canvas counts; front needs the app in front and a canvas open", () => {
     expect(parseDesignWindows("none\n")).toEqual({ status: "ok", open: false, front: false });
-    expect(parseDesignWindows("front=true\ntrue\tClaude\n")).toEqual({
-      status: "ok",
-      open: false,
-      front: false,
-    });
-    expect(parseDesignWindows("front=true\nfalse\tClaude\ntrue\tDesign\n")).toEqual({
+    expect(parseDesignWindows("no-permission\n")).toEqual({ status: "no-permission" });
+    expect(parseDesignWindows("front=true\ncanvas=true\n")).toEqual({
       status: "ok",
       open: true,
       front: true,
     });
-    // the main window of the app, but another app is in front
-    expect(parseDesignWindows("front=false\ntrue\tDesign\n")).toEqual({
+    // a canvas is open, but another app is in front
+    expect(parseDesignWindows("front=false\ncanvas=true\n")).toEqual({
       status: "ok",
       open: true,
       front: false,
     });
-    // open behind the chat window
-    expect(parseDesignWindows("front=true\ntrue\tClaude\nfalse\tDesign\n")).toEqual({
+    // the Claude app is in front, showing a normal chat
+    expect(parseDesignWindows("front=true\ncanvas=false\n")).toEqual({
       status: "ok",
-      open: true,
-      front: false,
-    });
-    expect(parseDesignWindows("front=true\nfalse\tDesign system notes\n").status).toBe("ok");
-    expect(parseDesignWindows("front=true\nfalse\tDesign system notes\n")).toMatchObject({
       open: false,
+      front: false,
     });
-    expect(parseDesignWindows("front=true\r\ntrue\tDesign\r\n")).toMatchObject({ open: true });
+    expect(parseDesignWindows("front=true\r\ncanvas=true\r\n")).toMatchObject({ open: true });
+    expect(parseDesignWindows("front=true\n")).toEqual({ status: "error" });
     expect(parseDesignWindows("")).toEqual({ status: "error" });
     expect(parseDesignWindows("something else")).toEqual({ status: "error" });
+  });
+
+  test("which pages are a Design canvas", () => {
+    expect(isDesignPath("claude.ai", "/code/artifact/08c8f818-9826")).toBe(true);
+    expect(isDesignPath("claude.ai", "/design")).toBe(true);
+    expect(isDesignPath("claude.ai", "/design/p/1234")).toBe(true);
+    expect(isDesignPath("claude.ai", "/cowork/cse_01Sf")).toBe(false);
+    expect(isDesignPath("claude.ai", "/chat/abc")).toBe(false);
+    expect(isDesignPath("claude.ai", "/designer")).toBe(false);
+    expect(isDesignPath("x.frame.claudeusercontent.com", "/code/artifact/1")).toBe(false);
+    expect(isDesignPath("evil.com", "/design")).toBe(false);
+  });
+
+  test("the script is valid JavaScript for osascript and leaks no page address", () => {
+    // regression: an unescaped newline inside a string literal broke the script on a real Mac
+    expect(() => new Function(DESIGN_SCRIPT)).not.toThrow();
+    expect(DESIGN_SCRIPT).toContain('"none"');
+    expect(DESIGN_SCRIPT).toContain('"no-permission"');
+    expect(DESIGN_SCRIPT).not.toMatch(/return [^;]*url/i);
   });
 
   test("permission errors are told apart from other failures", async () => {
@@ -248,7 +262,7 @@ describe("Claude Design window: reading macOS's answer", () => {
 
     const q = (code: number | null, stdout = "", stderr = "") =>
       systemDesignWindows(async () => ({ code, stdout, stderr })).query();
-    expect(await q(0, "front=true\ntrue\tDesign\n")).toEqual({
+    expect(await q(0, "front=true\ncanvas=true\n")).toEqual({
       status: "ok",
       open: true,
       front: true,
@@ -257,6 +271,7 @@ describe("Claude Design window: reading macOS's answer", () => {
       status: "no-permission",
     });
     expect(await q(1, "", "syntax error (-2741)")).toEqual({ status: "error" });
+    expect(await q(0, "no-permission\n")).toEqual({ status: "no-permission" });
     expect(await q(null)).toEqual({ status: "timeout" }); // killed by the timeout
     const broken = systemDesignWindows(async () => {
       throw new Error("spawn failed");
@@ -265,7 +280,7 @@ describe("Claude Design window: reading macOS's answer", () => {
   });
 });
 
-describe("Claude Design window: the desk", () => {
+describe("Claude Design canvas: the desk", () => {
   /** A watcher whose answer and query count the test controls. */
   function scripted(first: DesignWindowState) {
     const s = { answer: first, queries: 0 };
@@ -339,7 +354,7 @@ describe("Claude Design window: the desk", () => {
     const { s, watcher } = scripted({ status: "timeout" });
     expect(await watcher.poll(T0, true)).toBeNull();
     expect(watcher.status).toBe("watching");
-    s.answer = OPEN_FRONT; // System Events has started
+    s.answer = OPEN_FRONT; // the slow first answer came through
     expect(await watcher.poll(T0 + DESIGN_QUERY_MS, true)).toMatchObject({ activity: "thinking" });
     expect(s.queries).toBe(2);
 
@@ -379,7 +394,7 @@ describe("Claude Design window: the desk", () => {
     expect(s.queries).toBe(5);
   });
 
-  test("slow polling while no Design window is open, fast once one is", async () => {
+  test("slow polling while no Design canvas is open, fast once one is", async () => {
     const { s, watcher } = scripted(CLOSED);
     await watcher.poll(T0, true); // first query right away
     for (let t = 2_000; t < DESIGN_IDLE_QUERY_MS; t += 2_000) await watcher.poll(T0 + t, true);

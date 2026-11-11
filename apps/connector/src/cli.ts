@@ -92,8 +92,8 @@ Commands:
       --share-project-names true|false     --get KEY (print one value)
       --notifications true|false   show waves/messages from the office (default true)
       --birthday MM-DD     opt-in: the office brings you a cake that day ("" removes it)
-      --design-window true|false   opt-in (macOS): show a desk while a Claude Design window of
-                           the Claude app is open; needs the Accessibility permission
+      --design-window true|false   opt-in (macOS): show a desk while a Claude Design canvas is
+                           open in the Claude app; needs the Accessibility permission
       --cowork true|false  opt-in: show Cowork sessions of the Claude desktop app
   status            connection state and live sessions
   logs              follow the daemon log
@@ -110,7 +110,7 @@ then restart the service so the office redraws you:
 Only status metadata is sent: agent kind, hashed session id, project folder name
 (disable with share_project_names = false), activity, subagent count, context use %, start time,
 the machine label you chose (machine_name) and your look description. For Claude Design
-(--design-window) only "a Design window is open / in front" is sent.`;
+(--design-window) only "a Design canvas is open / the app is in front" is sent.`;
 
 export async function main(argv: string[]): Promise<number> {
   const args = parseArgs(argv);
@@ -361,14 +361,13 @@ async function cmdConfigure(args: Args): Promise<number> {
 
 const RESTART_HINT = `launchctl kickstart -k gui/$(id -u)/${LAUNCHD_LABEL}`;
 
-export const DESIGN_WINDOW_HELP = `Claude Design window watch is on (macOS only).
-  1. Restart the connector: ${RESTART_HINT}
-  2. Open a Design window in the Claude app. macOS then asks whether agent-office may control
-     "System Events": allow it.
-  3. Allow agent-office under System Settings > Privacy & Security > Accessibility.
-     (If you run the connector by hand, your terminal app needs these two permissions instead.)
+export const DESIGN_WINDOW_HELP = `Claude Design watch is on (macOS only).
+  1. Allow agent-office under System Settings > Privacy & Security > Accessibility.
+     (If you run the connector by hand, your terminal app needs the permission instead.)
+  2. Restart the connector: ${RESTART_HINT}
+  3. Open a Claude Design canvas (a design, slides or doc) in the Claude app.
   4. Check with: agent-office status
-The office only learns that a Design window is open and whether it is in front.`;
+The office only learns that a Design canvas is open and whether the Claude app is in front.`;
 
 // ---- status -------------------------------------------------------------------------------
 function ago(ms: number): string {
