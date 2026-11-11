@@ -4,18 +4,23 @@
  * sockets are abstracted behind `Transport` and identified by string ids.
  */
 import {
+  AvatarEditRequest,
+  type AvatarEditResponse,
   envelope,
   HistoryRow,
   InteractRequest,
   type InteractResponse,
   type MessageOf,
+  PartyState,
   type ServerToConnector,
   type ViewerEvent,
 } from "@agent-office/protocol";
 import { z } from "zod";
+import { isAuthorized, ME_TTL_MS, makeMeToken, meCookie, meFromRequest } from "./auth.ts";
 import { type AvatarService, createAvatarService, type FetchLike, type GenuiEnv } from "./genui.ts";
 import { type Binding, Hub, type HubResult } from "./hub.ts";
 import { isAutoVersion, LatestVersion } from "./latest.ts";
+import { Party, readPartyBody } from "./party.ts";
 import { computeOfficeDay, computePersonDay, computeStats, historyToCsv } from "./stats.ts";
 import type { Store } from "./store.ts";
 
@@ -57,6 +62,14 @@ export const BACKFILL_MAX_ROWS = 50_000;
 /** One interaction per viewer (IP) this often, and one notification per person this often. */
 export const INTERACT_MIN_INTERVAL_MS = 2_000;
 export const POKE_PER_PERSON_MS = 10_000;
+/** A "this is me" code: how long it is valid, how often one can be sent, wrong tries allowed. */
+export const CLAIM_CODE_TTL_MS = 5 * 60_000;
+export const CLAIM_RESEND_MS = 30_000;
+export const CLAIM_MAX_TRIES = 5;
+/** Codes per person per day (UTC): bounds guessing and notification spam on their Mac. */
+export const CLAIM_MAX_PER_DAY = 10;
+/** One look change per viewer (IP) this often. */
+export const LOOK_MIN_INTERVAL_MS = 1_000;
 
 const POKE_TEXT = {
   wave: "waved at you 👋",
@@ -99,6 +112,9 @@ export class OfficeApp {
   readonly timezone: string;
   private lastInteract = new Map<string, number>();
   private lastPoke = new Map<string, number>();
+  readonly party: Party;
+  private lastLook = new Map<string, number>();
+  private lastClaim = new Map<string, number>();
 
   constructor(
     private env: AppEnv,
@@ -106,6 +122,7 @@ export class OfficeApp {
     private transport: Transport,
     private opts: { now?: () => number; fetch?: FetchLike; log?: (line: string) => void } = {},
   ) {
+    this.party = new Party(store);
     const log = opts.log ?? ((l: string) => console.log(l));
     this.timezone = env.OFFICE_TIMEZONE || "Europe/Vienna";
     this.genui = createAvatarService(env, store, {
@@ -181,7 +198,10 @@ export class OfficeApp {
     });
     const v = serverVersion(this.env);
     const version = v !== "dev" ? v : this.latest.current;
-    return { ...snap, data: { ...snap.data, today, ...(version ? { version } : {}) } };
+    return {
+      ...snap,
+      data: { ...snap.data, today, party: this.party.state(now), ...(version ? { version } : {}) },
+    };
   }
 
   alarm(): void {
@@ -231,9 +251,88 @@ export class OfficeApp {
 
     if (path === "/api/state" && method === "GET") return json(this.snapshot());
 
-    if (path === "/api/me" && method === "GET") return json({ ok: true });
+    if (path === "/api/me" && method === "GET")
+      return json({ ok: true, personId: await meFromRequest(req, this.env, this.now()) });
+    if (path === "/api/me" && method === "DELETE")
+      return json({ ok: true }, { headers: { "set-cookie": meCookie(req, "", 0) } });
+
+    const claim = /^\/api\/people\/([^/]{1,64})\/claim(\/verify)?$/.exec(path);
+    if (claim && method === "POST") {
+      let personId: string;
+      try {
+        personId = decodeURIComponent(claim[1]!);
+      } catch {
+        return json({ error: "bad person id" }, { status: 400 });
+      }
+      return claim[2] ? this.verifyClaim(req, personId) : this.sendClaimCode(req, personId);
+    }
 
     if (path === "/api/interact" && method === "POST") return this.interact(req);
+    if (path === "/api/party") {
+      if (method !== "POST") return json({ error: "method not allowed" }, { status: 405 });
+      const now = this.now();
+      const who = req.headers.get("cf-connecting-ip") ?? req.headers.get("x-forwarded-for") ?? "-";
+      const retryAfter = this.party.requestAllowed(who, now);
+      if (retryAfter !== null)
+        return json(
+          { error: "slow down" },
+          { status: 429, headers: { "retry-after": String(retryAfter) } },
+        );
+      if (!(await isAuthorized(req, this.env, now)))
+        return json({ error: "unauthorized" }, { status: 401 });
+      const body = await readPartyBody(req);
+      if (body.status)
+        return json(
+          { error: body.status === 413 ? "too large" : "invalid JSON" },
+          { status: body.status },
+        );
+      const actionAt = this.now();
+      const online = new Map(
+        this.hub
+          .state()
+          .people.filter((p) => this.hub.liveSocketsOf(p.personId, actionAt).length > 0)
+          .map((p) => [p.personId, p.avatar] as const),
+      );
+      const result = this.party.mutate(body.value, online, actionAt);
+      if (result.status === 200) {
+        const party = PartyState.parse(result.body);
+        this.transport.broadcast(
+          JSON.stringify(envelope("party.updated", { party }, { ts: actionAt })),
+        );
+      }
+      return json(result.body, {
+        status: result.status,
+        ...(result.retryAfter ? { headers: { "retry-after": String(result.retryAfter) } } : {}),
+      });
+    }
+
+    const look = /^\/api\/people\/([^/]{1,64})\/avatar$/.exec(path);
+    if (look) {
+      let personId: string;
+      try {
+        personId = decodeURIComponent(look[1]!);
+      } catch {
+        return json({ error: "bad person id" }, { status: 400 });
+      }
+      if (method === "GET") {
+        const p = this.hub.state().people.find((x) => x.personId === personId);
+        if (!p) return json({ error: "not in the office" }, { status: 404 });
+        return json({
+          ok: true,
+          avatar: p.avatar,
+          custom: this.hub.isCustomLook(personId),
+        } satisfies AvatarEditResponse);
+      }
+      if (method === "PUT") {
+        // only your own look: the browser must have proven it is this person
+        if ((await meFromRequest(req, this.env, this.now())) !== personId)
+          return json(
+            { error: "you can only change your own look (confirm it is you first)" },
+            { status: 403 },
+          );
+        return this.editLook(req, personId);
+      }
+    }
 
     if (path === "/api/stats" && method === "GET") {
       const days = Number(url.searchParams.get("days") ?? 0);
@@ -332,6 +431,138 @@ export class OfficeApp {
 
     if (path.startsWith("/api/")) return json({ error: "not found" }, { status: 404 });
     return null;
+  }
+
+  /**
+   * "This is me": send a one-time code as a notification to the person's live Macs (the
+   * poke channel, so every connector shows it). Whoever can read it there may edit the look.
+   * A courtesy lock, not identity: a connector's person is just the name it reports with the
+   * shared password, so a colleague could start one under someone else's name.
+   */
+  private async sendClaimCode(req: Request, personId: string): Promise<Response> {
+    const now = this.now();
+    if (!this.hub.state().people.some((p) => p.personId === personId))
+      return json({ error: "not in the office" }, { status: 404 });
+    const who = req.headers.get("cf-connecting-ip") ?? req.headers.get("x-forwarded-for") ?? "-";
+    if (now - (this.lastClaim.get(personId) ?? 0) < CLAIM_RESEND_MS)
+      return json({ error: "a code was just sent, check the Mac" }, { status: 429 });
+    if (now - (this.lastClaim.get(`ip:${who}`) ?? 0) < INTERACT_MIN_INTERVAL_MS)
+      return json({ error: "slow down" }, { status: 429 });
+    const sockets = this.hub.liveSocketsOf(personId, now);
+    if (sockets.length === 0)
+      return json({ error: "no Mac of theirs is connected right now" }, { status: 409 });
+    const dayKey = `claim.day.${personId}.${new Date(now).toISOString().slice(0, 10)}`;
+    const today = Number(this.store.kvGet(dayKey) ?? 0);
+    if (today >= CLAIM_MAX_PER_DAY)
+      return json(
+        { error: "too many codes for this person today, try again tomorrow" },
+        { status: 429 },
+      );
+    this.store.kvPut(dayKey, String(today + 1));
+    this.lastClaim.set(personId, now);
+    this.lastClaim.set(`ip:${who}`, now);
+    if (this.lastClaim.size > 500) this.lastClaim.clear();
+    const code = String(crypto.getRandomValues(new Uint32Array(1))[0]! % 1_000_000).padStart(
+      6,
+      "0",
+    );
+    this.store.kvPut(
+      `claim.${personId}`,
+      JSON.stringify({ code, exp: now + CLAIM_CODE_TTL_MS, tries: 0 }),
+    );
+    const poke = JSON.stringify(
+      envelope("connector.poked", {
+        kind: "message",
+        from: "Agent Office",
+        text: `Your code to edit your look: ${code} (5 min). Not you? Just ignore this.`,
+      }),
+    );
+    let delivered = 0;
+    for (const socketId of sockets)
+      if (this.transport.sendToConnector?.(socketId, poke)) delivered++;
+    this.hub.log(`look ${personId} claim code sent to ${delivered} Mac(s)`);
+    if (delivered === 0)
+      return json({ error: "no Mac of theirs is connected right now" }, { status: 409 });
+    return json({ ok: true, delivered });
+  }
+
+  /** Check a "this is me" code; on success the browser gets the signed `ao_me` cookie. */
+  private async verifyClaim(req: Request, personId: string): Promise<Response> {
+    let code = "";
+    try {
+      code = String(((await req.json()) as { code?: unknown }).code ?? "").replace(/\D/g, "");
+    } catch {
+      return json({ error: "invalid JSON" }, { status: 400 });
+    }
+    const now = this.now();
+    const key = `claim.${personId}`;
+    let pending: { code: string; exp: number; tries: number } | null = null;
+    try {
+      pending = JSON.parse(this.store.kvGet(key) ?? "null");
+    } catch {
+      pending = null;
+    }
+    if (!pending || pending.exp < now || pending.tries >= CLAIM_MAX_TRIES)
+      return json({ error: "no valid code, send a new one" }, { status: 410 });
+    if (code !== pending.code) {
+      pending.tries++;
+      this.store.kvPut(key, JSON.stringify(pending));
+      return json({ error: "wrong code" }, { status: 403 });
+    }
+    this.store.kvPut(key, "null");
+    const pw = connectorPassword(this.env);
+    if (!pw) return json({ error: "office has no password" }, { status: 500 });
+    const token = await makeMeToken(pw, personId, now);
+    this.hub.log(`look ${personId} claimed by a browser`);
+    return json(
+      { ok: true, personId },
+      { headers: { "set-cookie": meCookie(req, token, ME_TTL_MS / 1000) } },
+    );
+  }
+
+  /** Look editor: pin a custom look or go back to the automatic one. */
+  private async editLook(req: Request, personId: string): Promise<Response> {
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return json({ error: "invalid JSON" }, { status: 400 });
+    }
+    const parsed = AvatarEditRequest.safeParse(body);
+    if (!parsed.success)
+      return json({ error: z.prettifyError(parsed.error).slice(0, 500) }, { status: 400 });
+    const now = this.now();
+    const who = req.headers.get("cf-connecting-ip") ?? req.headers.get("x-forwarded-for") ?? "-";
+    if (now - (this.lastLook.get(who) ?? 0) < LOOK_MIN_INTERVAL_MS)
+      return json({ error: "slow down" }, { status: 429 });
+    this.lastLook.set(who, now);
+    if (this.lastLook.size > 500) this.lastLook.clear();
+
+    const r = this.hub.setCustomAvatar(personId, parsed.data.avatar, now);
+    if (!r) return json({ error: "not in the office" }, { status: 404 });
+    this.hub.log(`look ${personId} edited by ${parsed.data.from || "someone"}`);
+    this.publish(r.events);
+    let avatar = r.avatar;
+    if (r.avatarJob) {
+      const job = r.avatarJob;
+      const res = await this.genui.resolve(job);
+      this.publish(
+        this.hub.setAvatar(
+          job.personId,
+          res.avatar,
+          res.key,
+          this.now(),
+          job.selfDescription ?? "",
+        ),
+      );
+      avatar = res.avatar;
+    }
+    this.transport.scheduleAlarm(this.hub.nextDeadline());
+    return json({
+      ok: true,
+      avatar,
+      custom: parsed.data.avatar !== null,
+    } satisfies AvatarEditResponse);
   }
 
   private async interact(req: Request): Promise<Response> {

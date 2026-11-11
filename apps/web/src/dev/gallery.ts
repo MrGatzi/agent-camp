@@ -1,5 +1,11 @@
 /** ?gallery=1: every character frame for a set of avatars + furniture, for art review. */
-import { AGENTS, avatarFromSeed, sessionVariation } from "@agent-office/protocol";
+import {
+  AGENTS,
+  type AgentKind,
+  type AvatarSpec,
+  avatarFromSeed,
+  sessionVariation,
+} from "@agent-office/protocol";
 import { type Application, Container, Sprite } from "pixi.js";
 import { characterSheet, lookFor } from "../art/characters.ts";
 import { chairTexture, deskTexture, monitorTextures, propTexture } from "../art/desk.ts";
@@ -14,6 +20,7 @@ import {
   dotsTextures,
   kittenTextures,
 } from "../art/fx.ts";
+import { queenTextures } from "../art/queen.ts";
 import type { ObjectKind } from "../world/map.ts";
 
 const NAMES = [
@@ -31,15 +38,44 @@ const NAMES = [
   "elias",
 ];
 
+const SHOWCASE: [Partial<AvatarSpec>, AgentKind][] = [
+  [
+    {
+      hairStyle: "short",
+      hairColor: "dark-brown",
+      facialHair: "beard",
+      glasses: "round",
+      accessory: "cap-mint",
+      outfit: "flannel",
+      leftHand: "beer",
+      rightHand: "joint",
+    },
+    "claude",
+  ],
+  [{ outfit: "flannel-red", leftHand: "coffee", rightHand: "phone" }, "codex"],
+  [{ outfit: "tee", accessory: "none", rightHand: "beer" }, "pi"],
+  [{ outfit: "hoodie", leftHand: "phone" }, "unknown"],
+];
+
 export function showGallery(app: Application) {
   const root = new Container();
   root.scale.set(Number(new URLSearchParams(location.search).get("gscale")) || 3);
   app.stage.addChild(root);
-  NAMES.forEach((n, row) => {
-    const agent = AGENTS[row % AGENTS.length]!;
-    const sheet = characterSheet(
-      lookFor(avatarFromSeed(n), agent, row % 3 === 2 ? sessionVariation(n) : null),
-    );
+  // seeded looks, then a few editor-only outfits / held items
+  const looks = [
+    ...NAMES.map((n, row) =>
+      lookFor(
+        avatarFromSeed(n),
+        AGENTS[row % AGENTS.length]!,
+        row % 3 === 2 ? sessionVariation(n) : null,
+      ),
+    ),
+    ...SHOWCASE.map(([extra, agent]) =>
+      lookFor({ ...avatarFromSeed("tom"), ...extra }, agent, null),
+    ),
+  ];
+  looks.forEach((look, row) => {
+    const sheet = characterSheet(look);
     sheet.frames.forEach((f, i) => {
       const s = new Sprite(f);
       s.position.set(4 + i * 17, 4 + row * 26);
@@ -47,7 +83,7 @@ export function showGallery(app: Application) {
     });
   });
   let x = 4;
-  const y = 4 + NAMES.length * 26 + 4;
+  const y = 4 + looks.length * 26 + 4;
   for (const kind of Object.keys(ART) as ObjectKind[]) {
     const frames = furnitureFrames(kind, 0)!;
     const s = new Sprite(frames[0]!);
@@ -72,6 +108,7 @@ export function showGallery(app: Application) {
     ...botTextures("claude"),
     ...botTextures("codex"),
     ...catTextures(),
+    ...queenTextures(),
     ...alertTextures(),
     ...dotsTextures(),
     bubbleTexture("typing", "agent-office"),

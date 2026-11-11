@@ -87,11 +87,95 @@ export const ACCESSORIES = [
   { id: "headphones", label: "big headphones" },
   { id: "beanie", label: "beanie" },
   { id: "cap", label: "baseball cap" },
+  { id: "cap-mint", label: "mint / aqua baseball cap with a white logo" },
   { id: "bow", label: "hair bow" },
   { id: "earring", label: "earring" },
+  { id: "cat-ears", label: "large cat ears" },
+  { id: "fox-ears", label: "fox ears" },
+  { id: "bunny-ears", label: "bunny ears" },
+  { id: "devil-horns", label: "devil horns" },
+  { id: "halo", label: "halo" },
+  { id: "crown", label: "crown" },
+  { id: "wizard-hat", label: "wizard hat" },
+  { id: "party-hat", label: "party hat" },
+  { id: "antenna", label: "antenna" },
 ] as const satisfies readonly Entry<string>[];
 export const Accessory = z.enum(ids(ACCESSORIES));
 export type Accessory = z.infer<typeof Accessory>;
+
+/**
+ * What the character wears on top. `jacket` and `hoodie` come in the agent color; the
+ * others have their own colors and show the agent kind as a small badge on the tee (and a
+ * patch on the back, the side you see at the desk).
+ */
+export const OUTFITS = [
+  { id: "jacket", label: "open jacket over a white shirt (agent color)" },
+  { id: "hoodie", label: "hoodie (agent color)" },
+  { id: "flannel", label: "grey/teal plaid flannel over a navy tee" },
+  { id: "flannel-red", label: "red lumberjack flannel over a navy tee" },
+  { id: "tee", label: "plain navy t-shirt" },
+  { id: "cat", label: "cat costume with whiskers and tail" },
+  { id: "robot", label: "robot costume" },
+  { id: "astronaut", label: "astronaut suit" },
+  { id: "pirate", label: "pirate costume" },
+  { id: "vampire", label: "vampire cape" },
+  { id: "disco", label: "sparkling disco outfit" },
+] as const satisfies readonly Entry<string>[];
+export const Outfit = z.enum(ids(OUTFITS));
+export type Outfit = z.infer<typeof Outfit>;
+/** Outfits drawn in the agent color (no badge needed). */
+export const AGENT_COLORED_OUTFITS: readonly Outfit[] = ["jacket", "hoodie"];
+
+/** Something the character holds. Hands are seen from the front: left = viewer's left. */
+export const HELD_ITEMS = [
+  { id: "none", label: "empty hand" },
+  { id: "beer", label: "glass of beer" },
+  { id: "joint", label: "joint" },
+  { id: "phone", label: "phone" },
+  { id: "coffee", label: "coffee cup" },
+  { id: "lightsaber", label: "lightsaber" },
+  { id: "confetti", label: "confetti cannon" },
+  { id: "cigarette", label: "cigarette" },
+  { id: "bubble-wand", label: "bubble wand" },
+  { id: "disco-ball", label: "disco ball" },
+  { id: "magic-wand", label: "magic wand" },
+  { id: "balloon", label: "balloon" },
+  { id: "water-pistol", label: "water pistol" },
+  { id: "maracas", label: "maracas" },
+  { id: "umbrella", label: "umbrella" },
+] as const satisfies readonly Entry<string>[];
+export const HeldItem = z.enum(ids(HELD_ITEMS));
+export type HeldItem = z.infer<typeof HeldItem>;
+
+/** Optional personal accents; defaults keep existing stored and seeded looks unchanged. */
+export const WRISTWEAR = [
+  { id: "none", label: "none" },
+  { id: "neon-cyan", label: "neon cyan bracelets" },
+  { id: "neon-pink", label: "neon pink bracelets" },
+  { id: "neon-lime", label: "neon lime bracelets" },
+  { id: "rainbow", label: "rainbow bracelets" },
+] as const;
+export const Wristwear = z.enum(ids(WRISTWEAR));
+export type Wristwear = z.infer<typeof Wristwear>;
+export const ACCENT_COLORS = [
+  { id: "cyan", label: "cyan" },
+  { id: "pink", label: "pink" },
+  { id: "lime", label: "lime" },
+  { id: "gold", label: "gold" },
+  { id: "purple", label: "purple" },
+  { id: "red", label: "red" },
+] as const;
+export const AccentColor = z.enum(ids(ACCENT_COLORS));
+export type AccentColor = z.infer<typeof AccentColor>;
+export const VEHICLES = [
+  { id: "none", label: "on foot" },
+  { id: "car", label: "car" },
+  { id: "skateboard", label: "skateboard" },
+  { id: "hoverboard", label: "hoverboard" },
+  { id: "spaceship", label: "spaceship" },
+] as const;
+export const Vehicle = z.enum(ids(VEHICLES));
+export type Vehicle = z.infer<typeof Vehicle>;
 
 // ---- desk ---------------------------------------------------------------------------------
 export const DESK_PROPS = [
@@ -122,6 +206,13 @@ export const AvatarSpec = z.object({
   glasses: Glasses,
   facialHair: FacialHair,
   accessory: Accessory,
+  /** added later: missing in stored looks and older payloads, so they default */
+  outfit: Outfit.default("jacket"),
+  leftHand: HeldItem.default("none"),
+  rightHand: HeldItem.default("none"),
+  wrist: Wristwear.default("none"),
+  accentColor: AccentColor.default("cyan"),
+  vehicle: Vehicle.default("none"),
   /** 0..3 distinct props */
   deskProps: z
     .array(DeskProp)
@@ -131,6 +222,36 @@ export const AvatarSpec = z.object({
 });
 export type AvatarSpec = z.infer<typeof AvatarSpec>;
 
+/**
+ * The avatar as viewers read it: an id this bundle does not know yet (a newer server added it
+ * to the catalog) falls back to a default instead of rejecting the whole snapshot. Servers
+ * and GenUI keep validating with the strict `AvatarSpec`.
+ */
+export const ViewerAvatar = z.object({
+  hairStyle: HairStyle.catch("short"),
+  hairColor: HairColor.catch("brown"),
+  skinTone: SkinTone.catch("medium"),
+  glasses: Glasses.catch("none"),
+  facialHair: FacialHair.catch("none"),
+  accessory: Accessory.catch("none"),
+  outfit: Outfit.catch("jacket"),
+  leftHand: HeldItem.catch("none"),
+  rightHand: HeldItem.catch("none"),
+  wrist: Wristwear.catch("none"),
+  accentColor: AccentColor.catch("cyan"),
+  vehicle: Vehicle.catch("none"),
+  deskProps: z
+    .array(z.unknown())
+    .catch([])
+    .transform((a) =>
+      [...new Set(a.filter((x): x is DeskProp => DeskProp.safeParse(x).success))].slice(
+        0,
+        MAX_DESK_PROPS,
+      ),
+    ),
+  deskMess: DeskMess.catch(0),
+});
+
 /** Everything a GenUI provider may choose from, as plain id lists (handy for prompts). */
 export const AVATAR_CATALOG = {
   hairStyles: HairStyle.options,
@@ -139,6 +260,11 @@ export const AVATAR_CATALOG = {
   glasses: Glasses.options,
   facialHair: FacialHair.options,
   accessories: Accessory.options,
+  outfits: Outfit.options,
+  heldItems: HeldItem.options,
+  wrists: Wristwear.options,
+  accentColors: AccentColor.options,
+  vehicles: Vehicle.options,
   deskProps: DeskProp.options,
   deskMess: DESK_MESS_LEVELS,
 } as const;
@@ -146,6 +272,16 @@ export const AVATAR_CATALOG = {
 /** Lookup helpers for display hints. */
 export const hairColorHex = (id: HairColor) => HAIR_COLORS.find((c) => c.id === id)!;
 export const skinToneHex = (id: SkinTone) => SKIN_TONES.find((c) => c.id === id)!;
+
+/** Accessories the seed picks from: the original list, so seeded looks never shift. */
+const SEEDED_ACCESSORIES: readonly Accessory[] = [
+  "none",
+  "headphones",
+  "beanie",
+  "cap",
+  "bow",
+  "earring",
+];
 
 /**
  * Deterministic avatar from any seed (normally the person's display name / personId).
@@ -157,7 +293,9 @@ export function avatarFromSeed(seed: string): AvatarSpec {
   // keep accessories/facial hair a bit rarer than "none" so the office isn't a costume party
   const facialHair = rand() < 0.6 ? "none" : pick(rand, FacialHair.options);
   const glasses = rand() < 0.5 ? "none" : pick(rand, Glasses.options);
-  const accessory = rand() < 0.45 ? "none" : pick(rand, Accessory.options);
+  const accessory = rand() < 0.45 ? "none" : pick(rand, SEEDED_ACCESSORIES);
+  // outfit / held items are not drawn from `rand`: the seeded look of everyone already in the
+  // office stays exactly as it was. They are picked by AI or in the look editor.
   const propCount = 1 + Math.floor(rand() * MAX_DESK_PROPS);
   const pool: DeskProp[] = [...DeskProp.options];
   const deskProps: DeskProp[] = [];
@@ -172,6 +310,12 @@ export function avatarFromSeed(seed: string): AvatarSpec {
     glasses,
     facialHair,
     accessory,
+    outfit: "jacket",
+    leftHand: "none",
+    rightHand: "none",
+    wrist: "none",
+    accentColor: "cyan",
+    vehicle: "none",
     deskProps,
     deskMess: pick(rand, DESK_MESS_LEVELS),
   };

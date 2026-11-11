@@ -12,6 +12,7 @@ import {
   avatarFromSeed,
   type HelperSkin,
   type InteractionKind,
+  type PartyState,
   type PersonView,
   type ServerToViewer,
   type SessionView,
@@ -59,6 +60,7 @@ export type TimelineSegment = { activity: Activity; from: number; to: number };
 const ACTIVITY_LOG_MS = 60 * 60_000;
 
 export type ModelChange =
+  | { kind: "partyChanged" }
   | { kind: "officeRenamed"; name: string }
   | { kind: "personAdded"; personId: string; instant: boolean }
   | { kind: "personRemoved"; personId: string; instant: boolean }
@@ -115,6 +117,7 @@ function dayKey(ts: number): string {
 }
 
 export class OfficeModel {
+  party: PartyState = { events: [], scores: {} };
   officeName = "Agent Office";
   timezone: string | undefined;
   /** server clock minus local clock, from the last snapshot */
@@ -206,6 +209,7 @@ export class OfficeModel {
     switch (msg.type) {
       case "office.snapshot": {
         const d = msg.data;
+        this.party = d.party ?? { events: [], scores: {} };
         this.timezone = d.timezone;
         this.clockSkew = d.serverTime - this.now();
         if (d.officeName && d.officeName !== this.officeName) {
@@ -327,6 +331,10 @@ export class OfficeModel {
         });
         break;
       }
+      case "party.updated":
+        this.party = msg.data.party;
+        out.push({ kind: "partyChanged" });
+        break;
       case "avatar.updated": {
         const p = this.people.get(msg.data.personId);
         if (p) {
@@ -393,6 +401,11 @@ export class OfficeModel {
     let i = 0;
     while (used.has(i)) i++;
     return i;
+  }
+
+  moveDesk(sessionId: string, desk: number) {
+    const s = this.sessions.get(sessionId);
+    if (s) s.desk = desk;
   }
 
   private freeDesk(personId: string): number {

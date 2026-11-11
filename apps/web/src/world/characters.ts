@@ -22,9 +22,12 @@ import { Sprite, type Texture } from "pixi.js";
 import {
   type AnimName,
   CHAR_H,
+  CHARACTER_SHEET_CACHE_LIMIT,
   type CharacterSheet,
   characterSheet,
+  characterSheetCacheSize,
   lookFor,
+  pruneCharacterSheets,
 } from "../art/characters.ts";
 import type { MonitorState } from "../art/desk.ts";
 import {
@@ -35,10 +38,13 @@ import {
   splatTexture,
 } from "../art/drama.ts";
 import {
+  beerTextures,
   boltTextures,
   CHAT_ICONS,
+  CHAT_TOPICS,
   chatIconTextures,
   ghostTextures,
+  jointTextures,
   mugTextures,
   pileTextures,
   ringTextures,
@@ -91,6 +97,10 @@ import {
   chairTile,
   clampDesks,
   type Facing,
+  isBarPoi,
+  isBarStool,
+  isShopPoi,
+  isSmokePoi,
   MAX_DESKS,
   type Poi,
   type Point,
@@ -119,6 +129,14 @@ export type Moment = {
 
 /** Seconds between `person.joined` and the door/confetti, so an auto camera can get there. */
 const JOIN_LEAD = 1.8;
+
+/** What someone carries around after a break: a coffee, a beer from the bar, a joint from the shop. */
+type Carry = "coffee" | "beer" | "joint";
+const CARRY_TEXTURES: Record<Carry, () => Texture[]> = {
+  coffee: mugTextures,
+  beer: beerTextures,
+  joint: jointTextures,
+};
 
 type Mode = "queued" | "walking" | "seated" | "poi" | "waving" | "leaving" | "zapped" | "carried";
 type Goal = "desk" | "poi" | "exit" | "chat" | "lunch" | "evac";
@@ -176,9 +194,12 @@ export class SessionCharacter {
   helpers: HelperSwarm;
   delay = 0;
   removed = false;
-  /** a coffee mug in hand (seconds left) */
+  /** a coffee mug, beer or joint in hand (seconds left) */
   mug: Sprite;
   mugT = 0;
+  carry: Carry = "coffee";
+  /** smokers' corner: next smoke puff / "chill" bubble */
+  puffT = 0;
   /** chat icon bubble */
   icon: Sprite;
   iconT = 0;
@@ -263,8 +284,6 @@ export class CharacterManager {
   readonly chars = new Map<string, SessionCharacter>();
   private poiTaken = new Map<string, string>();
   private rand = seededRandom("characters");
-  /** desks per pod, kept at the high-water mark while the same person owns it */
-  private podDesks = new Map<number, { personId: string; n: number }>();
   onMoment: (m: Moment) => void = () => {};
   /** pending join celebrations (door opens, confetti, banner) */
   private joins: { personId: string; t: number; done: boolean }[] = [];
@@ -274,6 +293,8 @@ export class CharacterManager {
   chatChance = 0.35;
   /** multiplies how long idle people stay at a spot (party demo: they move around more) */
   dwell = 1;
+  /** how likely an idle wander goes to the weed shop while it is open (feierabend demo: more) */
+  shopChance = 0.1;
   /** a pizza is on the meeting table: idle people gather there */
   pizzaActive: () => boolean = () => false;
   /** an office cat may eat a finished helper (wired up in main.ts) */
@@ -422,11 +443,10 @@ export class CharacterManager {
 
   /**
    * Bring the pod slots in line with the model: owned slots become pods with one desk per
-   * session (2..6, never shrinking while the same person owns it), a slot still holding
-   * characters of someone who left keeps its desks, the first free slot shows the
-   * "free desk" placeholder and every other slot is a cozy nook.
+   * session (2..6), a slot still holding characters of someone who left keeps its desks,
+   * the first free slot shows the "free desk" placeholder and every other slot is a nook.
    */
-  syncSlots() {
+  syncSlots(moved: ReadonlySet<SessionCharacter> = new Set()) {
     const owners = new Map<number, PersonState>();
     for (const p of this.model.people.values()) owners.set(p.pod, p);
     const lingering = new Set<number>();
@@ -445,9 +465,7 @@ export class CharacterManager {
         let need = deskNeed.get(pod) ?? 0;
         for (const s of this.model.sessionsOf(p.personId))
           if (s.desk < MAX_DESKS) need = Math.max(need, s.desk + 1);
-        const hw = this.podDesks.get(pod);
-        const n = clampDesks(Math.max(need, hw?.personId === p.personId ? hw.n : 0));
-        this.podDesks.set(pod, { personId: p.personId, n });
+        const n = clampDesks(need);
         did = this.scene.setSlot(pod, {
           kind: "pod",
           desks: n,
@@ -462,13 +480,12 @@ export class CharacterManager {
       } else if (lingering.has(pod)) {
         continue;
       } else {
-        this.podDesks.delete(pod);
         did = this.scene.setSlot(pod, { kind: freeShown ? "nook" : "free" });
         freeShown = true;
       }
       if (did) changed.push(pod);
     }
-    if (changed.length === 0) return;
+    if (changed.length === 0 && moved.size === 0) return;
     const pois = new Set([...this.scene.map.pois, ...this.scene.nookPois]);
     const map = this.scene.map;
     for (const c of this.chars.values()) {
@@ -477,7 +494,7 @@ export class CharacterManager {
         this.releasePoi(c);
         if (c.mode === "poi" || c.mode === "walking") this.idleWander(c);
       }
-      if (!changed.includes(c.pod)) continue;
+      if (!changed.includes(c.pod) && !moved.has(c)) continue;
       const seat = this.seatOf(c.pod, c.desk);
       c.helpers.setArea((n) => helperArea(podAisle(c.pod), seat, n), seat);
       if (c.mode === "seated" && c.hasDesk) this.sit(c);
@@ -779,7 +796,45 @@ export class CharacterManager {
     ])
       sp.destroy();
     this.chars.delete(c.sessionId);
-    this.syncSlots();
+    const { moved, promoted } = this.fillDeskGaps(c.personId);
+    this.syncSlots(moved);
+    for (const m of promoted) {
+      if (!m.evac && (m.mode === "poi" || m.mode === "walking")) this.goToDesk(m);
+    }
+  }
+
+  /**
+   * Move agents from the highest desks (or roaming) into freed ones, so the pod matches a
+   * fresh load. `promoted` were roaming and now have a desk to walk to.
+   */
+  private fillDeskGaps(personId: string) {
+    const moved = new Set<SessionCharacter>();
+    const promoted = new Set<SessionCharacter>();
+    const p = this.model.people.get(personId);
+    if (!p) return { moved, promoted };
+    for (;;) {
+      const used = new Set(this.model.sessionsOf(personId).map((s) => s.desk));
+      for (const o of this.chars.values()) if (o.pod === p.pod) used.add(o.desk);
+      let gap = 0;
+      while (used.has(gap)) gap++;
+      if (gap >= MAX_DESKS) return { moved, promoted };
+      let mover: SessionCharacter | undefined;
+      for (const o of this.chars.values()) {
+        if (o.personId !== personId || o.removed || o.desk <= gap) continue;
+        if (o.mode === "waving" || o.mode === "leaving" || o.mode === "zapped") continue;
+        if (!this.model.sessions.has(o.sessionId)) continue;
+        if (!mover || o.desk > mover.desk) mover = o;
+      }
+      if (!mover) return { moved, promoted };
+      if (!mover.hasDesk) promoted.add(mover);
+      else if (!this.otherAtDesk(mover)) {
+        this.setMonitorFor(mover, "off");
+        this.resetChair(mover);
+      }
+      this.model.moveDesk(mover.sessionId, gap);
+      mover.desk = gap;
+      moved.add(mover);
+    }
   }
 
   private otherAtDesk(c: SessionCharacter) {
@@ -851,7 +906,9 @@ export class CharacterManager {
     const map = this.scene.map;
     // never a spot that furniture or a new pod now covers
     const free = (list: readonly Poi[]) =>
-      list.filter((p) => !this.poiTaken.has(p.id) && map.isWalkable(p.tile.x, p.tile.y));
+      list.filter(
+        (p) => !this.poiTaken.has(p.id) && map.isWalkable(p.tile.x, p.tile.y) && this.isOpen(p),
+      );
     const take = (poi: Poi) => {
       this.releasePoi(c);
       this.poiTaken.set(poi.id, c.sessionId);
@@ -859,6 +916,31 @@ export class CharacterManager {
       this.walkTo(c, poi.tile, "poi", poi.spot);
     };
     const all = free(this.scene.map.pois);
+    const pick = (list: Poi[]) => take(list[Math.floor(this.rand() * list.length)]!);
+    // fresh from the shop: light it up in the smokers' corner
+    if (c.carry === "joint" && c.mugT > 0 && this.rand() < 0.85) {
+      const smoke = all.filter(isSmokePoi);
+      if (smoke.length) return pick(smoke);
+    }
+    // a beer in hand: find a stool or a standing table
+    if (c.carry === "beer" && c.mugT > 0 && this.rand() < 0.6) {
+      const seats = all.filter((p) => isBarPoi(p) && p.id !== "tap");
+      if (seats.length) return pick(seats);
+    }
+    // the bar is open (happy hour: everybody goes): pour one at the tap or grab a stool
+    if (this.scene.barOpen && this.rand() < (this.scene.happyHour ? 0.55 : 0.18)) {
+      const tap = all.find((p) => p.id === "tap");
+      if (tap && (c.mugT <= 0 || c.carry !== "beer") && this.rand() < 0.6) return take(tap);
+      const bar = all.filter(isBarPoi);
+      if (bar.length) return pick(bar);
+    }
+    // the shop is open: buy something at the counter, or just look at the jars
+    if (this.scene.shopOpen && this.rand() < this.shopChance) {
+      const counter = all.find((p) => p.id === "shop-counter");
+      if (counter && c.mugT <= 0 && this.rand() < 0.6) return take(counter);
+      const shop = all.filter(isShopPoi);
+      if (shop.length) return pick(shop);
+    }
     // the food truck is outside: grab something to eat
     if (this.rand() < 0.45 && this.goLunch(c)) return;
     // pizza on the table: everybody idle gathers in the meeting room
@@ -889,6 +971,19 @@ export class CharacterManager {
     const favourites = pois.filter((p) => p.area !== "desks" && p.area !== "meeting");
     if (favourites.length > 0 && this.rand() < 0.7) pois = favourites;
     take(pois[Math.floor(this.rand() * pois.length)]!);
+  }
+
+  /** Bar spots only while the bar is open, the shop's inside only while the shop is open. */
+  private isOpen(p: Poi): boolean {
+    if (isBarPoi(p)) return this.scene.barOpen;
+    if (isShopPoi(p)) return this.scene.shopOpen;
+    return true;
+  }
+
+  /** Something to carry around for a while (replaces whatever was in hand). */
+  private hold(c: SessionCharacter, item: Carry, seconds: number) {
+    c.carry = item;
+    c.mugT = seconds;
   }
 
   // ---- chats ----------------------------------------------------------------------------
@@ -973,9 +1068,9 @@ export class CharacterManager {
     if (chat.next <= 0) {
       chat.next = 1.4;
       // coffee people talk coffee; pizza time is pizza time
-      let name = CHAT_ICONS[Math.floor(this.rand() * (CHAT_ICONS.length - 1))]!;
+      let name = CHAT_TOPICS[Math.floor(this.rand() * CHAT_TOPICS.length)]!;
       if (this.pizzaActive() && this.rand() < 0.5) name = "pizza";
-      else if (c.mugT > 0 && this.rand() < 0.3) name = "coffee";
+      else if (c.mugT > 0 && this.rand() < 0.3) name = c.carry === "joint" ? "chill" : c.carry;
       c.icon.texture = chatIconTextures()[CHAT_ICONS.indexOf(name)]!;
       c.icon.visible = true;
       c.iconT = 1.1;
@@ -1013,14 +1108,22 @@ export class CharacterManager {
   private place(c: SessionCharacter) {
     c.sprite.position.set(Math.round(c.x), Math.round(c.y));
     c.sprite.zIndex = c.y;
-    const showMug = c.mugT > 0 && c.facing !== "up" && (c.mode === "walking" || c.mode === "poi");
+    // at the bar counter (stool, back to the camera) the glass stands on the counter beside them
+    const onCounter =
+      c.mugT > 0 && c.mode === "poi" && c.facing === "up" && !!c.poi && isBarStool(c.poi);
+    const showMug =
+      onCounter || (c.mugT > 0 && c.facing !== "up" && (c.mode === "walking" || c.mode === "poi"));
     c.mug.visible = showMug;
-    if (showMug) {
+    if (onCounter) {
+      c.mug.position.set(Math.round(c.x + 9), Math.round(c.y - 28));
+      c.mug.zIndex = c.y - 0.5;
+      c.mug.texture = CARRY_TEXTURES[c.carry]()[Math.floor(this.clock * 2.5) % 2]!;
+    } else if (showMug) {
       const side = c.facing === "left" ? -6 : c.facing === "right" ? 6 : 6;
       const lift = c.anim === "sitFront" ? 4 : 0;
       c.mug.position.set(Math.round(c.x + side), Math.round(c.y - 6 - lift));
       c.mug.zIndex = c.y + 0.5;
-      c.mug.texture = mugTextures()[Math.floor(this.clock * 2.5) % 2]!;
+      c.mug.texture = CARRY_TEXTURES[c.carry]()[Math.floor(this.clock * 2.5) % 2]!;
     }
   }
   private clock = 0;
@@ -1040,6 +1143,24 @@ export class CharacterManager {
       if (w >= minMs) out.push({ x: c.x, y: c.y, id: c.sessionId, w });
     }
     return out.sort((a, b) => b.w - a.w);
+  }
+
+  /** Seated, online people with a working or waiting agent (who the queen pages). */
+  pageable(): (WaitSpot & { waiting: boolean })[] {
+    const out: (WaitSpot & { waiting: boolean })[] = [];
+    for (const c of this.chars.values()) {
+      if (c.mode !== "seated" || this.isOffline(c) || !c.sprite.visible) continue;
+      const a = this.activityOf(c);
+      if (a === "idle") continue;
+      out.push({ x: c.x, y: c.y, id: c.sessionId, waiting: a === "waiting" });
+    }
+    return out;
+  }
+
+  /** A paged person answers from their chair. */
+  answerPage(sessionId: string, text: string) {
+    const c = this.chars.get(sessionId);
+    if (c && !c.removed && c.mode === "seated") this.say(c, text);
   }
 
   catWaitSpots(): WaitSpot[] {
@@ -1075,6 +1196,21 @@ export class CharacterManager {
     const out: Point[] = [];
     for (const c of this.chars.values()) if (c.sprite.visible) out.push({ x: c.x, y: c.y });
     return out;
+  }
+
+  /** In the smokers' corner with a joint: puffs of smoke and now and then a "chill" bubble. */
+  private smokeStep(c: SessionCharacter, dt: number) {
+    c.puffT -= dt;
+    if (c.puffT > 0) return;
+    c.puffT = 1 + this.rand() * 0.8;
+    const side = c.facing === "left" ? -6 : 6;
+    const head = c.y - (c.anim === "sitFront" ? 21 : 24);
+    this.effects.floater(smokeTexture(), c.x + side, head + 6, 2.2, 16, 2);
+    if (!c.chat && c.iconT <= 0 && this.rand() < 0.3) {
+      c.icon.texture = chatIconTextures()[CHAT_ICONS.indexOf("chill")]!;
+      c.icon.visible = true;
+      c.iconT = 1.6;
+    }
   }
 
   /** Past half the context window: smoke; past 80%: on fire. Only at the desk, only online. */
@@ -1467,6 +1603,19 @@ export class CharacterManager {
     this.updateCraters(dt);
     this.scene.doorWanted = doorBusy;
     this.updateSelection(time);
+    if (characterSheetCacheSize() > CHARACTER_SHEET_CACHE_LIMIT) {
+      const retained = new Set<CharacterSheet>();
+      const displayed: Texture[] = [];
+      for (const c of this.chars.values()) {
+        retained.add(c.sheet);
+        // Avatar changes replace c.sheet before setAnim necessarily switches its sprite.
+        displayed.push(c.sprite.texture);
+      }
+      for (const ghost of this.endedDesks) retained.add(ghost.sheet);
+      for (const ghost of this.ghosts) retained.add(ghost.sheet);
+      for (const sprite of this.ghostSprites) displayed.push(sprite.texture);
+      pruneCharacterSheets(retained, displayed);
+    }
   }
 
   /** Session whose agent card is open: gets a bouncing arrow over its head. */
@@ -1548,6 +1697,14 @@ export class CharacterManager {
           this.goToDesk(c);
           break;
         }
+        // closing time: the bar / shop sends everybody out
+        if (c.poi && !this.isOpen(c.poi)) {
+          this.endChat(c);
+          this.releasePoi(c);
+          this.idleWander(c);
+          break;
+        }
+        if (c.poi && isSmokePoi(c.poi) && c.carry === "joint" && c.mugT > 0) this.smokeStep(c, dt);
         if (c.chat) {
           this.chatStep(c, dt);
           break;
@@ -1573,8 +1730,16 @@ export class CharacterManager {
         if (!c.chat && c.timer <= 0) {
           if (c.poi?.id === "coffee") {
             // got the coffee: off with a steaming mug
-            c.mugT = 60 + this.rand() * 60;
+            this.hold(c, "coffee", 60 + this.rand() * 60);
             this.onCoffee(c.personId);
+            this.idleWander(c);
+          } else if (c.poi?.id === "tap") {
+            // a fresh beer: off to a stool or a standing table
+            this.hold(c, "beer", 60 + this.rand() * 60);
+            this.idleWander(c);
+          } else if (c.poi?.id === "shop-counter") {
+            // bought something: straight to the smokers' corner
+            this.hold(c, "joint", 45 + this.rand() * 30);
             this.idleWander(c);
           } else if (this.rand() < 0.6 || c.chatCooldown > 15) this.idleWander(c);
           else c.timer = 8 + this.rand() * 10;
@@ -1606,6 +1771,7 @@ export class CharacterManager {
         return;
       }
     }
+    if (c.removed) return;
     c.chatCooldown -= dt;
     if (c.iconT > 0) {
       c.iconT -= dt;
@@ -1656,7 +1822,7 @@ export class CharacterManager {
         c.marker.position.set(Math.round(c.x + 8), Math.round(headY + 1));
       }
     }
-    if (!c.removed) this.place(c);
+    this.place(c);
   }
 
   private seatedStep(c: SessionCharacter, activity: Activity, dt: number, time: number) {
@@ -1744,7 +1910,12 @@ export class CharacterManager {
     } else if (c.goal === "poi") {
       c.mode = "poi";
       c.facing = c.poi?.face ?? "down";
-      c.timer = c.poi?.id === "coffee" ? 3 + this.rand() * 2 : (10 + this.rand() * 15) * this.dwell;
+      const quick = c.poi?.id === "coffee" || c.poi?.id === "tap" || c.poi?.id === "shop-counter";
+      c.timer = quick ? 3 + this.rand() * 2 : (10 + this.rand() * 15) * this.dwell;
+      // a seat at the counter comes with a beer (it stands on the counter beside them)
+      if (c.poi && isBarStool(c.poi) && (c.carry !== "beer" || c.mugT < c.timer + 5))
+        this.hold(c, "beer", c.timer + 20 + this.rand() * 40);
+      c.puffT = 0.4;
     } else if (c.goal === "lunch") {
       c.mode = "poi";
       c.poi = null;

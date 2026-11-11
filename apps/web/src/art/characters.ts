@@ -1,11 +1,14 @@
 /**
  * Paper-doll characters, ~16x24 px, drawn pixel by pixel from small ASCII layers:
  * skin head -> hair (per style and view) -> facial hair -> glasses -> accessory/hat,
- * body = jacket in the agent color + shirt + pants + shoes, then a 1-px dark outline.
+ * body = outfit (jacket/hoodie in the agent color, or flannel/tee with an agent badge)
+ * + pants + shoes + held items, then a 1-px dark outline (thin things like a joint and
+ * its smoke are drawn after the outline so they stay thin).
  *
  * One sheet (35 frames) per look; looks are cached by key so siblings and re-joins reuse.
  */
 import {
+  AGENT_COLORED_OUTFITS,
   AGENT_PALETTES,
   type AgentKind,
   type AvatarSpec,
@@ -14,6 +17,7 @@ import {
   skinToneHex,
 } from "@agent-office/protocol";
 import { Rectangle, Texture } from "pixi.js";
+import { accentHex, costumeAccessory, costumeHead, costumeTorso } from "./costumes.ts";
 import { C } from "./palette.ts";
 import { PixelCanvas } from "./pixel.ts";
 
@@ -24,14 +28,44 @@ type Ramp = { main: string; shade: string; light: string };
 export type Look = {
   skin: Ramp;
   hair: Ramp;
+  /** the top garment (agent color for jacket/hoodie) */
   jacket: Ramp;
+  /** agent color: shown as a badge on outfits that are not agent colored */
+  badge: Ramp;
   hairStyle: AvatarSpec["hairStyle"];
   glasses: AvatarSpec["glasses"];
   facialHair: AvatarSpec["facialHair"];
   accessory: AvatarSpec["accessory"];
+  outfit: AvatarSpec["outfit"];
+  leftHand: AvatarSpec["leftHand"];
+  rightHand: AvatarSpec["rightHand"];
+  wrist: AvatarSpec["wrist"];
+  accentColor: AvatarSpec["accentColor"];
   hat: boolean;
   mug: boolean;
 };
+
+/** Garment colors of the outfits that are not agent colored. */
+const OUTFIT_RAMPS: Partial<Record<AvatarSpec["outfit"], Ramp>> = {
+  flannel: { main: C.grey, shade: C.slate, light: C.silver },
+  "flannel-red": { main: C.red, shade: C.wine, light: C.pink },
+  tee: { main: C.dusk, shade: C.ink, light: C.slate },
+  cat: { main: C.slate, shade: C.ink, light: C.silver },
+  robot: { main: C.silver, shade: C.slate, light: C.white },
+  astronaut: { main: C.white, shade: C.silver, light: C.cyan },
+  pirate: { main: C.wine, shade: C.night, light: C.red },
+  vampire: { main: C.night, shade: C.wine, light: C.red },
+  disco: { main: C.berry, shade: C.plum, light: C.pink },
+};
+/** Plaid lines over a flannel: dark bands across, light threads down. */
+const PLAID: Partial<Record<AvatarSpec["outfit"], { dark: string; light: string }>> = {
+  flannel: { dark: C.dusk, light: C.white },
+  "flannel-red": { dark: C.night, light: C.pink },
+};
+/** The navy tee under an open flannel. */
+const TEE = C.ink;
+const isFlannel = (o: AvatarSpec["outfit"]) => o === "flannel" || o === "flannel-red";
+const CAPS: readonly AvatarSpec["accessory"][] = ["beanie", "cap", "cap-mint"];
 
 export function lookFor(
   avatar: AvatarSpec,
@@ -46,16 +80,30 @@ export function lookFor(
     hair = { main: hc.shade, shade: hc.shade === C.cocoa ? C.night : C.cocoa, light: hc.hex };
   }
   const j = AGENT_PALETTES[agent];
+  const badge: Ramp = { main: j.main, shade: j.shade, light: j.light };
+  const outfit = avatar.outfit ?? "jacket";
+  const leftHand = avatar.leftHand ?? "none";
+  const rightHand = avatar.rightHand ?? "none";
   return {
     skin: { main: sk.hex, shade: sk.shade, light: sk.light },
     hair,
-    jacket: { main: j.main, shade: j.shade, light: j.light },
+    jacket: AGENT_COLORED_OUTFITS.includes(outfit) ? badge : (OUTFIT_RAMPS[outfit] ?? badge),
+    badge,
     hairStyle: avatar.hairStyle,
     glasses: avatar.glasses,
     facialHair: avatar.facialHair,
     accessory: avatar.accessory,
-    hat: !!variation?.hat && avatar.accessory !== "beanie" && avatar.accessory !== "cap",
-    mug: !!variation?.mug,
+    outfit,
+    leftHand,
+    rightHand,
+    wrist: avatar.wrist ?? "none",
+    accentColor: avatar.accentColor ?? "cyan",
+    hat:
+      !!variation?.hat &&
+      !CAPS.includes(avatar.accessory) &&
+      ["none", "headphones", "bow", "earring"].includes(avatar.accessory),
+    // hands already full: no session mug
+    mug: !!variation?.mug && leftHand === "none" && rightHand === "none",
   };
 }
 
@@ -65,6 +113,12 @@ export function lookKey(l: Look): string {
     l.hair.main,
     l.hair.shade,
     l.jacket.main,
+    l.badge.main,
+    l.outfit,
+    l.leftHand,
+    l.rightHand,
+    l.wrist,
+    l.accentColor,
     l.hairStyle,
     l.glasses,
     l.facialHair,
@@ -75,7 +129,7 @@ export function lookKey(l: Look): string {
 }
 
 // ---- frame table ----------------------------------------------------------------------------
-type View = "down" | "up" | "left";
+export type View = "down" | "up" | "left";
 type Seat = "none" | "back" | "front";
 type Arms =
   | "down"
@@ -473,7 +527,7 @@ const GLASSES_L: Record<Exclude<AvatarSpec["glasses"], "none">, Record<"down" | 
   },
 };
 
-const ACC: Record<Exclude<AvatarSpec["accessory"], "none">, Record<View, Layer>> = {
+const ACC: Partial<Record<AvatarSpec["accessory"], Record<View, Layer>>> = {
   headphones: {
     down: [
       "",
@@ -561,6 +615,32 @@ const ACC: Record<Exclude<AvatarSpec["accessory"], "none">, Record<View, Layer>>
       ".NNNNNN.........",
     ],
   },
+  "cap-mint": {
+    down: [
+      "",
+      ".....MMMMMM.....",
+      "....MmMMMMMM....",
+      "...MMMMWWMMMM...",
+      "...MMMMMMMMMM...",
+      "..nnnnnnnnnnnn..",
+    ],
+    up: [
+      "",
+      ".....MMMMMM.....",
+      "....MmMMMMMM....",
+      "...MMMMMMMMMM...",
+      "...MMMMMMMMMM...",
+      "...MMn....nMM...",
+    ],
+    left: [
+      "",
+      ".....MMMMMM.....",
+      "....MmMMMMMMM...",
+      "....WMMMMMMMMM..",
+      "....MMMMMMMMMM..",
+      ".nnnnnn.........",
+    ],
+  },
   bow: {
     down: ["", "", "..........RRrRR.", "..........R.r.R."],
     up: ["", "", ".RRrRR..........", ".R.r.R.........."],
@@ -584,7 +664,7 @@ function layer(pc: PixelCanvas, rows: Layer, dy: number, colors: Record<string, 
   pc.sprite(0, dy, rows, colors);
 }
 
-function drawHead(pc: PixelCanvas, look: Look, view: View, dy: number) {
+export function drawHead(pc: PixelCanvas, look: Look, view: View, dy: number) {
   const s = look.skin;
   const hairC = { h: look.hair.main, H: look.hair.shade, L: look.hair.light, R: C.red };
   if (view === "left") {
@@ -623,6 +703,7 @@ function drawHead(pc: PixelCanvas, look: Look, view: View, dy: number) {
     ...hairC,
     L: look.hairStyle === "bald" ? s.light : hairC.L,
   });
+  costumeHead(pc, look, view, dy);
   if (view !== "up") {
     const fv = view === "left" ? "left" : "down";
     if (look.facialHair !== "none") {
@@ -636,44 +717,144 @@ function drawHead(pc: PixelCanvas, look: Look, view: View, dy: number) {
     layer(pc, HAT[view], dy, { T: C.amber, t: C.red, Y: C.sand });
   }
   if (look.accessory !== "none" && !(look.hat && look.accessory === "headphones")) {
-    layer(pc, ACC[look.accessory][view], dy, {
-      K: C.ink,
-      P: C.berry,
-      Q: C.pink,
-      B: C.plum,
-      b: C.berry,
-      p: C.cream,
-      A: C.forest,
-      a: C.moss,
-      N: C.pine,
-      R: C.pink,
-      r: C.berry,
-      E: C.amber,
-    });
+    const accessory = ACC[look.accessory];
+    if (accessory)
+      layer(pc, accessory[view], dy, {
+        K: C.ink,
+        P: C.berry,
+        Q: C.pink,
+        B: C.plum,
+        b: C.berry,
+        p: C.cream,
+        A: C.forest,
+        a: C.moss,
+        N: C.pine,
+        R: C.pink,
+        r: C.berry,
+        E: C.amber,
+        M: C.cyan,
+        m: C.white,
+        n: C.sky,
+        W: C.white,
+      });
+    costumeAccessory(pc, look, view, dy);
   }
+}
+
+/** Plaid over a garment area: dark bands every 3 rows, light threads every 3 columns. */
+function plaid(pc: PixelCanvas, look: Look, x: number, top: number, w: number, h: number) {
+  const p = PLAID[look.outfit];
+  if (!p) return;
+  for (let y = top; y < top + h; y++) {
+    for (let i = x; i < x + w; i++) {
+      const band = (y - top) % 3 === 1;
+      const thread = i % 3 === 1;
+      if (band && thread) pc.set(i, y, look.jacket.shade);
+      else if (band) pc.set(i, y, p.dark);
+      else if (thread) pc.set(i, y, p.light);
+    }
+  }
+}
+
+/** Plaid bands on a 1-px sleeve. */
+function sleevePlaid(pc: PixelCanvas, look: Look, x: number, top: number, len: number) {
+  const p = PLAID[look.outfit];
+  if (!p) return;
+  for (let y = top + 1; y < top + len; y += 3) pc.set(x, y, p.dark);
+}
+
+/** 2x2 agent badge (light corner top-left). */
+function badge(pc: PixelCanvas, look: Look, x: number, y: number) {
+  pc.rect(x, y, 2, 2, look.badge.main);
+  pc.set(x, y, look.badge.light);
 }
 
 function drawTorso(pc: PixelCanvas, look: Look, view: View, top: number, rows: number) {
   const j = look.jacket;
+  const o = look.outfit;
+  const flannel = isFlannel(o);
   if (view === "left") {
     pc.rect(5, top, 6, rows, j.main);
+    plaid(pc, look, 5, top, 6, rows - 1);
     pc.vline(10, top, rows, j.shade);
-    pc.vline(5, top, Math.min(3, rows), C.white);
+    if (o === "jacket") pc.vline(5, top, Math.min(3, rows), C.white);
+    if (flannel) {
+      pc.vline(5, top, Math.min(4, rows - 1), TEE);
+      pc.set(5, top + 1, look.badge.main);
+    }
+    if (o === "tee") pc.set(5, top + 1, look.badge.main);
+    if (o === "hoodie") pc.rect(9, top, 2, 2, j.shade); // hood on the back
     pc.hline(5, top + rows - 1, 6, j.shade);
+    costumeTorso(pc, look, view, top, rows);
+    if (!AGENT_COLORED_OUTFITS.includes(o)) pc.set(5, top + 1, look.badge.main);
     return;
   }
   pc.rect(4, top, 8, rows, j.main);
+  plaid(pc, look, 4, top, 8, rows - 1);
   pc.vline(11, top, rows, j.shade);
   pc.set(4, top, j.light);
   pc.set(5, top, j.light);
   pc.hline(4, top + rows - 1, 8, j.shade);
+  costumeTorso(pc, look, view, top, rows);
   if (view === "down") {
-    pc.rect(7, top, 2, Math.min(4, rows - 1), C.white);
-    pc.set(6, top, j.light);
-    pc.set(9, top, j.light);
+    if (!["jacket", "hoodie", "flannel", "flannel-red", "tee"].includes(o))
+      badge(pc, look, 9, top + 2);
+    if (o === "jacket") {
+      pc.rect(7, top, 2, Math.min(4, rows - 1), C.white);
+      pc.set(6, top, j.light);
+      pc.set(9, top, j.light);
+    } else if (flannel) {
+      // open flannel: the navy tee with the agent badge in the middle
+      pc.rect(6, top, 4, rows - 1, TEE);
+      pc.set(6, top, j.light);
+      pc.set(9, top, j.light);
+      badge(pc, look, 7, top + 1);
+    } else if (o === "tee") {
+      pc.set(7, top, look.skin.shade);
+      pc.set(8, top, look.skin.shade);
+      badge(pc, look, 7, top + 2);
+    } else if (o === "hoodie") {
+      pc.set(6, top + 1, C.white); // drawstrings
+      pc.set(9, top + 1, C.white);
+      pc.hline(6, top + 3, 4, j.shade); // pocket
+    }
   } else {
     pc.vline(7, top + 1, rows - 2, j.shade); // back seam
+    if (o === "hoodie") {
+      pc.rect(5, top, 6, 2, j.shade);
+      pc.hline(6, top, 4, j.light);
+    }
+    // what you see at the desk: a wide agent patch across the shoulders
+    if (!AGENT_COLORED_OUTFITS.includes(o)) {
+      pc.rect(5, top + 1, 6, 2, look.badge.main);
+      pc.hline(5, top + 1, 6, look.badge.light);
+    }
   }
+}
+
+/** Sleeve of length `len` from `top`; short sleeves (tee) leave a bare forearm. */
+function sleeve(pc: PixelCanvas, look: Look, x: number, top: number, len: number, hex: string) {
+  if (look.outfit === "tee") {
+    pc.vline(x, top, Math.min(2, len), hex);
+    if (len > 2) pc.vline(x, top + 2, len - 2, look.skin.main);
+    return;
+  }
+  pc.vline(x, top, len, hex);
+  sleevePlaid(pc, look, x, top, len);
+}
+
+function drawWrist(pc: PixelCanvas, look: Look, x: number, y: number) {
+  if (look.wrist === "none") return;
+  const color =
+    look.wrist === "neon-pink"
+      ? C.pink
+      : look.wrist === "neon-lime"
+        ? C.leaf
+        : look.wrist === "rainbow"
+          ? C.lemon
+          : C.cyan;
+  pc.hline(x - 1, y, 3, color);
+  if (look.wrist === "rainbow") pc.set(x + 1, y, C.pink);
 }
 
 function drawArmsFront(pc: PixelCanvas, look: Look, arms: Arms, top: number, phase: number) {
@@ -682,8 +863,9 @@ function drawArmsFront(pc: PixelCanvas, look: Look, arms: Arms, top: number, pha
   const lenL = phase === 1 ? 4 : 5;
   const lenR = phase === 3 ? 4 : 5;
   // left arm (viewer's left) always down
-  pc.vline(3, top, lenL, j.main);
+  sleeve(pc, look, 3, top, lenL, j.main);
   pc.set(3, top + lenL, s.main);
+  drawWrist(pc, look, 3, top + lenL - 1);
   if (arms === "raise0" || arms === "raise1" || arms === "wave0" || arms === "wave1") {
     const alt = arms === "raise1" || arms === "wave1";
     pc.vline(12, top, 2, j.shade);
@@ -695,10 +877,12 @@ function drawArmsFront(pc: PixelCanvas, look: Look, arms: Arms, top: number, pha
       pc.set(14, top - 6, j.shade);
       pc.rect(14, top - 8, 2, 2, s.main);
     }
+    drawWrist(pc, look, 13, top - (alt ? 5 : 7));
     return;
   }
-  pc.vline(12, top, lenR, j.shade);
+  sleeve(pc, look, 12, top, lenR, j.shade);
   pc.set(12, top + lenR, s.main);
+  drawWrist(pc, look, 12, top + lenR - 1);
 }
 
 function drawArmsBack(pc: PixelCanvas, look: Look, arms: Arms, top: number, phase: number) {
@@ -713,8 +897,9 @@ function drawArmsBack(pc: PixelCanvas, look: Look, arms: Arms, top: number, phas
     lenL = 4;
     lenR = 3;
   }
-  pc.vline(3, top, lenL, j.shade);
+  sleeve(pc, look, 3, top, lenL, j.shade);
   if (arms === "down") pc.set(3, top + lenL, s.main);
+  drawWrist(pc, look, 3, top + lenL - 1);
   if (arms === "book0" || arms === "book1") {
     pc.vline(12, top, 2, j.shade);
     pc.rect(11, top - 1, 2, 1, s.main);
@@ -727,10 +912,12 @@ function drawArmsBack(pc: PixelCanvas, look: Look, arms: Arms, top: number, phas
       pc.set(14, by - 2, C.white);
       pc.set(14, by - 3, C.white);
     }
+    drawWrist(pc, look, 12, top - 1);
     return;
   }
-  pc.vline(12, top, lenR, j.shade);
+  sleeve(pc, look, 12, top, lenR, j.shade);
   if (arms === "down") pc.set(12, top + lenR, s.main);
+  drawWrist(pc, look, 12, top + lenR - 1);
 }
 
 function drawLegs(pc: PixelCanvas, view: View, phase: number) {
@@ -780,8 +967,156 @@ function drawMug(pc: PixelCanvas, x: number, y: number) {
   pc.set(x, y, C.silver);
 }
 
-function paintFrame(pc: PixelCanvas, look: Look, f: FrameSpec) {
+/** Painters that run after the outline (thin things that must stay thin). */
+type After = ((pc: PixelCanvas) => void)[];
+
+/**
+ * A held item next to the hand pixel (hx, hy). `dir` -1 = it sticks out to the viewer's
+ * left, +1 = right. `tick` (0/1) animates smoke.
+ */
+function drawHeld(
+  pc: PixelCanvas,
+  item: AvatarSpec["leftHand"],
+  hx: number,
+  hy: number,
+  dir: -1 | 1,
+  tick: number,
+  after: After,
+  color: string = C.cyan,
+) {
+  const x = dir < 0 ? hx - 2 : hx + 1; // left column of a 2-wide item
+  switch (item) {
+    case "none":
+      return;
+    case "lightsaber":
+      pc.rect(x, hy - 10, 2, 9, color);
+      pc.vline(x, hy - 9, 8, C.white);
+      pc.rect(x, hy - 1, 2, 3, C.silver);
+      return;
+    case "confetti":
+      pc.rect(x, hy - 3, 2, 4, C.berry);
+      pc.hline(x, hy - 3, 2, color);
+      pc.set(x, hy - 1, C.lemon);
+      return;
+    case "bubble-wand":
+      pc.vline(x, hy - 3, 5, C.pink);
+      pc.rect(x - 1, hy - 6, 3, 3, C.cyan);
+      pc.set(x, hy - 5, C.navy);
+      return;
+    case "disco-ball":
+      pc.ellipse(x - 1, hy - 6, 4, 5, C.silver);
+      pc.set(x, hy - 5, C.cyan);
+      pc.set(x + 1, hy - 3, C.white);
+      pc.vline(x, hy - 1, 2, C.slate);
+      return;
+    case "magic-wand":
+      pc.vline(x, hy - 4, 5, C.plum);
+      pc.hline(x - 1, hy - 5, 3, C.lemon);
+      pc.vline(x, hy - 6, 3, C.lemon);
+      return;
+    case "balloon":
+      pc.vline(x, hy - 8, 9, C.white);
+      pc.ellipse(x - 1, hy - 13, 4, 6, color);
+      pc.set(x, hy - 12, C.white);
+      return;
+    case "water-pistol":
+      pc.rect(x - 1, hy - 3, 4, 2, C.sky);
+      pc.vline(x, hy - 1, 3, C.orange);
+      pc.rect(x, hy - 5, 2, 2, color);
+      return;
+    case "maracas":
+      pc.vline(x, hy - 2, 4, C.wood);
+      pc.ellipse(x - 1, hy - 6, 3, 4, C.red);
+      pc.hline(x - 1, hy - 4, 3, C.lemon);
+      return;
+    case "umbrella":
+      pc.vline(x, hy - 8, 9, C.silver);
+      pc.hline(x - 1, hy, 2, C.silver);
+      pc.ellipse(Math.max(0, x - 2), hy - 12, 5, 5, color);
+      pc.hline(Math.max(0, x - 2), hy - 8, 5, C.white);
+      return;
+    case "beer":
+      // glass of lager with a foam head
+      pc.rect(x, hy - 2, 2, 1, C.white);
+      pc.rect(x, hy - 1, 2, 3, C.amber);
+      pc.set(dir < 0 ? x : x + 1, hy - 1, C.lemon);
+      pc.set(dir < 0 ? x + 1 : x, hy + 1, C.orange);
+      return;
+    case "coffee":
+      pc.rect(x, hy - 2, 2, 1, C.white);
+      pc.rect(x, hy - 1, 2, 1, C.wood);
+      pc.rect(x, hy, 2, 2, C.white);
+      return;
+    case "phone":
+      pc.rect(x, hy - 2, 2, 3, C.ink);
+      pc.set(x, hy - 2, C.sky);
+      pc.set(x + 1, hy - 1, C.cyan);
+      return;
+    case "cigarette":
+    case "joint": {
+      // white stick with a glowing tip and a curl of smoke, drawn over the outline
+      after.push((p) => {
+        const ex = hx + dir * 2;
+        p.set(hx + dir, hy, C.white);
+        p.set(ex, hy, item === "cigarette" ? C.wood : C.cream);
+        p.set(ex + dir, hy, tick ? C.amber : C.orange);
+        const sx = ex + dir;
+        p.set(sx, hy - 2 - tick, C.silver, 200);
+        p.set(sx - dir, hy - 3 - tick, C.silver, 150);
+        p.set(sx, hy - 4 - tick, C.white, 110);
+      });
+      return;
+    }
+  }
+}
+
+/** Items in both hands of a front-facing pose (arms down). */
+function drawHands(
+  pc: PixelCanvas,
+  look: Look,
+  arms: Arms,
+  top: number,
+  phase: number,
+  tick: number,
+  after: After,
+) {
+  const lenL = phase === 1 ? 4 : 5;
+  const lenR = phase === 3 ? 4 : 5;
+  drawHeld(pc, look.leftHand, 3, top + lenL, -1, tick, after, accentHex(look.accentColor));
+  const raised = arms === "raise0" || arms === "raise1" || arms === "wave0" || arms === "wave1";
+  if (!raised)
+    drawHeld(pc, look.rightHand, 12, top + lenR, 1, tick, after, accentHex(look.accentColor));
+}
+
+/** Back-facing hands swap screen sides and follow typing/book poses. */
+function drawBackHands(
+  pc: PixelCanvas,
+  look: Look,
+  arms: Arms,
+  top: number,
+  phase: number,
+  tick: number,
+  after: After,
+) {
+  const lenL = arms === "type0" ? 3 : arms === "type1" || phase === 3 ? 4 : 5;
+  const lenR = arms === "type1" ? 3 : arms === "type0" || phase === 1 ? 4 : 5;
+  const book = arms === "book0" || arms === "book1";
+  drawHeld(pc, look.rightHand, 3, top + lenL, -1, tick, after, accentHex(look.accentColor));
+  drawHeld(
+    pc,
+    look.leftHand,
+    12,
+    book ? top - 1 : top + lenR,
+    1,
+    tick,
+    after,
+    accentHex(look.accentColor),
+  );
+}
+
+function paintFrame(pc: PixelCanvas, look: Look, f: FrameSpec, after: After) {
   const bob = f.bob;
+  const tick = (f.bob + f.phase) % 2;
   if (f.seat === "none") {
     drawLegs(pc, f.view, f.phase);
     drawTorso(pc, look, f.view, 12 + bob, 6);
@@ -789,16 +1124,21 @@ function paintFrame(pc: PixelCanvas, look: Look, f: FrameSpec) {
       drawArmsFront(pc, look, f.arms, 12 + bob, f.phase);
       if (look.mug && f.arms === "down") drawMug(pc, 12, 16 + bob);
       if (look.mug && (f.arms === "wave0" || f.arms === "wave1")) drawMug(pc, 2, 16);
+      drawHands(pc, look, f.arms, 12 + bob, f.phase, tick, after);
     } else if (f.view === "up") {
       drawArmsBack(pc, look, f.arms, 12 + bob, f.phase);
+      drawBackHands(pc, look, f.arms, 12 + bob, f.phase, tick, after);
     } else {
       // side: one arm swinging
       const j = look.jacket;
       const ax = f.phase === 1 ? -1 : f.phase === 3 ? 1 : 0;
       pc.rect(7, 12 + bob, 2, 2, j.shade);
-      pc.rect(7 + ax, 14 + bob, 2, 2, j.shade);
+      pc.rect(7 + ax, 14 + bob, 2, 2, look.outfit === "tee" ? look.skin.main : j.shade);
       pc.rect(7 + ax * 2, 16 + bob, 2, 1, look.skin.main);
+      drawWrist(pc, look, 7 + ax * 2, 15 + bob);
       if (look.mug && f.phase === 0) drawMug(pc, 5, 15 + bob);
+      const item = look.rightHand !== "none" ? look.rightHand : look.leftHand;
+      drawHeld(pc, item, 7 + ax * 2, 16 + bob, -1, tick, after, accentHex(look.accentColor));
     }
     drawHead(pc, look, f.view, bob);
     if (f.view === "down") drawRaisedHand(pc, look, f.arms, 12 + bob);
@@ -808,6 +1148,7 @@ function paintFrame(pc: PixelCanvas, look: Look, f: FrameSpec) {
   if (f.seat === "back") {
     drawTorso(pc, look, "up", 12 + S + bob, 5);
     drawArmsBack(pc, look, f.arms, 12 + S + bob, 0);
+    drawBackHands(pc, look, f.arms, 12 + S + bob, 0, tick, after);
     drawHead(pc, look, "up", S + bob);
     return;
   }
@@ -817,32 +1158,95 @@ function paintFrame(pc: PixelCanvas, look: Look, f: FrameSpec) {
   pc.rect(4, 22, 2, 1, C.cocoa);
   pc.rect(10, 22, 2, 1, C.cocoa);
   drawTorso(pc, look, "down", 12 + S + bob, 5);
-  drawArmsFront(pc, look, f.arms === "rest" ? "down" : f.arms, 12 + S + bob, 0);
+  const arms = f.arms === "rest" ? "down" : f.arms;
+  drawArmsFront(pc, look, arms, 12 + S + bob, 0);
   if (look.mug && f.arms === "rest") drawMug(pc, 11, 17 + bob);
+  drawHands(pc, look, arms, 12 + S + bob, 0, tick, after);
   drawHead(pc, look, "down", S + bob);
   drawRaisedHand(pc, look, f.arms, 12 + S + bob);
 }
 
-const sheetCache = new Map<string, CharacterSheet>();
-
-export function characterSheet(look: Look): CharacterSheet {
-  const key = lookKey(look);
-  const cached = sheetCache.get(key);
-  if (cached) return cached;
+/** Paint every frame of a look into one strip (no Pixi; also used by the look editor). */
+export function paintSheet(look: Look): PixelCanvas {
   const pc = new PixelCanvas(CHAR_W * SPECS.length, CHAR_H);
   SPECS.forEach((spec, i) => {
     if (spec.mirror !== undefined) return;
+    const after: After = [];
     pc.at(i * CHAR_W, 0);
-    paintFrame(pc, look, spec);
+    paintFrame(pc, look, spec, after);
     pc.at(0, 0);
     pc.outline(i * CHAR_W, 0, CHAR_W, CHAR_H);
+    pc.at(i * CHAR_W, 0);
+    for (const paint of after) paint(pc);
+    pc.at(0, 0);
   });
   SPECS.forEach((spec, i) => {
     if (spec.mirror !== undefined) {
       pc.mirrorFrom(spec.mirror * CHAR_W, 0, CHAR_W, CHAR_H, i * CHAR_W, 0);
     }
   });
-  const base = Texture.from(pc.toCanvas());
+  return pc;
+}
+
+/** One frame of a look as a DOM canvas, `scale`x (look editor preview). */
+export function lookPreview(look: Look, frame = 0, scale = 4): HTMLCanvasElement {
+  const pc = paintSheet(look);
+  const one = new PixelCanvas(CHAR_W, CHAR_H);
+  one.copyFrom(pc, frame * CHAR_W, 0, CHAR_W, CHAR_H, 0, 0);
+  const src = one.toCanvas();
+  const canvas = document.createElement("canvas");
+  canvas.width = CHAR_W * scale;
+  canvas.height = CHAR_H * scale;
+  const ctx = canvas.getContext("2d")!;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+type CachedSheet = { sheet: CharacterSheet; base: Texture };
+const sheetCache = new Map<string, CachedSheet>();
+export const CHARACTER_SHEET_CACHE_LIMIT = 128;
+
+/** Evict only sheets with no live character/ghost or displayed frame referencing their source. */
+export function pruneCharacterSheetEntries(
+  cache: Map<string, CachedSheet>,
+  retained: Iterable<CharacterSheet>,
+  displayed: Iterable<Texture>,
+  limit = CHARACTER_SHEET_CACHE_LIMIT,
+): number {
+  if (cache.size <= limit) return 0;
+  const pinned = new Set(retained);
+  const sources = new Set([...displayed].map((texture) => texture.source));
+  let evicted = 0;
+  for (const [key, entry] of cache) {
+    if (cache.size <= limit) break;
+    if (pinned.has(entry.sheet) || sources.has(entry.base.source)) continue;
+    cache.delete(key);
+    // All 35 frames share one source: release frame wrappers first, then the owning texture.
+    for (const frame of entry.sheet.frames) frame.destroy();
+    entry.base.destroy(true);
+    evicted++;
+  }
+  return evicted;
+}
+
+export const characterSheetCacheSize = () => sheetCache.size;
+export function pruneCharacterSheets(
+  retained: Iterable<CharacterSheet>,
+  displayed: Iterable<Texture>,
+): number {
+  return pruneCharacterSheetEntries(sheetCache, retained, displayed);
+}
+
+export function characterSheet(look: Look): CharacterSheet {
+  const key = lookKey(look);
+  const cached = sheetCache.get(key);
+  if (cached) {
+    sheetCache.delete(key);
+    sheetCache.set(key, cached);
+    return cached.sheet;
+  }
+  const base = Texture.from(paintSheet(look).toCanvas());
   const frames = SPECS.map(
     (_, i) =>
       new Texture({ source: base.source, frame: new Rectangle(i * CHAR_W, 0, CHAR_W, CHAR_H) }),
@@ -852,6 +1256,6 @@ export function characterSheet(look: Look): CharacterSheet {
     anims[name as AnimName] = idx.map((i) => frames[i]!);
   }
   const sheet = { frames, anims };
-  sheetCache.set(key, sheet);
+  sheetCache.set(key, { sheet, base });
   return sheet;
 }
