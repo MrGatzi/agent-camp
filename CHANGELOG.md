@@ -7,6 +7,7 @@ banner after a deploy.
 
 ## 2026-11-11
 
+- 🌀 Rick and Morty drop by: they wander around the office and jump through portals from Rick's portal gun to pop up somewhere else (click them!)
 - Sharper office at every zoom: name tags and signs stay readable on wall screens and phones
 - The auto-tour comes back to the desks after every other stop and shows the pods where agents are working
 - Agents sitting on a sofa, bench or chair now sit in front of it instead of hiding behind it

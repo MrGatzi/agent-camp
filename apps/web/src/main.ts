@@ -89,6 +89,7 @@ import {
 import { OfficeScene } from "./world/office.ts";
 import { PartyWorld } from "./world/party.ts";
 import { OfficeQueen } from "./world/queen.ts";
+import { PortalDuo } from "./world/rickmorty.ts";
 
 type OfficeApi = {
   ready: boolean;
@@ -110,6 +111,8 @@ type OfficeApi = {
   characters(): number;
   /** office cats right now (not counting the ones walking out) */
   cats(): number;
+  /** where Rick stands and what he and Morty are up to (null until they arrive) */
+  rickMorty(): { x: number; y: number; mode: string } | null;
   /** slow down / freeze the world clock (screenshots of short moments); 1 = normal */
   setSpeed(k: number): void;
 };
@@ -203,9 +206,12 @@ async function boot() {
     () => chars.pageable(),
     (id, text) => chars.answerPage(id, text),
   );
+  // Rick and Morty portal in, stroll around and portal somewhere else every half minute
+  const duo = new PortalDuo(scene.objects, scene.fx, scene.map, effects);
   if (party) {
     colony.setHunting(0.6, 900);
     queen.pageEvery = 12;
+    duo.hopEvery = 10;
   }
   const hourValue =
     hourParam !== null ? Number(hourParam) : demo === "party" ? 12.2 : feierabend ? 17.5 : null;
@@ -278,6 +284,7 @@ async function boot() {
     },
   );
   camera.attach(app.canvas);
+  duo.onPortal = (x, y) => camera.notify(x, y, { zoom: 3, hold: 8 });
   // wall screens and the fit view frame the office (64 columns); the east street block joins
   // the frame only while someone is there, so tiles stay big on a 1080p wall
   camera.fitWidth = () =>
@@ -303,6 +310,7 @@ async function boot() {
     scene.rebuild(buildOfficeMap(podRowsFor(need)));
     colony.setMap(scene.map);
     queen.setMap(scene.map);
+    duo.setMap(scene.map);
     life.reattach();
     minimap.setTerrain(scene.terrainCanvas);
     chars.syncSlots();
@@ -864,6 +872,11 @@ async function boot() {
       return;
     }
     const c = chars.pick(wx, wy);
+    const toon = duo.hit(wx, wy);
+    if (toon && (!c || duo.depth(toon) > c.y)) {
+      duo.poke(toon);
+      return;
+    }
     if (queen.hit(wx, wy) && (!c || queen.y > c.y)) {
       queen.poke();
       return;
@@ -1119,6 +1132,7 @@ async function boot() {
       scene.doorWanted = colony.nearDoor({ x: (d.x + 1) * 16, y: (d.y + 1) * 16 });
     }
     queen.update(dt, time);
+    duo.update(dt, time);
     life.update(dt, time);
     effects.update(dt);
     living.update(dt);
@@ -1180,6 +1194,7 @@ async function boot() {
     },
     characters: () => chars.chars.size,
     cats: () => colony.cats().length,
+    rickMorty: () => duo.where(),
     setSpeed: (k) => {
       speed = Math.max(0, k);
     },
