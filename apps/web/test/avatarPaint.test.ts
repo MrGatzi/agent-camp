@@ -81,12 +81,12 @@ describe("HD character painter", () => {
     expect((legs.get(skin.base) ?? 0) + (legs.get(skin.shadow) ?? 0)).toBeGreaterThan(3);
   });
 
-  test("agent shows as armband + lapel pin when the jacket keeps its own colour", () => {
+  test("agent shows as an armband only when the jacket keeps its own colour", () => {
     const p = AGENT_PALETTES.codex;
     const c = colours(paintSheet(lookFor(tracht, "codex", null)), 0);
     expect(c.get(p.main)).toBeGreaterThan(4);
-    expect(c.get(p.shade)).toBeGreaterThan(0);
-    expect(c.get(p.light)).toBe(1); // the pin's highlight
+    // one agent mark: no lapel pin (its highlight/shadow texels are gone)
+    expect(c.get(p.light) ?? 0).toBe(0);
     // not on the jacket itself
     expect(c.get(tracht.look!.outer.ramp.base)).toBeGreaterThan(20);
   });

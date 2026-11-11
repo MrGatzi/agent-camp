@@ -1,6 +1,6 @@
 /**
- * Upper body, inside out: shirt -> suspenders/bib -> neckwear -> vest -> outer garment ->
- * agent lapel pin. Front, back and side views. Each layer leaves its neck opening (and, when worn
+ * Upper body, inside out: shirt -> suspenders/bib -> neckwear -> vest -> outer garment.
+ * Front, back and side views. Each layer leaves its neck opening (and, when worn
  * open, its front) unpainted so the layers below show through.
  */
 import type { Buttons, CharacterLook, Ramp } from "@agent-office/protocol";
@@ -592,24 +592,11 @@ function drawOuterFront(c: Ctx, b: TorsoBox) {
   }
 }
 
-/** Agent colour on a garment that isn't agent coloured: a small 2×2 pin on the left lapel. */
-function drawPin(c: Ctx, b: TorsoBox) {
-  if (!c.r.accent) return;
-  const a = c.r.agentRamp;
-  const x = c.tr - 2;
-  const y = b.T + 3;
-  c.pc.set(x, y, a.light);
-  c.pc.set(x + 1, y, a.base);
-  c.pc.set(x, y + 1, a.base);
-  c.pc.set(x + 1, y + 1, a.shadow);
-}
-
 export function drawTorsoFront(c: Ctx, b: TorsoBox) {
   drawShirtFront(c, b);
   drawSuspendersFront(c, b);
   drawVestFront(c, b);
   drawOuterFront(c, b);
-  drawPin(c, b);
 }
 
 // ---- back view --------------------------------------------------------------------------------

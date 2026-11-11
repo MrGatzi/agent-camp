@@ -144,7 +144,7 @@ is painted by the same renderer at the same pixel size, so everyone stays in one
 
 Which agent a session runs (Claude, Codex, Pi) shows in its colour: if you don't name a
 jacket colour, your jacket takes the agent's colour as before; if you do, you keep your
-jacket and get an armband and a small lapel pin in the agent's colour instead. Every extra
+jacket and get an armband in the agent's colour instead. Every extra
 session is a sibling of you with tiny variations, and your pod has one desk per running
 session (at least 2, up to 6).
 
