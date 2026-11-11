@@ -43,10 +43,10 @@ same password the first time you open it.
 
 Paste it where Claude can run commands on your Mac: the **Code** tab of the Claude desktop
 app, or Claude Code in a terminal or IDE. A normal chat or Claude Design can't install it. The
-office shows sessions of Claude Code, Codex and Pi running on your Mac. Claude Design (and
-older Cowork sessions) in the Claude desktop app can get desks too if you turn them on (see
-[Claude Design and Cowork](#claude-design-and-cowork)). claude.ai chats run in the cloud and
-don't appear.
+office shows sessions of Claude Code, Codex and Pi running on your Mac. Designers who work in
+Claude Design in the Claude desktop app can get a desk too, and so can older Cowork sessions,
+if you turn them on (see [Claude Design and Cowork](#claude-design-and-cowork)). claude.ai
+chats run in the cloud and don't appear.
 
 ### By hand
 
@@ -139,24 +139,22 @@ shows up on the agent card so you can tell the sessions apart.
 
 For teammates who work in the Claude desktop app instead of a terminal.
 
-**Claude Design** runs on Anthropic's servers, so the connector can't see what Claude is
-doing there. It can only see that a Claude Design canvas (a design, slides or a doc) is open
-in the Claude app, also when it sits next to a chat. Turn that on with:
+**Claude Design** runs on Anthropic's servers inside the Claude app, so the connector can't
+see whether you are designing or what Claude is doing. If you are a designer and the Claude
+app is where you do your design work, say so once:
 
 ```sh
-agent-office configure --design-window true
+agent-office configure --claude-app design
 launchctl kickstart -k gui/$(id -u)/dev.agentoffice.connector
 ```
 
-and allow `agent-office` under **System Settings → Privacy & Security → Accessibility**.
-`agent-office status` tells you whether the permission is still missing.
-
-You then get a pink "Claude Design" desk: **thinking** while a canvas is open and the Claude
-app is in front, **idle** after the app has been in the background for two minutes, and gone
-when you close the canvas. The connector checks every 30 seconds while no canvas is open, so
-a new one can take that long to show up; while one is open it checks every 5 seconds. It
-never shows "waiting", because the connector can't know that. This works only in the desktop
-app, not in a browser.
+From then on, while the Claude app runs you have exactly one pink "Claude Design" desk:
+**thinking** while the app is in front, **idle** after it has been in the background for two
+minutes, and gone when you quit the app. It never shows "waiting", because the connector
+can't know that. No permission is needed, and nothing in the Claude app changes: the connector
+only checks that the app runs and asks macOS (`lsappinfo`) which app is in front. Cowork
+sessions are not shown with this setting, so you stay one desk. `agent-office configure
+--claude-app off` turns it off.
 
 **Cowork** is off by default, because it is often not coding work. Turn it on with
 `agent-office configure --cowork true` and restart the connector. Each Cowork session whose
@@ -277,10 +275,11 @@ Claude Code (your own account, if you opted in) turns it into the look, which th
 the office; only when that Mac cannot does it go to the office's AI provider.
 The Giphy id of your head GIF is sent too, if you set one.
 
-With `design_window` on (see [Claude Design and Cowork](#claude-design-and-cowork)), the
-connector asks macOS which pages the Claude app shows and sends only whether a Claude Design
-canvas is open and whether the app is in front. The page addresses stay on your Mac. With `cowork` on, Cowork sessions
-are sent like Claude Code sessions, with the project name always "Cowork".
+With `claude_app = "design"` (see [Claude Design and Cowork](#claude-design-and-cowork)),
+the connector sends one Claude Design desk while the Claude app runs, with only "the app is
+in front or not" as its activity. Nothing about its windows or content is read. With
+`cowork` on, Cowork sessions are sent like Claude Code sessions, with the project name always
+"Cowork".
 
 Optional: `agent-office configure --birthday MM-DD` and the office brings you a cake that day
 (only "it's your birthday today" is ever shown, never the date).

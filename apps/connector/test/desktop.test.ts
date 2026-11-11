@@ -1,19 +1,13 @@
-/** Claude desktop app: Cowork sessions (transcripts) and Claude Design canvases (presence). */
+/** Claude desktop app: Cowork sessions (transcripts) and the declared Claude Design desk. */
 import { afterEach, describe, expect, test } from "bun:test";
 import { IDLE_AFTER_MS, type SessionInfo } from "@agent-office/protocol";
 import {
-  DESIGN_IDLE_QUERY_MS,
-  DESIGN_QUERY_MS,
-  DESIGN_RETRY_MS,
-  DESIGN_SCRIPT,
-  DESIGN_TIMEOUTS_MEAN_BLOCKED,
+  CLAUDE_BUNDLE_ID,
   DesignWatcher,
-  type DesignWindowState,
-  fakeDesignWindows,
-  isDesignPath,
-  isPermissionError,
-  parseDesignWindows,
-  systemDesignWindows,
+  FRONT_QUERY_MS,
+  fakeFrontmost,
+  parseBundleId,
+  systemFrontmost,
 } from "../src/desktop.ts";
 import { toolActivity } from "../src/detect/activity.ts";
 import { COWORK_LIVE_MS, findCoworkTranscripts, RESCAN_MS } from "../src/detect/cowork.ts";
@@ -201,223 +195,121 @@ describe("Cowork sessions", () => {
   });
 });
 
-describe("Claude Design canvas: reading macOS's answer", () => {
-  test("a Design canvas counts; front needs the app in front and a canvas open", () => {
-    expect(parseDesignWindows("none\n")).toEqual({ status: "ok", open: false, front: false });
-    expect(parseDesignWindows("no-permission\n")).toEqual({ status: "no-permission" });
-    expect(parseDesignWindows("front=true\ncanvas=true\n")).toEqual({
-      status: "ok",
-      open: true,
-      front: true,
-    });
-    // a canvas is open, but another app is in front
-    expect(parseDesignWindows("front=false\ncanvas=true\n")).toEqual({
-      status: "ok",
-      open: true,
-      front: false,
-    });
-    // the Claude app is in front, showing a normal chat
-    expect(parseDesignWindows("front=true\ncanvas=false\n")).toEqual({
-      status: "ok",
-      open: false,
-      front: false,
-    });
-    expect(parseDesignWindows("front=true\r\ncanvas=true\r\n")).toMatchObject({ open: true });
-    expect(parseDesignWindows("front=true\n")).toEqual({ status: "error" });
-    expect(parseDesignWindows("")).toEqual({ status: "error" });
-    expect(parseDesignWindows("something else")).toEqual({ status: "error" });
-  });
-
-  test("which pages are a Design canvas", () => {
-    expect(isDesignPath("claude.ai", "/code/artifact/08c8f818-9826")).toBe(true);
-    expect(isDesignPath("claude.ai", "/design")).toBe(true);
-    expect(isDesignPath("claude.ai", "/design/p/1234")).toBe(true);
-    expect(isDesignPath("claude.ai", "/cowork/cse_01Sf")).toBe(false);
-    expect(isDesignPath("claude.ai", "/chat/abc")).toBe(false);
-    expect(isDesignPath("claude.ai", "/designer")).toBe(false);
-    expect(isDesignPath("x.frame.claudeusercontent.com", "/code/artifact/1")).toBe(false);
-    expect(isDesignPath("evil.com", "/design")).toBe(false);
-  });
-
-  test("the script is valid JavaScript for osascript and leaks no page address", () => {
-    // regression: an unescaped newline inside a string literal broke the script on a real Mac
-    expect(() => new Function(DESIGN_SCRIPT)).not.toThrow();
-    expect(DESIGN_SCRIPT).toContain('"none"');
-    expect(DESIGN_SCRIPT).toContain('"no-permission"');
-    expect(DESIGN_SCRIPT).not.toMatch(/return [^;]*url/i);
-  });
-
-  test("permission errors are told apart from other failures", async () => {
+describe("Claude Design: which app is in front", () => {
+  test("the bundle id is read from lsappinfo's answer", () => {
     expect(
-      isPermissionError(
-        "execution error: System Events got an error: osascript is not allowed assistive access. (-25211)",
-      ),
-    ).toBe(true);
-    expect(
-      isPermissionError(
-        "execution error: Not authorized to send Apple events to System Events. (-1743)",
-      ),
-    ).toBe(true);
-    expect(isPermissionError("syntax error: Expected end of line (-2741)")).toBe(false);
+      parseBundleId('[ NULL ]  ASN:0x0-0x2a82a8: (in front)\n    bundleID="com.google.Chrome"\n'),
+    ).toBe("com.google.Chrome");
+    expect(parseBundleId('"CFBundleIdentifier"="com.anthropic.claudefordesktop"\n')).toBe(
+      CLAUDE_BUNDLE_ID,
+    );
+    expect(parseBundleId("")).toBeNull();
+    expect(parseBundleId("bundleID=[ NULL ]")).toBeNull();
+  });
 
-    const q = (code: number | null, stdout = "", stderr = "") =>
-      systemDesignWindows(async () => ({ code, stdout, stderr })).query();
-    expect(await q(0, "front=true\ncanvas=true\n")).toEqual({
-      status: "ok",
-      open: true,
-      front: true,
+  test("asks lsappinfo for the front app, then its bundle id; failures give null", async () => {
+    const calls: string[][] = [];
+    const ok = systemFrontmost(async (cmd) => {
+      calls.push(cmd);
+      return cmd[1] === "front"
+        ? { code: 0, out: "ASN:0x0-0x2d62d6:\n" }
+        : { code: 0, out: `bundleID="${CLAUDE_BUNDLE_ID}"\n` };
     });
-    expect(await q(1, "", "… is not allowed assistive access. (-25211)")).toEqual({
-      status: "no-permission",
-    });
-    expect(await q(1, "", "syntax error (-2741)")).toEqual({ status: "error" });
-    expect(await q(0, "no-permission\n")).toEqual({ status: "no-permission" });
-    expect(await q(null)).toEqual({ status: "timeout" }); // killed by the timeout
-    const broken = systemDesignWindows(async () => {
+    expect(await ok.frontmost()).toBe(CLAUDE_BUNDLE_ID);
+    expect(calls).toEqual([
+      ["lsappinfo", "front"],
+      ["lsappinfo", "info", "-only", "bundleid", "ASN:0x0-0x2d62d6:"],
+    ]);
+    const q = (front: { code: number | null; out: string }) =>
+      systemFrontmost(async (cmd) =>
+        cmd[1] === "front" ? front : { code: 0, out: "" },
+      ).frontmost();
+    expect(await q({ code: 1, out: "" })).toBeNull();
+    expect(await q({ code: null, out: "" })).toBeNull(); // timed out
+    expect(await q({ code: 0, out: "something; rm -rf /" })).toBeNull(); // not an ASN: not passed on
+    const broken = systemFrontmost(async () => {
       throw new Error("spawn failed");
     });
-    expect(await broken.query()).toEqual({ status: "error" });
+    expect(await broken.frontmost()).toBeNull();
   });
 });
 
-describe("Claude Design canvas: the desk", () => {
-  /** A watcher whose answer and query count the test controls. */
-  function scripted(first: DesignWindowState) {
-    const s = { answer: first, queries: 0 };
+describe("Claude Design: the desk", () => {
+  /** A watcher whose frontmost answer and query count the test controls. */
+  function scripted(first: string | null) {
+    const s = { front: first, queries: 0 };
     const watcher = new DesignWatcher(
-      fakeDesignWindows(() => {
+      fakeFrontmost(() => {
         s.queries++;
-        return s.answer;
+        return s.front;
       }),
     );
     return { s, watcher };
   }
-  const OPEN_FRONT: DesignWindowState = { status: "ok", open: true, front: true };
-  const OPEN_BACK: DesignWindowState = { status: "ok", open: true, front: false };
-  const CLOSED: DesignWindowState = { status: "ok", open: false, front: false };
+  const CLAUDE = CLAUDE_BUNDLE_ID;
+  const OTHER = "com.google.Chrome";
 
-  test("in front: thinking; in the background for IDLE_AFTER_MS: idle; closed: gone", async () => {
-    const { s, watcher } = scripted(OPEN_FRONT);
+  test("one desk while the app runs: thinking in front, idle after IDLE_AFTER_MS, gone when it quits", async () => {
+    const { s, watcher } = scripted(CLAUDE);
     expect(await watcher.poll(T0, true)).toEqual({ activity: "thinking", startedAt: T0 });
-    s.answer = OPEN_BACK;
-    let now = T0 + DESIGN_QUERY_MS;
+    s.front = OTHER;
+    let now = T0 + FRONT_QUERY_MS;
     expect(await watcher.poll(now, true)).toEqual({ activity: "thinking", startedAt: T0 });
-    now = T0 + IDLE_AFTER_MS + DESIGN_QUERY_MS;
+    now = T0 + IDLE_AFTER_MS + FRONT_QUERY_MS;
     expect(await watcher.poll(now, true)).toEqual({ activity: "idle", startedAt: T0 });
-    s.answer = OPEN_FRONT;
-    now += DESIGN_QUERY_MS;
+    s.front = CLAUDE;
+    now += FRONT_QUERY_MS;
     expect(await watcher.poll(now, true)).toEqual({ activity: "thinking", startedAt: T0 });
-    s.answer = CLOSED;
-    now += DESIGN_QUERY_MS;
-    expect(await watcher.poll(now, true)).toBeNull();
-    // reopened: noticed at the next slow query, as a new session start
-    s.answer = OPEN_FRONT;
-    expect(await watcher.poll(now + DESIGN_QUERY_MS, true)).toBeNull();
-    now += DESIGN_IDLE_QUERY_MS;
-    expect(await watcher.poll(now, true)).toEqual({ activity: "thinking", startedAt: now });
+    // the app quits: gone at once; started again: a new session
+    expect(await watcher.poll(now + 1_000, false)).toBeNull();
+    expect(await watcher.poll(now + 2_000, true)).toEqual({
+      activity: "thinking",
+      startedAt: now + 2_000,
+    });
     expect(watcher.status).toBe("watching");
   });
 
-  test("a window first seen in the background starts idle, never waiting", async () => {
-    const { watcher } = scripted(OPEN_BACK);
+  test("the app running in the background is an idle desk, never waiting", async () => {
+    const { watcher } = scripted(OTHER);
     expect(await watcher.poll(T0, true)).toEqual({ activity: "idle", startedAt: T0 });
   });
 
-  test("macOS is asked at most every DESIGN_QUERY_MS, and not at all without the app", async () => {
-    const { s, watcher } = scripted(OPEN_FRONT);
+  test("macOS is asked at most every FRONT_QUERY_MS, and not at all without the app", async () => {
+    const { s, watcher } = scripted(CLAUDE);
     expect(await watcher.poll(T0, false)).toBeNull();
     expect(s.queries).toBe(0);
     await watcher.poll(T0, true);
     await watcher.poll(T0 + 2_000, true);
     await watcher.poll(T0 + 4_000, true);
     expect(s.queries).toBe(1);
-    await watcher.poll(T0 + DESIGN_QUERY_MS, true);
-    expect(s.queries).toBe(2);
-    // the app quit: the desk goes at once
-    expect(await watcher.poll(T0 + DESIGN_QUERY_MS + 2_000, false)).toBeNull();
+    await watcher.poll(T0 + FRONT_QUERY_MS, true);
     expect(s.queries).toBe(2);
   });
 
-  test("no permission: no desk, said so, and asked again only after DESIGN_RETRY_MS", async () => {
-    const { s, watcher } = scripted({ status: "no-permission" });
-    expect(await watcher.poll(T0, true)).toBeNull();
-    expect(watcher.status).toBe("needs-permission");
-    await watcher.poll(T0 + DESIGN_QUERY_MS, true);
-    await watcher.poll(T0 + DESIGN_RETRY_MS - 1, true);
-    expect(s.queries).toBe(1);
-    s.answer = OPEN_FRONT; // permission granted meanwhile
-    expect(await watcher.poll(T0 + DESIGN_RETRY_MS, true)).toMatchObject({ activity: "thinking" });
-    expect(watcher.status).toBe("watching");
-  });
-
-  test("a slow answer is retried at once; only repeated timeouts mean a blocked dialog", async () => {
-    const { s, watcher } = scripted({ status: "timeout" });
-    expect(await watcher.poll(T0, true)).toBeNull();
-    expect(watcher.status).toBe("watching");
-    s.answer = OPEN_FRONT; // the slow first answer came through
-    expect(await watcher.poll(T0 + DESIGN_QUERY_MS, true)).toMatchObject({ activity: "thinking" });
-    expect(s.queries).toBe(2);
-
-    const blocked = scripted({ status: "timeout" });
-    for (let i = 0; i < DESIGN_TIMEOUTS_MEAN_BLOCKED; i++) {
-      await blocked.watcher.poll(T0 + i * DESIGN_QUERY_MS, true);
-    }
-    expect(blocked.watcher.status).toBe("needs-permission");
-    await blocked.watcher.poll(T0 + DESIGN_TIMEOUTS_MEAN_BLOCKED * DESIGN_QUERY_MS, true);
-    expect(blocked.s.queries).toBe(DESIGN_TIMEOUTS_MEAN_BLOCKED); // now waits DESIGN_RETRY_MS
-  });
-
-  test("one failed query keeps the same session until the retry; two in a row remove it", async () => {
-    const { s, watcher } = scripted(OPEN_FRONT);
+  test("a failed query keeps the same session; it only drifts to idle", async () => {
+    const { s, watcher } = scripted(CLAUDE);
     await watcher.poll(T0, true);
-    s.answer = { status: "error" };
-    let now = T0 + DESIGN_QUERY_MS;
-    expect(await watcher.poll(now, true)).toEqual({ activity: "thinking", startedAt: T0 });
-    expect(watcher.status).toBe("error");
-    // held for the whole retry wait, same startedAt (no new session row)
-    expect(await watcher.poll(now + DESIGN_RETRY_MS - 1, true)).toEqual({
+    s.front = null;
+    expect(await watcher.poll(T0 + FRONT_QUERY_MS, true)).toEqual({
       activity: "thinking",
       startedAt: T0,
     });
-    expect(s.queries).toBe(2);
-    // the retry works: it simply goes on
-    s.answer = OPEN_FRONT;
-    now += DESIGN_RETRY_MS;
-    expect(await watcher.poll(now, true)).toEqual({ activity: "thinking", startedAt: T0 });
+    expect(watcher.status).toBe("error");
+    expect(await watcher.poll(T0 + IDLE_AFTER_MS + 1, true)).toEqual({
+      activity: "idle",
+      startedAt: T0,
+    });
+    s.front = CLAUDE;
+    expect(await watcher.poll(T0 + IDLE_AFTER_MS + 1 + FRONT_QUERY_MS, true)).toEqual({
+      activity: "thinking",
+      startedAt: T0,
+    });
     expect(watcher.status).toBe("watching");
-    // two failures in a row: gone
-    s.answer = { status: "error" };
-    now += DESIGN_QUERY_MS;
-    expect(await watcher.poll(now, true)).not.toBeNull();
-    now += DESIGN_RETRY_MS;
-    expect(await watcher.poll(now, true)).toBeNull();
-    expect(s.queries).toBe(5);
-  });
-
-  test("slow polling while no Design canvas is open, fast once one is", async () => {
-    const { s, watcher } = scripted(CLOSED);
-    await watcher.poll(T0, true); // first query right away
-    for (let t = 2_000; t < DESIGN_IDLE_QUERY_MS; t += 2_000) await watcher.poll(T0 + t, true);
-    expect(s.queries).toBe(1);
-    s.answer = OPEN_FRONT;
-    let now = T0 + DESIGN_IDLE_QUERY_MS;
-    expect(await watcher.poll(now, true)).toMatchObject({ activity: "thinking" });
-    expect(s.queries).toBe(2);
-    await watcher.poll(now + DESIGN_QUERY_MS - 1, true);
-    expect(s.queries).toBe(2);
-    now += DESIGN_QUERY_MS;
-    s.answer = CLOSED;
-    expect(await watcher.poll(now, true)).toBeNull(); // closing shows within 5 s
-    expect(s.queries).toBe(3);
-    // the app restarted: ask right away again
-    await watcher.poll(now + 1_000, false);
-    await watcher.poll(now + 2_000, true);
-    expect(s.queries).toBe(4);
   });
 
   test("the detector adds one design session with nothing but presence", async () => {
     h = quietHome();
-    const { watcher } = scripted(OPEN_FRONT);
+    const { watcher } = scripted(CLAUDE);
     const d = detector({ design: watcher });
     const sessions: SessionInfo[] = await d.poll();
     expect(sessions).toEqual([
@@ -430,7 +322,6 @@ describe("Claude Design canvas: the desk", () => {
       },
     ]);
     expect(d.designStatus).toBe("watching");
-    // not watching (the default): no design session and no status
     const off = detector({});
     expect(await off.poll()).toEqual([]);
     expect(off.designStatus).toBeUndefined();
@@ -438,7 +329,7 @@ describe("Claude Design canvas: the desk", () => {
 
   test("no design session while the Claude app is closed", async () => {
     h = quietHome();
-    const { s, watcher } = scripted(OPEN_FRONT);
+    const { s, watcher } = scripted(CLAUDE);
     expect(await detector({ design: watcher, desktop: false }).poll()).toEqual([]);
     expect(s.queries).toBe(0);
   });

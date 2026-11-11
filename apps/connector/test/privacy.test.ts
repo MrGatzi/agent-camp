@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { parseConnectorMessage } from "@agent-office/protocol";
 import { helloDescription } from "../src/cli.ts";
 import { Daemon } from "../src/daemon.ts";
-import { DesignWatcher, fakeDesignWindows } from "../src/desktop.ts";
+import { CLAUDE_BUNDLE_ID, DesignWatcher, fakeFrontmost } from "../src/desktop.ts";
 import { Detector } from "../src/detect/index.ts";
 import { silent } from "../src/log.ts";
 import { agentDirs } from "../src/paths.ts";
@@ -68,7 +68,7 @@ describe("privacy", () => {
       processes: fakeProcesses([]),
       assumeProcesses: true,
       cowork: true,
-      design: new DesignWatcher(fakeDesignWindows({ status: "ok", open: true, front: true })),
+      design: new DesignWatcher(fakeFrontmost(CLAUDE_BUNDLE_ID)),
     });
     const d = new Daemon({
       server: srv.url,
@@ -115,7 +115,7 @@ describe("privacy", () => {
     expect((helloMsg.data.selfDescription as string).length).toBe(200);
     expect(helloMsg.data.machine).toBe("devbox");
     const snap = srv.of("presence.snapshot")[0]!;
-    // 4 from fixtures/home + the Cowork session + the Claude Design canvas
+    // 4 from fixtures/home + the Cowork session + the Claude Design desk
     const sent = snap.data.sessions as Record<string, unknown>[];
     expect(sent.length).toBe(6);
     expect(sent.find((s) => s.project === "Cowork")).toMatchObject({ agent: "claude" });

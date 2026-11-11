@@ -13,8 +13,9 @@
  * With `assumeProcesses` every agent counts as running, every pid in a pid file as alive, and
  * the Claude desktop app as running.
  *
- * Claude Design is not a transcript at all: with `design` set, an open Claude Design canvas
- * in the Claude app adds one `design` session (presence only, see ../desktop.ts).
+ * Claude Design is not a transcript at all: with `design` set (the person declared that their
+ * Claude app is Claude Design), the running Claude app adds one `design` session (presence
+ * only, see ../desktop.ts).
  *
  * An agent process running inside another agent (`ProcInfo.hostPid`, e.g. the Claude Agent SDK
  * binary that Pi's Claude bridge spawns as its model backend) is not a session of its own: it
@@ -53,7 +54,7 @@ export type DetectorOptions = {
   assumeProcesses?: boolean;
   /** show Cowork sessions of the Claude desktop app (opt-in: often not coding work) */
   cowork?: boolean;
-  /** watch the Claude app for a Claude Design canvas (opt-in; needs a macOS permission) */
+  /** the Claude app counts as Claude Design: one `design` desk while it runs (opt-in) */
   design?: DesignWatcher;
   now?: () => number;
 };
@@ -73,7 +74,7 @@ export function projectName(cwd: string | undefined): string | undefined {
 const MAX_SESSIONS = 200;
 
 /** Raw id of the one Claude Design session per machine (hashed like every session key). */
-export const DESIGN_RAW_ID = "design-window";
+export const DESIGN_RAW_ID = "claude-app";
 
 /** Hosted processes keep a quiet desk busy for at most this much transcript silence. */
 export const HOSTED_BUSY_MAX_MS = 10 * 60_000;
@@ -229,7 +230,7 @@ export class Detector {
     return this.opts.design?.status;
   }
 
-  /** One `design` session while a Claude Design canvas is open in the Claude app. */
+  /** One `design` session while the Claude app runs. */
   private async designSession(now: number, desktop: boolean): Promise<SessionInfo | null> {
     const watcher = this.opts.design;
     if (!watcher) return null;

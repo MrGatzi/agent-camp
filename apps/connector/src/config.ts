@@ -32,10 +32,10 @@ export type Config = {
   /** what your subagents look like in the office: "robots" (default) or "cats" */
   helpers: HelperSkin;
   /**
-   * opt-in: show a desk while a Claude Design canvas is open in the Claude desktop app
-   * (macOS; needs the Accessibility permission)
+   * what the Claude desktop app counts as: "off" (default) or "design" = one Claude Design desk
+   * while the app runs (macOS)
    */
-  design_window: boolean;
+  claude_app: ClaudeAppSetting;
   /** opt-in: show Cowork sessions of the Claude desktop app (often not coding work) */
   cowork: boolean;
   client_id: string;
@@ -53,7 +53,7 @@ export const CONFIG_KEYS = [
   "birthday",
   "look_generator",
   "helpers",
-  "design_window",
+  "claude_app",
   "cowork",
   "client_id",
 ] as const;
@@ -172,6 +172,18 @@ export function validHelpers(v: string | undefined): HelperSkin | undefined {
   return (HELPER_SKINS as readonly string[]).includes(t ?? "") ? (t as HelperSkin) : undefined;
 }
 
+export const CLAUDE_APP_SETTINGS = ["off", "design"] as const;
+export type ClaudeAppSetting = (typeof CLAUDE_APP_SETTINGS)[number];
+
+/** "off" | "design" (trimmed, any case; "" = off) or undefined for anything else. */
+export function claudeAppSetting(v: string | undefined): ClaudeAppSetting | undefined {
+  const t = v?.trim().toLowerCase();
+  if (t === "") return "off";
+  return (CLAUDE_APP_SETTINGS as readonly string[]).includes(t ?? "")
+    ? (t as ClaudeAppSetting)
+    : undefined;
+}
+
 export function newClientId(): string {
   return `c_${randomBytes(9).toString("hex")}`;
 }
@@ -181,7 +193,6 @@ export function toConfig(values: Record<string, TomlValue>): Config {
   const s = (k: string) => (typeof values[k] === "string" ? (values[k] as string) : undefined);
   const share = values.share_project_names;
   const notify = values.notifications;
-  const design = values.design_window;
   const cowork = values.cowork;
   const clientId = s("client_id");
   return {
@@ -196,7 +207,7 @@ export function toConfig(values: Record<string, TomlValue>): Config {
     birthday: validBirthday(s("birthday")),
     look_generator: lookGeneratorSetting(s("look_generator")) ?? "off",
     helpers: validHelpers(s("helpers")) ?? "robots",
-    design_window: design === true || design === "true",
+    claude_app: claudeAppSetting(s("claude_app")) ?? "off",
     cowork: cowork === true || cowork === "true",
     client_id: clientId && /^[A-Za-z0-9_-]{1,64}$/.test(clientId) ? clientId : newClientId(),
   };
@@ -229,7 +240,7 @@ export function saveConfig(path: string, config: Config): void {
       birthday: config.birthday,
       look_generator: config.look_generator,
       helpers: config.helpers,
-      design_window: config.design_window,
+      claude_app: config.claude_app,
       cowork: config.cowork,
       client_id: config.client_id,
     }),

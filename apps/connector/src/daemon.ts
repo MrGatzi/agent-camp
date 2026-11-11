@@ -61,22 +61,19 @@ export type StatusFile = {
   updatedAt: number;
   /** local AI that draws the look, e.g. "claude (/Users/x/.local/bin/claude)" or "off" */
   looks?: string;
-  /** Claude Design watch (only when `design_window` is on) */
+  /** Claude Design watch (only with `claude_app = "design"`) */
   designWindow?: DesignWatchStatus;
   sessions: Omit<SessionInfo, "sessionKey">[];
 };
 
 /** What the Claude Design watch states mean, for the log and `agent-office status`. */
 export const DESIGN_STATUS_TEXT: Record<DesignWatchStatus, string> = {
-  watching: "watching the Claude app for a Claude Design canvas",
-  "needs-permission":
-    "needs permission: allow agent-office under System Settings > Privacy & Security > " +
-    "Accessibility",
-  error: "could not ask macOS what the Claude app shows (will retry)",
+  watching: "on: your Claude app counts as Claude Design",
+  error: "on, but macOS did not say which app is in front (will retry)",
 };
 
 const label = (s: SessionInfo) =>
-  s.agent === "design" ? "design window" : `${s.agent} ${s.project ?? "(hidden)"}`;
+  s.agent === "design" ? "design (Claude app)" : `${s.agent} ${s.project ?? "(hidden)"}`;
 
 /** Human-readable change lines between two snapshots. */
 export function describeChanges(prev: SessionInfo[], next: SessionInfo[]): string[] {
@@ -173,7 +170,7 @@ export class Daemon {
     const design = this.opts.detector.designStatus;
     if (design !== this.designStatus) {
       this.designStatus = design;
-      if (design) this.opts.log(`design window: ${DESIGN_STATUS_TEXT[design]}`);
+      if (design) this.opts.log(`claude app: ${DESIGN_STATUS_TEXT[design]}`);
     }
     this.writeStatus();
     if (!this.stopped) {
