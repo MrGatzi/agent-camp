@@ -14,7 +14,8 @@ import { MAX_SELF_DESCRIPTION, PROTOCOL_VERSION, SHORT_SELF_DESCRIPTION } from "
 import { ViewerPartyState } from "./party.ts";
 
 // ---- building blocks ----------------------------------------------------------------------
-export const AGENTS = ["claude", "codex", "pi", "unknown"] as const;
+/** `design` = a Claude Design window of the Claude desktop app (presence only, no transcript). */
+export const AGENTS = ["claude", "codex", "pi", "design", "unknown"] as const;
 export const AgentKind = z.enum(AGENTS);
 export type AgentKind = z.infer<typeof AgentKind>;
 
