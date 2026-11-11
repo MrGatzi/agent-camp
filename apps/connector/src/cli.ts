@@ -101,6 +101,7 @@ Commands:
                            service after changing)
       --birthday MM-DD     opt-in: the office brings you a cake that day ("" removes it)
       --helpers robots|cats   what your subagents look like in the office (default robots)
+      --cowork true|false  opt-in: show Cowork sessions of the Claude desktop app
   gif [GIPHY-LINK|off]
                     show any GIF from giphy.com over your head (paste the page or media
                     link, or the id); "off" removes it; no argument prints the current one.
@@ -206,6 +207,7 @@ async function cmdRun(args: Args): Promise<number> {
     shareProjectNames: config.share_project_names,
     processes: systemProcesses(),
     assumeProcesses,
+    cowork: config.cowork,
   });
 
   if (flags.once) {
@@ -388,6 +390,8 @@ async function cmdConfigure(args: Args): Promise<number> {
     }
     next.look_generator = v;
   }
+  const cowork = flags.cowork;
+  if (cowork !== undefined) next.cowork = !(cowork === "false" || cowork === "0");
   if (next.name && next.name.trim().length > 40) {
     console.error("name must be at most 40 characters");
     return 2;
@@ -417,8 +421,13 @@ async function cmdConfigure(args: Args): Promise<number> {
     `saved ${path} (server: ${next.server ?? "-"}, name: ${next.name ?? "-"}, ` +
       `password: ${next.password ? "set" : "not set"})`,
   );
+  if (cowork !== undefined && next.cowork) {
+    console.log(`Cowork sessions are on. Restart the connector to apply: ${RESTART_HINT}`);
+  }
   return 0;
 }
+
+const RESTART_HINT = `launchctl kickstart -k gui/$(id -u)/${LAUNCHD_LABEL}`;
 
 // ---- gif ----------------------------------------------------------------------------------
 const GIF_OFF = new Set(["off", "none", "no", "clear", "remove", "-"]);
