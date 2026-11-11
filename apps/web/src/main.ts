@@ -35,6 +35,7 @@ import {
   type SendMessageRequest,
   type SendMessageResponse,
   type ServerToViewer,
+  type SetGifRequest,
 } from "@agent-office/protocol";
 import { Application, TextureStyle } from "pixi.js";
 import { CHAR_H, CHAR_RES, CHAR_W, lookFor, lookPreview } from "./art/characters.ts";
@@ -70,6 +71,7 @@ import { Minimap } from "./ui/minimap.ts";
 import { CharacterManager } from "./world/characters.ts";
 import { CatColony } from "./world/colony.ts";
 import { Effects } from "./world/effects.ts";
+import { HeadGifs } from "./world/gifs.ts";
 import { OfficeLife } from "./world/life.ts";
 import { catCount, SEASONS, type Season, seasonFor } from "./world/lifeRules.ts";
 import { Living } from "./world/living.ts";
@@ -119,6 +121,8 @@ declare global {
 const params = new URLSearchParams(location.search);
 const flag = (k: string) => params.get(k) === "1" || params.get(k) === "true";
 const kiosk = flag("kiosk");
+// `?gifs=0`: this screen shows no head GIFs (e.g. the wall); client-only, nothing is sent
+const showGifs = !["0", "false", "off"].includes(params.get("gifs") ?? "");
 const nohud = flag("nohud");
 const recorder = flag("recorder");
 const demo = parseDemoMode(params.get("demo"));
@@ -165,6 +169,7 @@ async function boot() {
   app.stage.addChild(scene.root);
   const effects = new Effects(scene.fx);
   const chars = new CharacterManager(scene, model, effects);
+  const gifs = showGifs ? new HeadGifs(scene.fx, model, chars) : null;
   const partyWorld = new PartyWorld(scene, chars, model);
   // Friday after work (`?demo=feierabend`, or `?feierabend=1` on a live feed): happy hour at
   // 17:30, office life at party speed, the weed shop sells more
@@ -353,6 +358,7 @@ async function boot() {
       }
       chars.syncSlots();
     }
+    gifs?.sync();
     hud.setStats(model.stats());
     if (hud.panelOpen && changes.some((change) => change.kind !== "partyChanged")) hud.refresh();
     living.poke();
@@ -809,6 +815,26 @@ async function boot() {
     const r = await fetch(`/api/people/${encodeURIComponent(personId)}${q}`);
     return r.ok ? ((await r.json()) as PersonDayResponse) : null;
   };
+  // "GIF over your head" (your own person card): set / remove it. The card updates from the
+  // gif.updated broadcast, not from this response. No server in demo mode, so no section.
+  hud.putGif = demo
+    ? null
+    : async (personId, link) => {
+        const q = key ? `?key=${encodeURIComponent(key)}` : "";
+        try {
+          // cookie auth: the office session plus this browser's "It's me" cookie
+          const r = await fetch(`/api/people/${encodeURIComponent(personId)}/gif${q}`, {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ link } satisfies SetGifRequest),
+          });
+          if (r.status === 401) void loginIfLoggedOut();
+          const body: unknown = await r.json().catch(() => null);
+          return { status: r.status, body };
+        } catch {
+          return { status: 0, body: null };
+        }
+      };
 
   camera.onTap = (wx, wy) => {
     if (!kiosk && life.hitCar(wx, wy)) {
@@ -963,6 +989,10 @@ async function boot() {
     return true;
   };
   /** Overview close-ups: someone waiting longest, else the pod with the most busy agents. */
+  const podCenter = (pod: number) => {
+    const span = podDeskSpan(pod, Math.max(2, scene.slotDesks(pod)));
+    return { x: span.x + span.w / 2, y: podOrigin(pod).y * 16 + 30 };
+  };
   camera.hotSpot = () => {
     let best: { personId: string; score: number } | null = null;
     for (const p of model.people.values()) {
@@ -976,10 +1006,14 @@ async function boot() {
       if (score > 0 && (!best || score > best.score)) best = { personId: p.personId, score };
     }
     const p = best && model.people.get(best.personId);
-    if (!p) return null;
-    const n = Math.max(2, scene.slotDesks(p.pod));
-    const span = podDeskSpan(p.pod, n);
-    return { x: span.x + span.w / 2, y: podOrigin(p.pod).y * 16 + 30 };
+    return p ? podCenter(p.pod) : null;
+  };
+  camera.busyDesks = () => {
+    const pods = new Set<number>();
+    for (const p of model.people.values())
+      if (model.sessionsOf(p.personId).some((s) => !s.offline && s.activity !== "idle"))
+        pods.add(p.pod);
+    return [...pods].sort((a, b) => a - b).map(podCenter);
   };
   const focusParam = params.get("focus");
   games = new PartyPanel(host, model, {
@@ -1074,6 +1108,7 @@ async function boot() {
     time += dt;
     scene.update(time, dt);
     chars.update(dt, time);
+    gifs?.update(dt);
     partyWorld.update(dt, time);
     colony.update(dt, time);
     // cats coming in or going home get the door opened too
