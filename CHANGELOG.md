@@ -7,6 +7,7 @@ banner after a deploy.
 
 ## 2026-11-11
 
+- Sharper office at every zoom: name tags and signs stay readable on wall screens and phones
 - The "New version!" popup is now a wide banner across the office that goes away by itself after 15 s
 - Version numbers now go 0.2.x and show up right after a deploy, the same on the page, the release and the connectors
 - 🎉 A new version now opens with a full-screen celebration banner and what changed
