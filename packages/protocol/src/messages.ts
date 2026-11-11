@@ -16,7 +16,11 @@ import { ViewerPartyState } from "./party.ts";
 // ---- building blocks ----------------------------------------------------------------------
 /** `design` = a Claude Design window of the Claude desktop app (presence only, no transcript). */
 export const AGENTS = ["claude", "codex", "pi", "design", "unknown"] as const;
-export const AgentKind = z.enum(AGENTS);
+/**
+ * Unknown kinds (from a newer connector or server) degrade to "unknown" instead of failing the
+ * whole message, so an old viewer keeps showing the office when a kind is added.
+ */
+export const AgentKind = z.enum(AGENTS).catch("unknown");
 export type AgentKind = z.infer<typeof AgentKind>;
 
 /**
