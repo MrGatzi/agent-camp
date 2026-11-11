@@ -3,7 +3,7 @@
  * sure nothing but status metadata leaves the machine.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseConnectorMessage } from "@agent-office/protocol";
 import { helloDescription } from "../src/cli.ts";
@@ -67,6 +67,7 @@ describe("privacy", () => {
       shareProjectNames: true,
       processes: fakeProcesses([]),
       assumeProcesses: true,
+      cowork: true,
       design: new DesignWatcher(fakeDesignWindows({ status: "ok", open: true, front: true })),
     });
     const d = new Daemon({
@@ -137,6 +138,9 @@ describe("privacy", () => {
   test("`run --once` output is clean too", async () => {
     h = makeHome();
     addCowork(h);
+    // Cowork is opt-in: turn it on so its session is part of the privacy check
+    mkdirSync(join(h.home, "cfg"), { recursive: true });
+    writeFileSync(join(h.home, "cfg", "config.toml"), "cowork = true\n");
     const main = join(import.meta.dir, "..", "src", "main.ts");
     const p = Bun.spawn(
       [process.execPath, main, "run", "--once", "--home", h.home, "--assume-processes"],

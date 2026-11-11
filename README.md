@@ -43,8 +43,8 @@ same password the first time you open it.
 
 Paste it where Claude can run commands on your Mac: the **Code** tab of the Claude desktop
 app, or Claude Code in a terminal or IDE. A normal chat or Claude Design can't install it. The
-office shows sessions of Claude Code, Codex and Pi running on your Mac, and Cowork sessions of
-the Claude desktop app. Claude Design can get a desk too if you turn it on (see
+office shows sessions of Claude Code, Codex and Pi running on your Mac. Cowork sessions and
+Claude Design windows of the Claude desktop app can get desks too if you turn them on (see
 [Claude Design and Cowork](#claude-design-and-cowork)). claude.ai chats run in the cloud and
 don't appear.
 
@@ -139,9 +139,11 @@ shows up on the agent card so you can tell the sessions apart.
 
 For teammates who work in the Claude desktop app instead of a terminal.
 
-**Cowork** needs no setup. While the Claude app runs, each Cowork session is a Claude desk
-with the project name "Cowork" and real activity (typing, reading, thinking, waiting). A
-quiet session keeps its desk for 30 minutes.
+**Cowork** is off by default, because it is often not coding work. Turn it on with
+`agent-office configure --cowork true` and restart the connector (the `launchctl` line
+below). Then, while the Claude app runs, each Cowork session is a Claude desk with the
+project name "Cowork" and real activity (typing, reading, thinking, waiting). A quiet session
+keeps its desk for 30 minutes.
 
 **Claude Design** runs on Anthropic's servers, so the connector can't see what Claude is
 doing there. It can only see that a Design window of the Claude app is open. Turn that on
@@ -158,7 +160,9 @@ Security → Accessibility**. `agent-office status` tells you whether the permis
 missing.
 
 You then get a pink "Claude Design" desk: **thinking** while the Design window is in front,
-**idle** after it has been in the background for two minutes, and gone when you close it. It
+**idle** after it has been in the background for two minutes, and gone when you close it.
+The connector checks every 30 seconds while no Design window is open, so a new one can take
+that long to show up; while one is open it checks every 5 seconds. It
 never shows "waiting", because the connector can't know that. This works when the Claude app
 is set to English or German (the window must be titled "Design"), and only in the desktop
 app, not in a browser.
@@ -208,8 +212,8 @@ shows it to viewers; they only see the finished avatar.
 
 With `design_window` on (see [Claude Design and Cowork](#claude-design-and-cowork)), the
 connector asks macOS for the Claude app's window titles and sends only whether a Design
-window is open and in front. The titles stay on your Mac. For Cowork sessions the project
-name is always "Cowork".
+window is open and in front. The titles stay on your Mac. With `cowork` on, Cowork sessions
+are sent like Claude Code sessions, with the project name always "Cowork".
 
 Optional: `agent-office configure --birthday MM-DD` and the office brings you a cake that day
 (only "it's your birthday today" is ever shown, never the date).

@@ -7,8 +7,9 @@
  *   2. it is the newest transcript whose folder/cwd matches a running agent process's cwd
  *      (stays live as `idle`), or
  *   3. its transcript was written < TRANSCRIPT_LIVE_MS ago and some process of that agent runs.
- *   4. it is a Cowork session of the Claude desktop app (`Candidate.desktop`), the app runs and
- *      the transcript was written < COWORK_LIVE_MS ago (no process on this machine owns it).
+ *   4. opt-in (`cowork`): it is a Cowork session of the Claude desktop app (`Candidate.desktop`),
+ *      the app runs and the transcript was written < COWORK_LIVE_MS ago (no process on this
+ *      machine owns it).
  * With `assumeProcesses` every agent counts as running, every pid in a pid file as alive, and
  * the Claude desktop app as running.
  *
@@ -50,6 +51,8 @@ export type DetectorOptions = {
   processes: ProcessSource;
   /** treat every agent as running (fixtures / Linux CI) */
   assumeProcesses?: boolean;
+  /** show Cowork sessions of the Claude desktop app (opt-in: often not coding work) */
+  cowork?: boolean;
   /** watch the Claude app for a Design window (opt-in; needs a macOS permission) */
   design?: DesignWatcher;
   now?: () => number;
@@ -107,12 +110,13 @@ export class Detector {
         desktop = false;
       }
     }
-    if (!desktop) this.cowork.reset();
+    const cowork = desktop && this.opts.cowork === true;
+    if (!cowork) this.cowork.reset();
     const scanned = [
       ...safe(() => scanClaude(dirs.claude, this.metaCache)),
       ...safe(() => scanCodex(dirs.codex, this.metaCache)),
       ...safe(() => scanPi(dirs.pi, this.metaCache)),
-      ...(desktop ? safe(() => this.cowork.scan(dirs.claudeDesktop, now, this.metaCache)) : []),
+      ...(cowork ? safe(() => this.cowork.scan(dirs.claudeDesktop, now, this.metaCache)) : []),
     ];
 
     // 0. agents hosted inside another agent: their sessions belong to the host's desk

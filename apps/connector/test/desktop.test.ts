@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { IDLE_AFTER_MS, type SessionInfo } from "@agent-office/protocol";
 import {
+  DESIGN_IDLE_QUERY_MS,
   DESIGN_QUERY_MS,
   DESIGN_RETRY_MS,
   DESIGN_TIMEOUTS_MEAN_BLOCKED,
@@ -36,6 +37,7 @@ function detector(opts: {
   now?: () => number;
   design?: DesignWatcher;
   share?: boolean;
+  cowork?: boolean;
 }) {
   return new Detector({
     dirs: agentDirs({}, h.home),
@@ -43,6 +45,7 @@ function detector(opts: {
     shareProjectNames: opts.share ?? true,
     processes: fakeProcesses([], {}, opts.desktop ?? true),
     now: opts.now ?? (() => T0),
+    cowork: opts.cowork ?? true,
     ...(opts.design ? { design: opts.design } : {}),
   });
 }
@@ -96,6 +99,20 @@ describe("Cowork sessions", () => {
     h = quietHome();
     addCowork(h, { lastTool: "ClaudeDesign" });
     expect((await detector({}).poll())[0]).toMatchObject({ activity: "typing" });
+  });
+
+  test("Cowork is opt-in: off (the default), a fresh session is not shown", async () => {
+    h = quietHome();
+    addCowork(h);
+    expect(await detector({ cowork: false }).poll()).toEqual([]);
+    const d = new Detector({
+      dirs: agentDirs({}, h.home),
+      clientId: "c_test",
+      shareProjectNames: true,
+      processes: fakeProcesses([], {}, true),
+      now: () => T0,
+    });
+    expect(await d.poll()).toEqual([]);
   });
 
   test("the app is not running: no Cowork session, even when fresh", async () => {
@@ -160,6 +177,7 @@ describe("Cowork sessions", () => {
         true,
       ),
       now: () => T0,
+      cowork: true,
     });
     expect(await d.poll()).toMatchObject([{ agent: "claude", project: "Cowork" }]);
   });
@@ -277,9 +295,10 @@ describe("Claude Design window: the desk", () => {
     s.answer = CLOSED;
     now += DESIGN_QUERY_MS;
     expect(await watcher.poll(now, true)).toBeNull();
-    // reopened: a new session start
+    // reopened: noticed at the next slow query, as a new session start
     s.answer = OPEN_FRONT;
-    now += DESIGN_QUERY_MS;
+    expect(await watcher.poll(now + DESIGN_QUERY_MS, true)).toBeNull();
+    now += DESIGN_IDLE_QUERY_MS;
     expect(await watcher.poll(now, true)).toEqual({ activity: "thinking", startedAt: now });
     expect(watcher.status).toBe("watching");
   });
@@ -333,13 +352,52 @@ describe("Claude Design window: the desk", () => {
     expect(blocked.s.queries).toBe(DESIGN_TIMEOUTS_MEAN_BLOCKED); // now waits DESIGN_RETRY_MS
   });
 
-  test("one failed query keeps the desk for a moment, a lasting failure removes it", async () => {
+  test("one failed query keeps the same session until the retry; two in a row remove it", async () => {
     const { s, watcher } = scripted(OPEN_FRONT);
     await watcher.poll(T0, true);
     s.answer = { status: "error" };
-    expect(await watcher.poll(T0 + DESIGN_QUERY_MS, true)).not.toBeNull();
+    let now = T0 + DESIGN_QUERY_MS;
+    expect(await watcher.poll(now, true)).toEqual({ activity: "thinking", startedAt: T0 });
     expect(watcher.status).toBe("error");
-    expect(await watcher.poll(T0 + 30_000, true)).toBeNull();
+    // held for the whole retry wait, same startedAt (no new session row)
+    expect(await watcher.poll(now + DESIGN_RETRY_MS - 1, true)).toEqual({
+      activity: "thinking",
+      startedAt: T0,
+    });
+    expect(s.queries).toBe(2);
+    // the retry works: it simply goes on
+    s.answer = OPEN_FRONT;
+    now += DESIGN_RETRY_MS;
+    expect(await watcher.poll(now, true)).toEqual({ activity: "thinking", startedAt: T0 });
+    expect(watcher.status).toBe("watching");
+    // two failures in a row: gone
+    s.answer = { status: "error" };
+    now += DESIGN_QUERY_MS;
+    expect(await watcher.poll(now, true)).not.toBeNull();
+    now += DESIGN_RETRY_MS;
+    expect(await watcher.poll(now, true)).toBeNull();
+    expect(s.queries).toBe(5);
+  });
+
+  test("slow polling while no Design window is open, fast once one is", async () => {
+    const { s, watcher } = scripted(CLOSED);
+    await watcher.poll(T0, true); // first query right away
+    for (let t = 2_000; t < DESIGN_IDLE_QUERY_MS; t += 2_000) await watcher.poll(T0 + t, true);
+    expect(s.queries).toBe(1);
+    s.answer = OPEN_FRONT;
+    let now = T0 + DESIGN_IDLE_QUERY_MS;
+    expect(await watcher.poll(now, true)).toMatchObject({ activity: "thinking" });
+    expect(s.queries).toBe(2);
+    await watcher.poll(now + DESIGN_QUERY_MS - 1, true);
+    expect(s.queries).toBe(2);
+    now += DESIGN_QUERY_MS;
+    s.answer = CLOSED;
+    expect(await watcher.poll(now, true)).toBeNull(); // closing shows within 5 s
+    expect(s.queries).toBe(3);
+    // the app restarted: ask right away again
+    await watcher.poll(now + 1_000, false);
+    await watcher.poll(now + 2_000, true);
+    expect(s.queries).toBe(4);
   });
 
   test("the detector adds one design session with nothing but presence", async () => {

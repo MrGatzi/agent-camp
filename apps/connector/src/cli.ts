@@ -94,6 +94,7 @@ Commands:
       --birthday MM-DD     opt-in: the office brings you a cake that day ("" removes it)
       --design-window true|false   opt-in (macOS): show a desk while a Claude Design window of
                            the Claude app is open; needs the Accessibility permission
+      --cowork true|false  opt-in: show Cowork sessions of the Claude desktop app
   status            connection state and live sessions
   logs              follow the daemon log
   install-service   register the launchd agent (macOS) so it runs at login
@@ -188,6 +189,7 @@ async function cmdRun(args: Args): Promise<number> {
     shareProjectNames: config.share_project_names,
     processes: systemProcesses(),
     assumeProcesses,
+    cowork: config.cowork,
     ...(watchDesign ? { design: new DesignWatcher(systemDesignWindows()) } : {}),
   });
 
@@ -328,6 +330,8 @@ async function cmdConfigure(args: Args): Promise<number> {
   if (notify !== undefined) next.notifications = !(notify === "false" || notify === "0");
   const design = flags["design-window"];
   if (design !== undefined) next.design_window = !(design === "false" || design === "0");
+  const cowork = flags.cowork;
+  if (cowork !== undefined) next.cowork = !(cowork === "false" || cowork === "0");
   if (next.name && next.name.trim().length > 40) {
     console.error("name must be at most 40 characters");
     return 2;
@@ -349,6 +353,9 @@ async function cmdConfigure(args: Args): Promise<number> {
       `password: ${next.password ? "set" : "not set"})`,
   );
   if (design !== undefined && next.design_window) console.log(DESIGN_WINDOW_HELP);
+  if (cowork !== undefined && next.cowork) {
+    console.log(`Cowork sessions are on. Restart the connector to apply: ${RESTART_HINT}`);
+  }
   return 0;
 }
 

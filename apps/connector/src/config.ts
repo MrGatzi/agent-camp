@@ -25,6 +25,8 @@ export type Config = {
    * (macOS; needs the Accessibility permission)
    */
   design_window: boolean;
+  /** opt-in: show Cowork sessions of the Claude desktop app (often not coding work) */
+  cowork: boolean;
   client_id: string;
 };
 
@@ -38,6 +40,7 @@ export const CONFIG_KEYS = [
   "notifications",
   "birthday",
   "design_window",
+  "cowork",
   "client_id",
 ] as const;
 
@@ -151,6 +154,7 @@ export function toConfig(values: Record<string, TomlValue>): Config {
   const share = values.share_project_names;
   const notify = values.notifications;
   const design = values.design_window;
+  const cowork = values.cowork;
   const clientId = s("client_id");
   return {
     server: s("server"),
@@ -162,6 +166,7 @@ export function toConfig(values: Record<string, TomlValue>): Config {
     notifications: !(notify === false || notify === "false"),
     birthday: validBirthday(s("birthday")),
     design_window: design === true || design === "true",
+    cowork: cowork === true || cowork === "true",
     client_id: clientId && /^[A-Za-z0-9_-]{1,64}$/.test(clientId) ? clientId : newClientId(),
   };
 }
@@ -191,6 +196,7 @@ export function saveConfig(path: string, config: Config): void {
       notifications: config.notifications,
       birthday: config.birthday,
       design_window: config.design_window,
+      cowork: config.cowork,
       client_id: config.client_id,
     }),
     { mode: 0o600 },

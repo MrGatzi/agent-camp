@@ -19,8 +19,10 @@ import { type Activity, IDLE_AFTER_MS } from "@agent-office/protocol";
 export const CLAUDE_BUNDLE_ID = "com.anthropic.claudefordesktop";
 export const DESIGN_WINDOW_TITLES: readonly string[] = ["Design"];
 
-/** Ask macOS at most this often. */
+/** Ask macOS this often while a Design window is open (so closing it shows quickly). */
 export const DESIGN_QUERY_MS = 5_000;
+/** Ask macOS this often while no Design window is open (most of the day). */
+export const DESIGN_IDLE_QUERY_MS = 30_000;
 /** After a refusal or failure, wait this long before asking again. */
 export const DESIGN_RETRY_MS = 60_000;
 /**
@@ -30,8 +32,6 @@ export const DESIGN_RETRY_MS = 60_000;
 export const DESIGN_TIMEOUT_MS = 3_000;
 /** This many timeouts in a row mean a permission dialog is waiting, not a slow start. */
 export const DESIGN_TIMEOUTS_MEAN_BLOCKED = 3;
-/** A failed query keeps the last good answer this long. */
-const KEEP_LAST_MS = 20_000;
 
 export type DesignWindowState =
   /** `open`: a Design window exists; `front`: it is the main window of the frontmost app */
@@ -164,9 +164,10 @@ export type DesignPresence = { activity: Activity; startedAt: number };
  * `waiting`: we cannot know that Claude Design waits for the person.
  */
 export class DesignWatcher {
-  private last: { open: boolean; front: boolean; at: number } | null = null;
-  private queriedAt = Number.NEGATIVE_INFINITY;
-  private retryAt = Number.NEGATIVE_INFINITY;
+  private last: { open: boolean; front: boolean } | null = null;
+  /** the last query failed: `last` is held until the next query (one hiccup keeps the desk) */
+  private stale = false;
+  private nextAt = Number.NEGATIVE_INFINITY;
   private since: number | null = null;
   private lastFront = Number.NEGATIVE_INFINITY;
   private timeouts = 0;
@@ -178,16 +179,25 @@ export class DesignWatcher {
     return this.state;
   }
 
-  /** `desktopRunning`: the Claude app runs (no query otherwise). Never throws. */
+  /**
+   * `desktopRunning`: the Claude app runs (no query otherwise). Never throws.
+   *
+   * Cadence: the first query right away, then every DESIGN_IDLE_QUERY_MS while no Design
+   * window is open and every DESIGN_QUERY_MS while one is. After a failure the next query
+   * waits DESIGN_RETRY_MS; the last good answer is held until then, so one System Events
+   * hiccup keeps the same session (same startedAt), and is dropped only if the retry fails
+   * too. A held answer does not count as "in front".
+   */
   async poll(now: number, desktopRunning: boolean): Promise<DesignPresence | null> {
     if (!desktopRunning) {
       this.last = null;
+      this.stale = false;
       this.since = null;
-      this.queriedAt = Number.NEGATIVE_INFINITY;
+      this.timeouts = 0;
+      this.nextAt = Number.NEGATIVE_INFINITY;
       return null;
     }
-    if (now >= this.retryAt && now - this.queriedAt >= DESIGN_QUERY_MS) {
-      this.queriedAt = now;
+    if (now >= this.nextAt) {
       let r: DesignWindowState;
       try {
         r = await this.source.query();
@@ -197,16 +207,18 @@ export class DesignWatcher {
       this.timeouts = r.status === "timeout" ? this.timeouts + 1 : 0;
       if (r.status === "ok") {
         this.state = "watching";
-        this.last = { open: r.open, front: r.front, at: now };
+        this.last = { open: r.open, front: r.front };
+        this.stale = false;
+        this.nextAt = now + (r.open ? DESIGN_QUERY_MS : DESIGN_IDLE_QUERY_MS);
       } else if (r.status === "timeout" && this.timeouts < DESIGN_TIMEOUTS_MEAN_BLOCKED) {
-        // probably System Events starting up: ask again at the normal pace
+        // probably System Events starting up: ask again soon, keep what we had
+        this.nextAt = now + DESIGN_QUERY_MS;
       } else {
         this.state = r.status === "error" ? "error" : "needs-permission";
-        this.retryAt = now + DESIGN_RETRY_MS;
+        this.nextAt = now + DESIGN_RETRY_MS;
+        if (this.stale) this.last = null;
+        else this.stale = true;
       }
-    }
-    if (this.last && now - this.last.at >= KEEP_LAST_MS) {
-      this.last = null;
     }
     if (!this.last?.open) {
       this.since = null;
@@ -214,7 +226,7 @@ export class DesignWatcher {
       return null;
     }
     this.since ??= now;
-    if (this.last.front) this.lastFront = now;
+    if (this.last.front && !this.stale) this.lastFront = now;
     return {
       activity: now - this.lastFront < IDLE_AFTER_MS ? "thinking" : "idle",
       startedAt: this.since,
