@@ -25,6 +25,7 @@ import {
   type CharacterSheet,
   characterSheet,
   lookFor,
+  releaseSheet,
 } from "../art/characters.ts";
 import type { MonitorState } from "../art/desk.ts";
 import {
@@ -289,7 +290,13 @@ export class CharacterManager {
         for (const c of this.chars.values()) {
           if (c.personId !== p.personId) continue;
           const s = this.model.sessions.get(c.sessionId);
-          if (s) c.sheet = this.sheetFor(p, s);
+          if (!s) continue;
+          // swap to the new sheet right away (same frame), then free the old one
+          const old = c.sheet;
+          c.sheet = this.sheetFor(p, s);
+          const i = old.frames.indexOf(c.sprite.texture);
+          c.sprite.texture = c.sheet.frames[Math.max(0, i)]!;
+          releaseSheet(old);
         }
         this.syncSlots();
         break;
@@ -592,6 +599,7 @@ export class CharacterManager {
     return this.model.people.get(personId)?.name ?? personId;
   }
 
+  /** Holds one sheet reference: release it when the character drops or replaces it. */
   private sheetFor(p: PersonState, s: SessionState): CharacterSheet {
     const variation = s.desk === 0 ? null : sessionVariation(s.sessionId);
     return characterSheet(lookFor(p.avatar, s.agent, variation));
@@ -699,6 +707,7 @@ export class CharacterManager {
     this.scene.objects.removeChild(c.sprite, c.mug);
     this.scene.fx.removeChild(c.bubble, c.marker, c.icon, c.ring, c.flame);
     for (const sp of [c.sprite, c.bubble, c.marker, c.mug, c.icon, c.ring]) sp.destroy();
+    releaseSheet(c.sheet);
     this.chars.delete(c.sessionId);
     this.syncSlots();
   }

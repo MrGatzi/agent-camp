@@ -11,6 +11,8 @@
  *   ?nohud=1      hide all DOM overlays     ?zoom=fit|<n>  initial zoom
  *   ?hour=0..24   force the time of day     ?gallery=1     art gallery (dev)
  *   ?focus=<personId>  start focused on that person's desk pod
+ *   ?look=tracht|b64:<base64url AvatarSpec JSON>  demo: the first person wears this avatar
+ *   ?gallery=look[&look=…][&gscale=N]  detailed-look gallery (sets window.__galleryReady)
  */
 import "./ui/theme.css";
 import "./ui/office.css";
@@ -20,12 +22,13 @@ import {
   type ServerToViewer,
 } from "@agent-office/protocol";
 import { Application, TextureStyle } from "pixi.js";
+import { CHAR_H, CHAR_RES, CHAR_W } from "./art/characters.ts";
 import { fitText } from "./art/font.ts";
 import { trophyCanvas } from "./art/fun.ts";
 import { C } from "./art/palette.ts";
 import { setArtSeason } from "./art/seasons.ts";
 import { Camera } from "./camera.ts";
-import { DemoFeed, parseDemoMode } from "./demo/demoFeed.ts";
+import { DemoFeed, parseDemoMode, parseLookParam } from "./demo/demoFeed.ts";
 import { Hud, type PokeRequest, type PokeResult } from "./hud.ts";
 import { keepAwake } from "./kiosk.ts";
 import { connectViewer, loginIfLoggedOut } from "./net/viewer.ts";
@@ -377,11 +380,13 @@ async function boot() {
     canvas.height = 96;
     const ctx = canvas.getContext("2d")!;
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(src, frame.frame.x, frame.frame.y, 16, 24, 0, 0, 64, 96);
+    const r = CHAR_RES;
+    ctx.drawImage(src, frame.frame.x * r, frame.frame.y * r, CHAR_W * r, CHAR_H * r, 0, 0, 64, 96);
     return canvas;
   };
 
   if (demo) {
+    const lookParam = parseLookParam(params.get("look"));
     const feed = new DemoFeed(
       {
         mode: demo,
@@ -389,6 +394,7 @@ async function boot() {
         ...(params.get("people") ? { people: Number(params.get("people")) } : {}),
         ...(params.get("sessions") ? { sessions: Number(params.get("sessions")) } : {}),
         ...(params.get("speed") ? { speed: Number(params.get("speed")) } : {}),
+        ...(lookParam ? { look: lookParam } : {}),
       },
       (msg) => {
         // round-trip through the real parser so demo data is schema-checked too

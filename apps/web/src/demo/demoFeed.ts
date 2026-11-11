@@ -11,9 +11,12 @@ import {
   ACTIVITIES,
   type Activity,
   type AgentKind,
+  type AvatarSpec,
   avatarFromSeed,
   envelope,
+  LOOK_FIXTURES,
   type PersonView,
+  repairAvatar,
   type ServerToViewer,
   type SessionView,
   seededRandom,
@@ -62,6 +65,8 @@ export type DemoOptions = {
   sessions?: number;
   /** speed multiplier for the event clock (default 1) */
   speed?: number;
+  /** avatar of the first demo person (`?look=`), e.g. a detailed look fixture */
+  look?: AvatarSpec;
 };
 
 type Sink = (msg: ServerToViewer) => void;
@@ -204,10 +209,11 @@ export class DemoFeed {
   private makePerson(sessions: number): PersonView {
     const name = DEMO_NAMES[this.nameIdx++ % DEMO_NAMES.length]!;
     const personId = name.toLowerCase();
+    const first = this.nameIdx === 1 && this.opts.look;
     const p: PersonView = {
       personId,
       name,
-      avatar: avatarFromSeed(personId),
+      avatar: first ? structuredClone(this.opts.look!) : avatarFromSeed(personId),
       sessions: [],
       joinedAt: this.now() - Math.floor(this.rand() * 5 * 3600_000),
     };
@@ -427,3 +433,44 @@ export function parseDemoMode(value: string | null): DemoMode | null {
     return value;
   return "busy";
 }
+
+/**
+ * `?look=` value -> avatar: a fixture name (`tracht`) or `b64:<base64url AvatarSpec JSON>`.
+ * Untrusted input goes through `repairAvatar`; values with nothing usable give null.
+ */
+export function parseLookParam(value: string | null): AvatarSpec | null {
+  if (!value) return null;
+  if (Object.hasOwn(LOOK_FIXTURES, value))
+    return LOOK_FIXTURES[value as keyof typeof LOOK_FIXTURES];
+  if (!value.startsWith("b64:")) return null;
+  let candidate: unknown;
+  try {
+    const b64 = value.slice(4).replace(/-/g, "+").replace(/_/g, "/");
+    const bin = atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, "="));
+    candidate = JSON.parse(
+      new TextDecoder().decode(Uint8Array.from(bin, (ch) => ch.charCodeAt(0))),
+    );
+  } catch {
+    return null;
+  }
+  if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) return null;
+  const { avatar, repaired } = repairAvatar(candidate, "look-param");
+  if (!repaired) return avatar;
+  // repaired: keep it only if something from the candidate survived (a look or a catalog field)
+  const c = candidate as Record<string, unknown>;
+  const kept =
+    (avatar.look !== undefined && "look" in c) ||
+    LOOK_CATALOG_KEYS.some((k) => k in c && JSON.stringify(c[k]) === JSON.stringify(avatar[k]));
+  return kept ? avatar : null;
+}
+
+const LOOK_CATALOG_KEYS = [
+  "hairStyle",
+  "hairColor",
+  "skinTone",
+  "glasses",
+  "facialHair",
+  "accessory",
+  "deskProps",
+  "deskMess",
+] as const;
