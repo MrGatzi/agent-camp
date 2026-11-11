@@ -58,7 +58,7 @@ import { flameTextures, smokeTexture } from "../art/heat.ts";
 import { C } from "../art/palette.ts";
 import { POD_MATS } from "../art/tiles.ts";
 import type { ModelChange, OfficeModel, PersonState, SessionState } from "../state/officeModel.ts";
-import type { WaitSpot } from "./cat.ts";
+import type { Perch, WaitSpot } from "./cat.ts";
 import {
   CRATER_S,
   type EndedDesk,
@@ -287,7 +287,7 @@ export class CharacterManager {
   dwell = 1;
   /** a pizza is on the meeting table: idle people gather there */
   pizzaActive: () => boolean = () => false;
-  /** the office cat may eat a finished helper (wired up in main.ts) */
+  /** an office cat may eat a finished helper (wired up in main.ts) */
   catEats: (sprite: Sprite, x: number, y: number) => boolean = () => false;
   /** office-local hour 0..24 (night ghosts) */
   hour: () => number = () => 12;
@@ -1393,6 +1393,22 @@ export class CharacterManager {
     }
   }
 
+  /**
+   * Where a cat sent to someone sits: up on the desk of one of their seated agents, beside the
+   * monitor (drawn above the desk, below the person), else next to wherever they are.
+   */
+  catPerch(personId: string, pick: number): Perch | null {
+    const mine = this.charactersOf(personId);
+    const seated = mine.filter((c) => c.mode === "seated");
+    const c = seated.length > 0 ? seated[pick % seated.length] : mine[pick % (mine.length || 1)];
+    if (!c) {
+      const spot = this.personSpot(personId);
+      return spot ? { seat: spot, desk: null, z: spot.y } : null;
+    }
+    if (c.mode !== "seated") return { seat: { x: c.x, y: c.y }, desk: null, z: c.y };
+    return { seat: { x: c.x, y: c.y }, desk: { x: c.x + 12, y: c.y - 19 }, z: c.y - 1.2 };
+  }
+
   /** Centre of a person's pod desks (cake drone target). */
   personSpot(personId: string): Point | null {
     const p = this.model.people.get(personId);
@@ -1768,7 +1784,7 @@ export class CharacterManager {
     return best;
   }
 
-  /** Characters that are idle somewhere (for the cat). */
+  /** Characters that are idle somewhere (for the cats). */
   idleSpots(): Point[] {
     const out: Point[] = [];
     for (const c of this.chars.values()) {

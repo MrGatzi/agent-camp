@@ -207,16 +207,75 @@ export function botTextures(agent: AgentKind): Texture[] {
 }
 
 export const CAT = { sleep: [0, 1], sit: [2, 3], walkLeft: [4, 5], walkRight: [6, 7] } as const;
-let catFrames: Texture[] | null = null;
-/** Orange tabby, 18x14 frames. */
-export function catTextures(): Texture[] {
-  if (catFrames) return catFrames;
+
+/**
+ * A cat's fur: main coat, stripes/shade, belly and chin, eyes, and optional markings: calico
+ * spots, or siamese points (a dark mask over the face).
+ */
+export type CatCoat = {
+  id: string;
+  label: string;
+  main: string;
+  stripe: string;
+  belly: string;
+  eye: string;
+  patch?: { color: string; style: "spots" | "points" };
+};
+/** Coats of the office cats; slot 0 (the original cat) is the orange tabby. */
+export const CAT_COATS: readonly CatCoat[] = [
+  {
+    id: "ginger",
+    label: "orange tabby",
+    main: C.orange,
+    stripe: C.clay,
+    belly: C.cream,
+    eye: C.night,
+  },
+  {
+    id: "midnight",
+    label: "black cat",
+    main: C.ink,
+    stripe: C.dusk,
+    belly: C.slate,
+    eye: C.lemon,
+  },
+  { id: "smoke", label: "grey cat", main: C.grey, stripe: C.slate, belly: C.silver, eye: C.night },
+  {
+    id: "calico",
+    label: "calico",
+    main: C.white,
+    stripe: C.orange,
+    belly: C.white,
+    eye: C.night,
+    patch: { color: C.ink, style: "spots" },
+  },
+  { id: "snow", label: "white cat", main: C.white, stripe: C.silver, belly: C.white, eye: C.sky },
+  { id: "cocoa", label: "brown tabby", main: C.wood, stripe: C.bark, belly: C.sand, eye: C.night },
+  {
+    id: "latte",
+    label: "siamese",
+    main: C.cream,
+    stripe: C.cocoa,
+    belly: C.white,
+    eye: C.sky,
+    patch: { color: C.bark, style: "points" },
+  },
+];
+
+const catFrames = new Map<string, Texture[]>();
+/** One cat in a coat, 18x14 frames (sleep x2, sit x2, walk left x2, walk right x2). */
+export function catTextures(coat: CatCoat = CAT_COATS[0]!): Texture[] {
+  const hit = catFrames.get(coat.id);
+  if (hit) return hit;
   const fw = 18;
   const fh = 14;
   const pc = new PixelCanvas(fw * 8, fh);
-  const O = C.orange;
-  const S = C.clay;
-  const B = C.cream;
+  const O = coat.main;
+  const S = coat.stripe;
+  const B = coat.belly;
+  const E = coat.eye;
+  const P = coat.patch?.color;
+  const spots = coat.patch?.style === "spots";
   const drawWalk = (f: number) => {
     const step = f % 2;
     pc.rect(5, 5, 9, 4, O); // body
@@ -226,8 +285,18 @@ export function catTextures(): Texture[] {
     pc.rect(1, 2, 6, 5, O); // head
     pc.set(1, 1, O);
     pc.set(5, 1, O);
-    pc.set(2, 4, C.night);
-    pc.set(4, 4, C.night);
+    if (P && spots) {
+      pc.rect(9, 5, 3, 2, P);
+      pc.set(1, 1, P);
+      pc.rect(1, 2, 2, 1, P);
+    } else if (P) {
+      pc.rect(1, 3, 5, 3, P);
+      pc.set(1, 1, P);
+      pc.set(5, 1, P);
+      pc.vline(14, 3, 3, P);
+    }
+    pc.set(2, 4, E);
+    pc.set(4, 4, E);
     pc.set(3, 5, C.pink);
     pc.rect(2, 6, 3, 1, B);
     pc.vline(14, 3, 3, O); // tail
@@ -246,9 +315,16 @@ export function catTextures(): Texture[] {
       pc.ellipse(4, 6, 6, 3, B);
       pc.hline(5, 5 - b, 2, S);
       pc.hline(9, 5 - b, 2, S);
+      if (P && spots) pc.rect(9, 6 - b, 3, 2, P);
       pc.rect(1, 6, 5, 4, O);
       pc.set(1, 5, O);
       pc.set(4, 5, O);
+      if (P && spots) pc.set(1, 5, P);
+      else if (P) {
+        pc.rect(1, 7, 5, 2, P);
+        pc.set(1, 5, P);
+        pc.set(4, 5, P);
+      }
       pc.hline(2, 8, 1, C.night);
       pc.hline(4, 8, 1, C.night);
       pc.hline(8, 11, 6, S);
@@ -259,8 +335,17 @@ export function catTextures(): Texture[] {
       pc.rect(3, 0, 8, 6, O);
       pc.set(3, 0, C.night);
       pc.set(10, 0, C.night);
-      pc.set(5, 2, C.night);
-      pc.set(8, 2, C.night);
+      if (P && spots) {
+        pc.rect(3, 1, 3, 2, P);
+        pc.set(9, 7, P);
+        pc.set(9, 8, P);
+      } else if (P) {
+        pc.rect(4, 1, 6, 4, P);
+        pc.set(3, 0, P);
+        pc.set(10, 0, P);
+      }
+      pc.set(5, 2, E);
+      pc.set(8, 2, E);
       pc.set(6, 3, C.pink);
       pc.set(7, 3, C.pink);
       pc.hline(5, 4, 4, B);
@@ -278,8 +363,9 @@ export function catTextures(): Texture[] {
     pc.outline(f * fw, 0, fw, fh);
   }
   for (let f = 6; f < 8; f++) pc.mirrorFrom((f - 2) * fw, 0, fw, fh, f * fw, 0);
-  catFrames = framesOf(pc, fw, fh, 8);
-  return catFrames;
+  const frames = framesOf(pc, fw, fh, 8);
+  catFrames.set(coat.id, frames);
+  return frames;
 }
 
 const glowCache = new Map<string, Texture>();

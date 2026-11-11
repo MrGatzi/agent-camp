@@ -29,6 +29,31 @@ const snap = (people: PersonView[]) =>
   envelope("office.snapshot", { officeName: "Camp", serverTime: T0, people }, { ts: T0 });
 
 describe("OfficeModel", () => {
+  test("cat interactions carry the cat and the floor spot", () => {
+    const m = new OfficeModel(() => T0);
+    m.apply(snap([person("Anna")]));
+    const yarn = m.apply(
+      envelope("interaction.happened", { kind: "yarn", from: "Lea", catId: 2, x: 600, y: 140 }),
+    );
+    expect(yarn).toEqual([
+      {
+        kind: "interaction",
+        interaction: "yarn",
+        personId: undefined,
+        from: "Lea",
+        text: undefined,
+        delivered: undefined,
+        catId: 2,
+        spot: { x: 600, y: 140 },
+      },
+    ]);
+    const visit = m.apply(
+      envelope("interaction.happened", { kind: "cat", personId: "anna", catId: 1, delivered: 0 }),
+    );
+    expect(visit[0]).toMatchObject({ interaction: "cat", personId: "anna", catId: 1 });
+    expect(visit[0]).toMatchObject({ spot: undefined });
+  });
+
   test("agent card data: machine, subagent peak, activity timeline", () => {
     let now = T0;
     const m = new OfficeModel(() => now);

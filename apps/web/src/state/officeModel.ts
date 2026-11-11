@@ -86,6 +86,9 @@ export type ModelChange =
       from: string | undefined;
       text: string | undefined;
       delivered: number | undefined;
+      catId: number | undefined;
+      /** feed / yarn / laser: the floor spot */
+      spot: { x: number; y: number } | undefined;
     };
 
 export type OfficeStats = {
@@ -310,6 +313,8 @@ export class OfficeModel {
           from: d.from,
           text: d.text,
           delivered: d.delivered,
+          catId: d.catId,
+          spot: d.x !== undefined && d.y !== undefined ? { x: d.x, y: d.y } : undefined,
         });
         break;
       }
