@@ -155,7 +155,7 @@ export const ConnectorRejected = msg(
 export const ConnectorPoked = msg(
   "connector.poked",
   z.object({
-    kind: z.enum(["wave", "coffee", "cheer", "message"]),
+    kind: z.enum(["wave", "coffee", "cheer", "message", "cat"]),
     from: z.string().max(40).optional(),
     text: z.string().max(200),
   }),
@@ -234,7 +234,9 @@ export const SessionConnectionChanged = msg(
 /**
  * wave/coffee/cheer/message  poke a person (also a notification on their Macs)
  * paper / tomato             throw a paper ball / a tomato at a person (office only)
- * pet                        pet the office cat
+ * cat                        send an office cat to sit on a person's desk (also a notification)
+ * pet / feed / yarn          pet an office cat, drop a food bowl or a yarn ball next to it
+ * laser                      a laser dot on the floor that the cats chase
  */
 export const INTERACTIONS = [
   "wave",
@@ -243,10 +245,35 @@ export const INTERACTIONS = [
   "message",
   "paper",
   "tomato",
+  "cat",
   "pet",
+  "feed",
+  "yarn",
+  "laser",
 ] as const;
 export const InteractionKind = z.enum(INTERACTIONS);
 export type InteractionKind = z.infer<typeof InteractionKind>;
+/** Interactions with the office cats themselves (no person involved). */
+export const CAT_INTERACTIONS = ["pet", "feed", "yarn", "laser"] as const;
+export type CatInteraction = (typeof CAT_INTERACTIONS)[number];
+export function isCatInteraction(kind: InteractionKind): kind is CatInteraction {
+  return (CAT_INTERACTIONS as readonly string[]).includes(kind);
+}
+/** Interactions that need a spot on the floor (`x`, `y`). */
+export const SPOT_INTERACTIONS = ["feed", "yarn", "laser"] as const;
+export function needsSpot(kind: InteractionKind): boolean {
+  return (SPOT_INTERACTIONS as readonly string[]).includes(kind);
+}
+/** At most this many office cats (one more for every two people, see the web client). */
+export const MAX_CATS = 10;
+/** Which office cat (slot 0 is the original one). */
+export const CatId = z
+  .number()
+  .int()
+  .min(0)
+  .max(MAX_CATS - 1);
+/** A floor spot in world pixels. */
+export const WorldCoord = z.number().int().min(0).max(8192);
 /** Short name a viewer signs pokes with; viewers are otherwise anonymous. */
 export const ViewerName = z.string().trim().max(40);
 export const InteractionText = z.string().trim().max(80);
@@ -261,6 +288,11 @@ export const InteractionHappened = msg(
     text: InteractionText.optional(),
     /** how many of the person's Macs got a notification */
     delivered: z.number().int().nonnegative().optional(),
+    /** cat interactions and `cat`: which office cat */
+    catId: CatId.optional(),
+    /** feed / yarn / laser: the floor spot */
+    x: WorldCoord.optional(),
+    y: WorldCoord.optional(),
   }),
 );
 
