@@ -1,5 +1,7 @@
 /**
- * `?demo=busy|one|empty|join|party` (or `?demo=1` = busy): a local fake event stream, no server.
+ * `?demo=busy|one|empty|join|party|feierabend` (or `?demo=1` = busy): a local fake event
+ * stream, no server. `feierabend` = Friday 17:30: most people idle, the bar full, the weed
+ * shop and smokers' corner busy.
  * `party` plays the office-life moments quickly: idle people (coffee, chats, arcade), a long
  * waiter, a helper burst to 10 (party mode), `/clear` restarts, a long session that ships, new
  * records of parallel agents.
@@ -23,7 +25,7 @@ import {
   sessionIdOf,
 } from "@agent-office/protocol";
 
-export type DemoMode = "busy" | "one" | "empty" | "join" | "party";
+export type DemoMode = "busy" | "one" | "empty" | "join" | "party" | "feierabend";
 
 export const DEMO_NAMES = [
   "Anna",
@@ -118,6 +120,10 @@ export class DemoFeed {
       this.startParty();
       return;
     }
+    if (mode === "feierabend") {
+      this.startFeierabend();
+      return;
+    }
     // busy
     const nPeople = Math.min(this.opts.people ?? 12, DEMO_NAMES.length);
     const nSessions = Math.max(nPeople, this.opts.sessions ?? 30);
@@ -192,7 +198,9 @@ export class DemoFeed {
     // every third session runs on the devbox (no rand() call: keeps seeded demos unchanged)
     const machine = this.sessionCounter % 3 === 2 ? "devbox" : "MacBook";
     // fixed context ramp per session (no rand(): seeded demos stay the same); some smoke, one burns
-    const context = [0.15, 0.35, 0.55, 0.2, 0.85, 0.4, 0.65][this.sessionCounter % 7]!;
+    const context = [0.15, 0.35, 0.55, 0.2, 0.3, 0.4, 0.65, 0.1, 0.25, 0.45, 0.85, 0.3, 0.2, 0.5][
+      this.sessionCounter % 14
+    ]!;
     const key = `demo${(this.sessionCounter++).toString(36).padStart(6, "0")}${Math.floor(this.rand() * 1e6)}`;
     return {
       sessionId: sessionIdOf("demo-laptop", key),
@@ -322,6 +330,29 @@ export class DemoFeed {
     });
   }
 
+  // ---- feierabend -------------------------------------------------------------------------
+  /** Friday after work: nearly everybody's agents idle, two people still pushing. */
+  private startFeierabend() {
+    const H = 3600_000;
+    const plan: Activity[] = ["idle", "idle", "typing", "idle", "idle", "idle", "running", "idle"];
+    const people = plan.map((activity) => {
+      const p = this.makePerson(0);
+      const ses = this.makeSession(this.agent(), activity, 0);
+      ses.startedAt = this.now() - Math.floor((0.5 + this.rand() * 2) * H);
+      p.sessions.push(ses);
+      return p;
+    });
+    this.snapshot(people);
+    this.loop(3000, () => {
+      const busy = [...this.people.values()].flatMap((p) =>
+        p.sessions.filter((x) => x.activity !== "idle").map((x) => [p, x] as const),
+      );
+      if (busy.length === 0) return;
+      const [p, x] = this.pick(busy);
+      this.setActivity(p.personId, x, this.pick(["typing", "reading", "running"] as const));
+    });
+  }
+
   private helpers(p: PersonView, s: SessionView, d: number) {
     if (!p.sessions.includes(s)) return;
     s.subagents = Math.max(0, s.subagents + d);
@@ -428,7 +459,8 @@ export function parseDemoMode(value: string | null): DemoMode | null {
     value === "empty" ||
     value === "join" ||
     value === "busy" ||
-    value === "party"
+    value === "party" ||
+    value === "feierabend"
   )
     return value;
   return "busy";

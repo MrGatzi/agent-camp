@@ -6,6 +6,7 @@
  */
 import { z } from "zod";
 import {
+  AccentColor,
   Accessory,
   type AvatarCatalogSpec,
   AvatarSpec,
@@ -16,10 +17,14 @@ import {
   Glasses,
   HairColor,
   HairStyle,
+  HeldItem,
   hairColorHex,
   MAX_DESK_PROPS,
+  Outfit,
   SkinTone,
   skinToneHex,
+  Vehicle,
+  Wristwear,
 } from "./catalog.ts";
 import { CharacterLook, LOOK_SECTIONS, LOOK_VERSION, MAX_BUTTONS, type Ramp } from "./look.ts";
 
@@ -299,6 +304,12 @@ const CATALOG_FIELDS = {
   glasses: Glasses,
   facialHair: FacialHair,
   accessory: Accessory,
+  outfit: Outfit,
+  leftHand: HeldItem,
+  rightHand: HeldItem,
+  wrist: Wristwear,
+  accentColor: AccentColor,
+  vehicle: Vehicle,
   deskMess: DeskMess,
 } as const;
 
@@ -334,6 +345,12 @@ export function repairAvatar(
     glasses: pickField("glasses"),
     facialHair: pickField("facialHair"),
     accessory: pickField("accessory"),
+    outfit: pickField("outfit"),
+    leftHand: pickField("leftHand"),
+    rightHand: pickField("rightHand"),
+    wrist: pickField("wrist"),
+    accentColor: pickField("accentColor"),
+    vehicle: pickField("vehicle"),
     deskProps: fallback.deskProps,
     deskMess: pickField("deskMess"),
   };

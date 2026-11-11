@@ -15,6 +15,7 @@
  * key) never discards a generated look.
  */
 import {
+  ACCENT_COLORS,
   ACCESSORIES,
   AvatarCatalogSpec,
   type AvatarSpec,
@@ -25,13 +26,17 @@ import {
   GLASSES,
   HAIR_COLORS,
   HAIR_STYLES,
+  HELD_ITEMS,
   hashString,
   lookFromCatalog,
   MAX_DESK_PROPS,
   MAX_SELF_DESCRIPTION,
+  OUTFITS,
   repairAvatar,
   repairLookScored,
   SKIN_TONES,
+  VEHICLES,
+  WRISTWEAR,
 } from "@agent-office/protocol";
 import { z } from "zod";
 import type { AvatarJob } from "./hub.ts";
@@ -212,6 +217,14 @@ export const SYSTEM_PROMPT = [
   `glasses: ${list(GLASSES)}`,
   `facialHair: ${list(FACIAL_HAIR)}`,
   `accessory: ${list(ACCESSORIES)}`,
+  `outfit: ${list(OUTFITS)}`,
+  `leftHand, rightHand: ${list(HELD_ITEMS)}`,
+  `wrist: ${list(WRISTWEAR)}`,
+  `accentColor: ${list(ACCENT_COLORS)}`,
+  `vehicle: ${list(VEHICLES)}`,
+  "Use cat-ears, fox-ears, bunny-ears, devil-horns, halo, crown, wizard-hat, party-hat or antenna only when the person's self-description explicitly requests them; otherwise choose an ordinary accessory (none, headphones, beanie, cap, cap-mint, bow or earring).",
+  "Use no bracelets, cyan accent and no vehicle unless the description requests them.",
+  "Use jacket and empty hands unless the description asks for another outfit or held items.",
   `deskProps (0-${MAX_DESK_PROPS}, distinct): ${list(DESK_PROPS)}; take them from the description, else vary`,
   "deskMess: 0 (spotless) .. 3 (chaos)",
   "",

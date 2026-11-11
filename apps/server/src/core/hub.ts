@@ -31,6 +31,7 @@ import {
 } from "@agent-office/protocol";
 import { diff, EMPTY_STATE, type OfficeState } from "./diff.ts";
 import { historyRow, logLine, lookupIn } from "./events.ts";
+import { ShameTracker } from "./shame.ts";
 import type { Store } from "./store.ts";
 
 export type HubConfig = {
@@ -57,6 +58,8 @@ export type Binding = {
   connectorVersion: string;
   /** user-chosen machine label, copied into every SessionView of this connector */
   machine?: string;
+  /** opt-in "MM-DD" */
+  birthday?: string;
 };
 
 /** A connector as the hub tracks and persists it (its description lives on the person). */
@@ -144,6 +147,29 @@ const attachable = (b: Binding): Binding => {
 /** Trim and collapse whitespace ("  Martin  K " -> "Martin K"). */
 export const cleanName = (name: string) => name.trim().replace(/\s+/g, " ");
 
+/** "YYYY-MM-DD" of `ts` in an IANA zone (bad zone -> UTC). */
+export function dayKeyIn(timeZone: string, ts: number): string {
+  const o = { year: "numeric", month: "2-digit", day: "2-digit" } as const;
+  try {
+    return new Intl.DateTimeFormat("en-CA", { ...o, timeZone }).format(ts);
+  } catch {
+    return new Intl.DateTimeFormat("en-CA", { ...o, timeZone: "UTC" }).format(ts);
+  }
+}
+
+/** "MM-DD" of `now` in an IANA zone (bad zone -> UTC). */
+export function monthDayIn(timeZone: string, now: number): string {
+  const o = { month: "2-digit", day: "2-digit" } as const;
+  let parts: Intl.DateTimeFormatPart[];
+  try {
+    parts = new Intl.DateTimeFormat("en-US", { ...o, timeZone }).formatToParts(now);
+  } catch {
+    parts = new Intl.DateTimeFormat("en-US", { ...o, timeZone: "UTC" }).formatToParts(now);
+  }
+  const v = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
+  return `${v("month")}-${v("day")}`;
+}
+
 function safeEqual(a: string, b: string): boolean {
   let diffBits = a.length ^ b.length;
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
@@ -167,11 +193,13 @@ export class Hub {
   private recent = new Map<string, { activity: Activity; at: number }[]>();
   /** sink for readable event lines */
   log: (line: string) => void = () => {};
+  readonly shame: ShameTracker;
 
   constructor(
     private cfg: HubConfig,
     private store: Store,
   ) {
+    this.shame = new ShameTracker(store, (ts) => dayKeyIn(cfg.timezone, ts));
     try {
       this.names = JSON.parse(store.kvGet(NAMES_KEY) ?? "{}");
     } catch {
@@ -210,6 +238,9 @@ export class Hub {
           // and the persisted copy has no detailed look)
           const stored = this.storedAvatar(person.personId);
           person.avatar = stored?.avatar ?? repairAvatar(person.avatar, person.personId).avatar;
+          // the custom look is the source of truth, even if the state was written before it
+          const custom = this.customAvatar(person.personId);
+          if (custom) person.avatar = custom;
           this.people.set(person.personId, person);
         }
       } catch {
@@ -285,8 +316,58 @@ export class Hub {
     const p = this.people.get(personId);
     if (p?.lookKey && key.replace(/:fallback$/, "") !== p.lookKey) return [];
     this.store.putAvatar(personId, avatar, key, selfDescription ?? p?.selfDescription ?? "");
+    // a custom look stays on; the automatic one waits in its row for "Automatic"
+    if (this.customAvatar(personId)) return [];
     if (p) p.avatar = avatar;
     return this.commit(now);
+  }
+
+  /**
+   * Look editor: pin a custom look (catalog ids, already validated) or, with `null`, drop it
+   * and go back to the automatic look. The automatic look is kept in its own row, so going
+   * back is free; an avatar job is returned only when that row is missing or was made for an
+   * older description. Only for people in the office; returns null otherwise.
+   */
+  setCustomAvatar(
+    personId: string,
+    avatar: AvatarSpec | null,
+    now: number,
+  ): { events: ViewerEvent[]; avatarJob?: AvatarJob; avatar: AvatarSpec } | null {
+    const p = this.people.get(personId);
+    if (!p) return null;
+    const stored = this.storedAvatar(personId);
+    if (p.selfDescription === undefined) p.selfDescription = stored?.selfDescription ?? "";
+    if (avatar) {
+      this.store.putCustomAvatar(personId, avatar);
+      p.avatar = avatar;
+      this.log(`look ${personId} custom`);
+      return { events: this.commit(now), avatar };
+    }
+    this.store.putCustomAvatar(personId, null);
+    const keyFn = this.cfg.avatarKey ?? defaultAvatarKey;
+    const want = keyFn(personId, p.selfDescription || undefined);
+    p.lookKey = want;
+    p.avatar = stored?.avatar ?? avatarFromSeed(personId);
+    const events = this.commit(now);
+    this.log(`look ${personId} back to automatic`);
+    if (stored && stored.key.replace(/:fallback$/, "") === want)
+      return { events, avatar: p.avatar };
+    return {
+      events,
+      avatar: p.avatar,
+      avatarJob: {
+        personId,
+        name: p.name,
+        key: want,
+        ...(p.selfDescription ? { selfDescription: p.selfDescription } : {}),
+        ...(stored ? { previous: stored.avatar } : {}),
+      },
+    };
+  }
+
+  /** Whether a person's look was picked in the look editor. */
+  isCustomLook(personId: string): boolean {
+    return this.customAvatar(personId) !== null;
   }
 
   state(): OfficeState {
@@ -381,6 +462,7 @@ export class Hub {
       connectorVersion: d.connectorVersion,
       ...(desc ? { selfDescription: desc } : {}),
       ...(machine ? { machine } : {}),
+      ...(d.birthday ? { birthday: d.birthday } : {}),
     };
     // a hello on a socket that was bound to another clientId: drop the old binding
     this.sockets.set(socketId, binding);
@@ -436,13 +518,14 @@ export class Hub {
   private ensurePerson(b: Binding, now: number): AvatarJob | undefined {
     let p = this.people.get(b.personId);
     const stored = this.storedAvatar(b.personId);
+    const custom = this.customAvatar(b.personId);
     if (!p) {
       p = {
         personId: b.personId,
         name: b.name,
         joinedAt: now,
         goneSince: null,
-        avatar: stored?.avatar ?? avatarFromSeed(b.personId),
+        avatar: custom ?? stored?.avatar ?? avatarFromSeed(b.personId),
       };
       this.people.set(b.personId, p);
     }
@@ -465,11 +548,31 @@ export class Hub {
       if (desc !== p.selfDescription && (changedHere || !p.selfDescription)) {
         p.selfDescription = desc;
         // keep it with the stored look right away (hub.state does not carry descriptions)
+        // (never the custom look: it has its own row)
         if (!stored || stored.selfDescription !== undefined)
-          this.store.putAvatar(b.personId, stored?.avatar ?? p.avatar, stored?.key ?? "", desc);
+          this.store.putAvatar(
+            b.personId,
+            stored?.avatar ?? (custom ? avatarFromSeed(b.personId) : p.avatar),
+            stored?.key ?? "",
+            desc,
+          );
       }
     }
 
+    // a look picked in the look editor wins over any description: no job while it is on (a
+    // new description is remembered in the automatic row, whose key then no longer matches,
+    // so "Automatic" regenerates for it)
+    if (custom) {
+      p.avatar = custom;
+      if (!stored || stored.selfDescription !== p.selfDescription)
+        this.store.putAvatar(
+          b.personId,
+          stored?.avatar ?? avatarFromSeed(b.personId),
+          stored?.key ?? "",
+          p.selfDescription,
+        );
+      return undefined;
+    }
     const keyFn = this.cfg.avatarKey ?? defaultAvatarKey;
     const want = keyFn(b.personId, p.selfDescription || undefined);
     if (p.lookKey === want) return undefined;
@@ -505,6 +608,11 @@ export class Hub {
     if (this.clientDescs[clientId] === sig) return;
     this.clientDescs[clientId] = sig;
     this.store.kvPut(CLIENT_DESCS_KEY, JSON.stringify(this.clientDescs));
+  }
+
+  /** The look picked in the look editor, if any. */
+  private customAvatar(personId: string): AvatarSpec | null {
+    return this.store.getCustomAvatar(personId);
   }
 
   /** Stored avatar row with its look repaired (rows are not validated when written/read). */
@@ -549,6 +657,7 @@ export class Hub {
     const events = diff(prev, next, now);
     this.current = next;
     this.trackActivity(events, now);
+    this.shame.record(events, prev, now);
     if (events.length > 0) {
       const lookup = lookupIn(next, prev);
       const prevLookup = lookupIn(prev, next);
@@ -584,6 +693,7 @@ export class Hub {
   private derive(now: number): OfficeState {
     this.derivedAt = now;
     const people: PersonView[] = [];
+    const today = monthDayIn(this.cfg.timezone, now);
     const sorted = [...this.people.values()].sort(
       (a, b) => a.joinedAt - b.joinedAt || a.personId.localeCompare(b.personId),
     );
@@ -607,12 +717,16 @@ export class Hub {
         }
       }
       sessions.sort((a, b) => a.startedAt - b.startedAt || a.sessionId.localeCompare(b.sessionId));
+      let birthday = false;
+      for (const c of this.connectors.values())
+        if (c.personId === p.personId && c.birthday === today) birthday = true;
       people.push({
         personId: p.personId,
         name: p.name,
         avatar: p.avatar,
         sessions,
         joinedAt: p.joinedAt,
+        ...(birthday ? { birthday } : {}),
       });
     }
     return { people };
@@ -628,7 +742,11 @@ export class Hub {
       c.socketId ?? "",
       c.sessions.map((s) => s.sessionKey).join(","),
     ]);
-    const ps = [...this.people.values()].map((p) => [p.personId, p.name, p.goneSince, p.joinedAt]);
+    // the persisted (catalog) avatar is part of it, so a custom look survives hibernation
+    const ps = [...this.people.values()].map((p) => {
+      const { look: _l, ...catalog } = p.avatar;
+      return [p.personId, p.name, JSON.stringify(catalog), p.goneSince, p.joinedAt];
+    });
     return JSON.stringify([cs, ps]);
   }
 

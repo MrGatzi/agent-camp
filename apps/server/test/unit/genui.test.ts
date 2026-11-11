@@ -137,6 +137,12 @@ describe("genui: schema", () => {
       "glasses",
       "facialHair",
       "accessory",
+      "outfit",
+      "leftHand",
+      "rightHand",
+      "wrist",
+      "accentColor",
+      "vehicle",
       "deskProps",
       "deskMess",
       "look",
@@ -198,6 +204,11 @@ describe("genui: anthropic", () => {
     for (const k of ["tool_choice", "tools", "thinking", "temperature"])
       expect(c.body).not.toHaveProperty(k);
     expect(JSON.stringify(c.body.messages)).toContain("tortoiseshell glasses");
+    expect(SYSTEM_PROMPT).toContain("devil-horns");
+    expect(SYSTEM_PROMPT).toContain(
+      "only when the person's self-description explicitly requests them",
+    );
+    expect(SYSTEM_PROMPT).toContain("otherwise choose an ordinary accessory");
     expect(lines.some((l) => l.includes("tokens in=4096 out=2048"))).toBe(true);
     expect(svc.callsToday()).toBe(1);
   });

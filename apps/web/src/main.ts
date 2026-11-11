@@ -1,12 +1,16 @@
 /**
  * Office renderer entry. URL params:
- *   ?demo=busy|one|empty|join|party (or 1)  local fake feed, no server; &seed=, &people=, &sessions=
- *                 (party: office life moments fast: chats, coffee, /clear zap, records, pizza)
+ *   ?demo=busy|one|empty|join|party|feierabend (or 1)  local fake feed, no server; &seed=, &people=, &sessions=
+ *                 (party: office life moments fast: chats, coffee, /clear zap, records, pizza;
+ *                  feierabend: Friday 17:30 happy hour, bar + weed shop + smokers' corner)
+ *   ?feierabend=1  the feierabend setup on any feed (17:30 happy hour, lively, busy shop)
+ *   ?bar=open|closed  ?shop=open|closed  ignore the opening hours (17-02 / 10-20)
  *   ?weather=sun|clouds|rain|snow  force the weather (default: changes hour by hour, seeded)
  *   ?season=winter|spring|summer|autumn  force the season (default: the local month)
  *   ?lively=1     office life at party speed (chattier, waits count 10x, pizza drone in 3 s)
  *   ?key=...      viewer key passed through to /ws/viewer
- *   ?kiosk=1      iPad kiosk (no cursor, big text, no panels, wake lock, 30 fps, auto-tour)
+ *   ?kiosk=1      iPad kiosk (no cursor, big text, no panels, wake lock, 30 fps, auto-tour,
+ *                 reloads itself after a deploy)
  *   ?recorder=1   upload a timelapse PNG every 15 min (&recordEvery=ms to override)
  *   ?nohud=1      hide all DOM overlays     ?zoom=fit|<n>  initial zoom
  *   ?hour=0..24   force the time of day     ?gallery=1     art gallery (dev)
@@ -17,21 +21,26 @@
 import "./ui/theme.css";
 import "./ui/office.css";
 import {
+  type AvatarEditResponse,
+  type AvatarSpec,
+  type PartyEvent,
   type PersonDayResponse,
   parseViewerMessage,
   type ServerToViewer,
 } from "@agent-office/protocol";
 import { Application, TextureStyle } from "pixi.js";
-import { CHAR_H, CHAR_RES, CHAR_W } from "./art/characters.ts";
+import { CHAR_H, CHAR_RES, CHAR_W, lookFor, lookPreview } from "./art/characters.ts";
 import { fitText } from "./art/font.ts";
 import { trophyCanvas } from "./art/fun.ts";
 import { C } from "./art/palette.ts";
+import { avatarPortrait } from "./art/party.ts";
 import { setArtSeason } from "./art/seasons.ts";
 import { Camera } from "./camera.ts";
 import { DemoFeed, parseDemoMode, parseLookParam } from "./demo/demoFeed.ts";
 import { Hud, type PokeRequest, type PokeResult } from "./hud.ts";
-import { keepAwake } from "./kiosk.ts";
+import { keepAwake, reloadOnNewBuild } from "./kiosk.ts";
 import { connectViewer, loginIfLoggedOut } from "./net/viewer.ts";
+import { PartyPanel } from "./partyPanel.ts";
 import { registerServiceWorker } from "./pwa.ts";
 import { captureSnapshot, startRecorder } from "./recorder.ts";
 import { type ModelChange, OfficeModel } from "./state/officeModel.ts";
@@ -46,12 +55,15 @@ import {
   type AreaName,
   BASE_POD_ROWS,
   buildOfficeMap,
+  OFFICE_COLS,
   POD_COLS,
   podDeskSpan,
   podOrigin,
   podRowsFor,
 } from "./world/map.ts";
 import { OfficeScene } from "./world/office.ts";
+import { PartyWorld } from "./world/party.ts";
+import { OfficeQueen } from "./world/queen.ts";
 
 type OfficeApi = {
   ready: boolean;
@@ -62,6 +74,8 @@ type OfficeApi = {
   camera: {
     zoomToFit(): void;
     focusArea(name: AreaName | "all"): void;
+    /** center on a tile at a zoom (screenshots) */
+    lookAt(tileX: number, tileY: number, zoom: number): void;
     focusPerson(personId: string, zoom?: number): boolean;
   };
   injectEvent(msg: unknown): boolean;
@@ -127,13 +141,19 @@ async function boot() {
   app.stage.addChild(scene.root);
   const effects = new Effects(scene.fx);
   const chars = new CharacterManager(scene, model, effects);
-  const party = demo === "party" || flag("lively");
+  const partyWorld = new PartyWorld(scene, chars, model);
+  // Friday after work (`?demo=feierabend`, or `?feierabend=1` on a live feed): happy hour at
+  // 17:30, office life at party speed, the weed shop sells more
+  const feierabend = demo === "feierabend" || flag("feierabend");
+  const party = demo === "party" || feierabend || flag("lively");
   // the party demo runs the waiting thresholds 10x faster and starts at lunch time
   if (party) {
     chars.timeScale = 10;
     chars.chatChance = 0.8;
     chars.dwell = 0.4;
   }
+  // Friday after work: the shop sells more, so the smokers' corner fills up quickly
+  if (feierabend) chars.shopChance = 0.4;
   const cat = new OfficeCat(
     scene.objects,
     scene.fx,
@@ -143,11 +163,20 @@ async function boot() {
     () => chars.catWaitSpots(),
   );
   chars.catEats = (sprite, x, y) => cat.tryEat(sprite, x, y);
+  const queen = new OfficeQueen(
+    scene.objects,
+    scene.map,
+    effects,
+    () => chars.pageable(),
+    (id, text) => chars.answerPage(id, text),
+  );
   if (party) {
     cat.eatChance = 0.6;
     cat.eatRange = 900;
+    queen.pageEvery = 12;
   }
-  const hourValue = hourParam !== null ? Number(hourParam) : demo === "party" ? 12.2 : null;
+  const hourValue =
+    hourParam !== null ? Number(hourParam) : demo === "party" ? 12.2 : feierabend ? 17.5 : null;
   const living = new Living(scene, model, hourValue);
   const weatherParam = params.get("weather");
   const life = new OfficeLife(
@@ -161,6 +190,10 @@ async function boot() {
       inMeeting: () => chars.inArea("meeting"),
       longWaiters: () => chars.chefWaitSpots(),
       onPizza: () => chars.pizzaArrived(),
+      burning: () => chars.burningCount(),
+      evacuate: (spot) => chars.evacuate(spot),
+      personSpot: (personId) => chars.personSpot(personId),
+      catBoss: (spot) => cat.setBoss(spot),
     },
     {
       weather:
@@ -172,9 +205,15 @@ async function boot() {
           : null,
       season,
       ...(party ? { droneDelay: demo === "party" ? 6 : 3 } : {}),
+      // the feierabend demo is a Friday: happy hour (unless ?event= asks for something else)
+      ...(feierabend && !params.get("event") ? { forceEvent: "happyhour" } : {}),
     },
   );
   chars.pizzaActive = () => life.pizzaOnTable;
+  chars.hour = () => living.hour;
+  chars.lunchSpot = () => life.truckSpot();
+  chars.onCoffee = (personId) =>
+    life.coffeeDrunk(personId, model.people.get(personId)?.name ?? personId);
   const hud = new Hud(host, model, { kiosk });
   // the top bar is 36 px (46 in kiosk) plus the notch inset in an installed app
   const hudTop = host.querySelector<HTMLElement>(".hud-top");
@@ -185,9 +224,21 @@ async function boot() {
     () => app.screen,
     () => ({ width: scene.widthPx, height: scene.heightPx }),
     () => scene.map.areas,
-    { kiosk, holdAuto: zoomParam !== null && !kiosk, topInset },
+    {
+      kiosk,
+      holdAuto: zoomParam !== null && !kiosk,
+      topInset,
+      view: params.get("view") === "overview" ? "overview" : "tour",
+      overviewEvery: Math.max(20, Number(params.get("every")) || 120),
+    },
   );
   camera.attach(app.canvas);
+  // wall screens and the fit view frame the office (64 columns); the east street block joins
+  // the frame only while someone is there, so tiles stay big on a 1080p wall
+  camera.fitWidth = () =>
+    chars.positions().some((p) => p.x >= OFFICE_COLS * 16) ? scene.widthPx : OFFICE_COLS * 16;
+  camera.skipStop = (name) =>
+    (name === "bar" && !scene.barOpen) || (name === "shop" && !scene.shopOpen);
   const minimap = new Minimap(hud.minimapHost, camera, chars);
   minimap.setTerrain(scene.terrainCanvas);
   minimap.desks = () => scene.deskRects();
@@ -196,7 +247,7 @@ async function boot() {
   if (zoomParam === "fit") camera.zoomToFit(true);
   else if (zoomParam && Number(zoomParam) > 0)
     camera.set({ x: 25 * 16, y: 15 * 16, zoom: Number(zoomParam) }, true);
-  else if (app.screen.width / scene.widthPx > 1.6)
+  else if (app.screen.width / (OFFICE_COLS * 16) > 1.6)
     camera.set({ x: 32 * 16, y: 15 * 16, zoom: 2 }, true);
   else camera.set({ x: 22 * 16, y: 14 * 16, zoom: 2 }, true);
 
@@ -206,6 +257,7 @@ async function boot() {
     if (need <= scene.map.podRows * POD_COLS) return;
     scene.rebuild(buildOfficeMap(podRowsFor(need)));
     cat.setMap(scene.map);
+    queen.setMap(scene.map);
     life.reattach();
     minimap.setTerrain(scene.terrainCanvas);
     chars.syncSlots();
@@ -213,10 +265,13 @@ async function boot() {
   };
 
   let snapshotSeen = false;
+  let games: PartyPanel | null = null;
   /** runs after every message (e.g. a ?focus= waiting for its person to show up) */
   let afterIngest = () => {};
   const ingest = (msg: ServerToViewer) => {
     const changes = model.apply(msg);
+    partyWorld.setState(model.party);
+    games?.refresh();
     ensureCapacity();
     for (const ch of changes) {
       chars.handle(ch);
@@ -229,7 +284,7 @@ async function boot() {
       chars.syncSlots();
     }
     hud.setStats(model.stats());
-    if (hud.panelOpen && changes.length > 0) hud.refresh();
+    if (hud.panelOpen && changes.some((change) => change.kind !== "partyChanged")) hud.refresh();
     living.poke();
     afterIngest();
   };
@@ -253,6 +308,7 @@ async function boot() {
     cheer: "cheered on",
     message: "sent a message to",
     paper: "threw a paper ball at",
+    tomato: "threw a tomato at",
   };
   /** Play an interaction for everyone watching (it comes back from the server to all viewers). */
   function react(ch: Extract<ModelChange, { kind: "interaction" }>) {
@@ -262,14 +318,31 @@ async function boot() {
     }
     const targets = ch.personId ? chars.charactersOf(ch.personId) : [];
     const name = ch.personId ? (model.people.get(ch.personId)?.name ?? ch.personId) : "";
-    if (ch.interaction === "paper") {
+    if (ch.interaction === "paper" || ch.interaction === "tomato") {
+      const kind = ch.interaction;
       const c = targets[Math.floor(Math.random() * targets.length)];
       if (c) {
         const side = c.x > scene.widthPx / 2 ? -1 : 1;
-        effects.throwBall(c.x + side * 110, c.y - 60, c.x, c.y - 20, () => {
-          effects.puff(c.x, c.y - 20);
-          chars.say(c, "OUCH!");
-        });
+        const fx = c.x + side * 110;
+        if (kind === "tomato")
+          effects.throwTomato(fx, c.y - 60, c.x, c.y - 20, () => chars.tomato(c));
+        else
+          effects.throwBall(fx, c.y - 60, c.x, c.y - 20, () => {
+            effects.puff(c.x, c.y - 20);
+            chars.say(c, "OUCH!");
+          });
+        // paper ball war: the third hit within a minute gets thrown back at someone else
+        if (ch.personId && chars.hitBy(ch.personId, kind)) {
+          const victim = chars.randomOther(ch.personId);
+          if (victim)
+            effects.after(1.4, () => {
+              chars.say(c, "THAT'S IT!");
+              effects.throwBall(c.x, c.y - 20, victim.x, victim.y - 20, () => {
+                effects.puff(victim.x, victim.y - 20);
+                chars.say(victim, "HEY!");
+              });
+            });
+        }
       }
     } else {
       const text =
@@ -296,7 +369,12 @@ async function boot() {
         type: "interaction.happened",
         id: `demo-${Date.now()}`,
         ts: Date.now(),
-        data: { ...req, ...(req.kind !== "pet" && req.kind !== "paper" ? { delivered: 0 } : {}) },
+        data: {
+          ...req,
+          ...(req.kind !== "pet" && req.kind !== "paper" && req.kind !== "tomato"
+            ? { delivered: 0 }
+            : {}),
+        },
       });
       return { ok: true, message: "sent (demo: no Macs here)" };
     }
@@ -309,6 +387,7 @@ async function boot() {
       const body = (await r.json().catch(() => ({}))) as { delivered?: number; error?: string };
       if (r.status === 401) void loginIfLoggedOut();
       if (!r.ok) return { ok: false, message: body.error ?? `failed (${r.status})` };
+      if (req.kind === "tomato") return { ok: true, message: "splat!" };
       if (req.kind === "paper" || req.kind === "pet") return { ok: true, message: "bonk!" };
       return {
         ok: true,
@@ -322,6 +401,124 @@ async function boot() {
   }
   if (!kiosk) hud.onPoke = poke;
 
+  /** Look editor: PUT the picked look (null = back to automatic). */
+  async function editLook(personId: string, avatar: AvatarSpec | null) {
+    if (demo) {
+      if (!avatar) return { ok: false, message: "demo: no automatic looks here" };
+      ingest({
+        v: 1,
+        type: "avatar.updated",
+        id: `demo-${Date.now()}`,
+        ts: Date.now(),
+        data: { personId, avatar },
+      });
+      return { ok: true, message: "saved (demo)", avatar };
+    }
+    try {
+      const from = localStorage.getItem("agent-office.viewerName")?.trim();
+      const r = await fetch(
+        `/api/people/${encodeURIComponent(personId)}/avatar${key ? `?key=${encodeURIComponent(key)}` : ""}`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ avatar, ...(from ? { from } : {}) }),
+        },
+      );
+      const body = (await r.json().catch(() => ({}))) as Partial<AvatarEditResponse> & {
+        error?: string;
+      };
+      if (r.status === 401) void loginIfLoggedOut();
+      if (!r.ok) return { ok: false, message: body.error ?? `failed (${r.status})` };
+      return {
+        ok: true,
+        message: avatar ? "saved, looking sharp!" : "back to the automatic look",
+        ...(body.avatar ? { avatar: body.avatar } : {}),
+      };
+    } catch {
+      return { ok: false, message: "could not reach the office" };
+    }
+  }
+  if (!kiosk) hud.onEditLook = editLook;
+  /** POST helper for the "This is me" flow (cookie auth, JSON errors -> status line). */
+  const postJson = async (
+    path: string,
+    body: unknown,
+  ): Promise<PokeResult & { data?: unknown }> => {
+    try {
+      const r = await fetch(`${path}${key ? `?key=${encodeURIComponent(key)}` : ""}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = (await r.json().catch(() => ({}))) as { error?: string };
+      if (r.status === 401) void loginIfLoggedOut();
+      return r.ok
+        ? { ok: true, message: "", data }
+        : { ok: false, message: data.error ?? `failed (${r.status})` };
+    } catch {
+      return { ok: false, message: "could not reach the office" };
+    }
+  };
+  if (demo) hud.editAnyLook = true;
+  else if (!kiosk) {
+    hud.onClaim = {
+      send: async (personId) => {
+        const r = await postJson(`/api/people/${encodeURIComponent(personId)}/claim`, {});
+        return r.ok
+          ? {
+              ok: true,
+              message:
+                "code sent as a notification on your Mac (needs notifications on for the Agent Office connector). Nothing after 30 s? Send again.",
+            }
+          : r;
+      },
+      verify: async (personId, code) => {
+        const r = await postJson(`/api/people/${encodeURIComponent(personId)}/claim/verify`, {
+          code,
+        });
+        return r.ok ? { ok: true, message: "that's you!" } : r;
+      },
+      forget: async () => {
+        await fetch("/api/me", { method: "DELETE" }).catch(() => {});
+      },
+    };
+    void fetch("/api/me")
+      .then((r) => (r.ok ? (r.json() as Promise<{ personId?: string | null }>) : null))
+      .then((me) => {
+        hud.me = me?.personId ?? null;
+        hud.refresh();
+      })
+      .catch(() => {});
+  }
+  hud.previewLook = (avatar, agent) => {
+    const look = lookFor(avatar, agent, null);
+    // front, side, at the desk (back to the camera: the agent patch)
+    const previews = [0, 31, 22].map((f) => {
+      const c = lookPreview(look, f, 4);
+      c.className = "look-canvas";
+      return c;
+    });
+    if (avatar.vehicle !== "none") {
+      const ride = avatarPortrait(avatar, agent);
+      ride.className = "look-canvas look-ride";
+      ride.setAttribute("aria-label", "Vehicle preview");
+      previews.push(ride);
+    }
+    return previews;
+  };
+  hud.fetchLookCustom = async (personId) => {
+    if (demo) return null;
+    try {
+      const r = await fetch(
+        `/api/people/${encodeURIComponent(personId)}/avatar${key ? `?key=${encodeURIComponent(key)}` : ""}`,
+      );
+      if (!r.ok) return null;
+      return ((await r.json()) as AvatarEditResponse).custom;
+    } catch {
+      return null;
+    }
+  };
+
   /** Agent card + ease the camera to the character (clear of the side panel). */
   const openSession = (sessionId: string) => {
     if (kiosk || !hud.openSession(sessionId)) return false;
@@ -334,7 +531,7 @@ async function boot() {
     return true;
   };
   hud.onOpenSession = (id) => void openSession(id);
-  camera.holdWhile = () => hud.panelOpen;
+  camera.holdWhile = () => hud.panelOpen || hud.lookEditorOpen;
   hud.onPanelChange = () => {
     chars.selected = hud.openSessionId;
   };
@@ -356,6 +553,10 @@ async function boot() {
       return;
     }
     const c = chars.pick(wx, wy);
+    if (queen.hit(wx, wy) && (!c || queen.y > c.y)) {
+      queen.poke();
+      return;
+    }
     if (c) {
       openSession(c.sessionId);
       return;
@@ -405,7 +606,15 @@ async function boot() {
     );
     feed.start();
   } else {
-    connectViewer({ key, onMessage: ingest, onStatus: (s) => hud.setStatus(s) });
+    const checkBuild = kiosk ? reloadOnNewBuild() : null;
+    connectViewer({
+      key,
+      onMessage: ingest,
+      onStatus: (s) => {
+        hud.setStatus(s);
+        if (s === "open") checkBuild?.();
+      },
+    });
   }
 
   const focusPerson = (personId: string, zoom = 3) => {
@@ -418,7 +627,73 @@ async function boot() {
     camera.set({ x: span.x + span.w / 2, y: o.y * 16 + 30, zoom }, true);
     return true;
   };
+  /** Overview close-ups: someone waiting longest, else the pod with the most busy agents. */
+  camera.hotSpot = () => {
+    let best: { personId: string; score: number } | null = null;
+    for (const p of model.people.values()) {
+      let score = 0;
+      for (const s of model.sessionsOf(p.personId)) {
+        if (s.offline) continue;
+        if (s.activity === "waiting") score += 10;
+        else if (s.activity !== "idle") score += 3;
+        score += s.subagents + ((s.context ?? 0) >= 0.8 ? 5 : 0);
+      }
+      if (score > 0 && (!best || score > best.score)) best = { personId: p.personId, score };
+    }
+    const p = best && model.people.get(best.personId);
+    if (!p) return null;
+    const n = Math.max(2, scene.slotDesks(p.pod));
+    const span = podDeskSpan(p.pod, n);
+    return { x: span.x + span.w / 2, y: podOrigin(p.pod).y * 16 + 30 };
+  };
   const focusParam = params.get("focus");
+  games = new PartyPanel(host, model, {
+    demo: !!demo,
+    key,
+    focus: (id) => void focusPerson(id, 4),
+    customize: (id) => hud.openLookEditor(id),
+    onDemo: (mutation) => {
+      const avatar = model.people.get(mutation.personId)?.avatar;
+      if (!avatar) return;
+      const item =
+        mutation.hand === "left"
+          ? avatar.leftHand
+          : mutation.hand === "right"
+            ? avatar.rightHand
+            : avatar.rightHand !== "none"
+              ? avatar.rightHand
+              : avatar.leftHand;
+      const event: PartyEvent = {
+        id: crypto.randomUUID(),
+        personId: mutation.personId,
+        action: mutation.action,
+        item,
+        vehicle: avatar.vehicle,
+        at: Date.now(),
+        ...(mutation.targetId ? { targetId: mutation.targetId } : {}),
+        ...(mutation.action === "race" ? { roll: 1 + Math.floor(Math.random() * 6) } : {}),
+      };
+      const scores = { ...model.party.scores };
+      if (["race", "tag", "high-five"].includes(event.action))
+        scores[event.personId] = (scores[event.personId] ?? 0) + (event.roll ?? 1);
+      if (event.action === "high-five" && event.targetId)
+        scores[event.targetId] = (scores[event.targetId] ?? 0) + 1;
+      ingest({
+        v: 1,
+        type: "party.updated",
+        id: event.id,
+        ts: event.at,
+        data: {
+          party: {
+            scores,
+            events: [...model.party.events.filter((e) => event.at - e.at < 15000), event].slice(
+              -32,
+            ),
+          },
+        },
+      });
+    },
+  });
   if (focusParam) {
     // with a live server the snapshot arrives later: focus as soon as the person exists
     const tryFocus = () => {
@@ -453,13 +728,15 @@ async function boot() {
     render(...a);
     renMs += performance.now() - t0;
   };
-  app.ticker.add((ticker) => {
+  const frame = (deltaMS: number) => {
     const t0 = performance.now();
-    const dt = Math.min(0.1, ticker.deltaMS / 1000) * speed;
+    const dt = Math.min(0.1, deltaMS / 1000) * speed;
     time += dt;
     scene.update(time, dt);
     chars.update(dt, time);
+    partyWorld.update(dt, time);
     cat.update(dt, time);
+    queen.update(dt, time);
     life.update(dt, time);
     effects.update(dt);
     living.update(dt);
@@ -477,6 +754,16 @@ async function boot() {
       frames = 0;
       fpsWindowStart = now;
     }
+  };
+  let frameFailed = false;
+  app.ticker.add((ticker) => {
+    // Pixi stops requesting frames when a ticker callback throws, which freezes a wall screen
+    try {
+      frame(ticker.deltaMS);
+    } catch (e) {
+      if (!frameFailed) console.error("[office] frame update failed", e);
+      frameFailed = true;
+    }
   });
   window.addEventListener("resize", () => camera.resized());
 
@@ -491,6 +778,7 @@ async function boot() {
     camera: {
       zoomToFit: () => camera.zoomToFit(true),
       focusArea: (name) => camera.focusArea(name, true),
+      lookAt: (x, y, zoom) => camera.set({ x: x * 16, y: y * 16, zoom }, true),
       focusPerson: (personId, zoom) => focusPerson(personId, zoom),
     },
     injectEvent(raw) {

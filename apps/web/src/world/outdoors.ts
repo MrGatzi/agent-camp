@@ -104,6 +104,10 @@ class FoodTruck {
     layer.addChild(this.sprite);
   }
 
+  get parked(): number | null {
+    return this.phase === "parked" ? this.x : null;
+  }
+
   /** where it stands (cars wait behind it) */
   get blocking(): number | null {
     return this.phase === "away" ? null : this.x;
@@ -275,7 +279,8 @@ class Forest {
 // ---- the sky of the hour --------------------------------------------------------------------
 type Drop = { sprite: Sprite; seed: number };
 type Region = { x: number; y: number; w: number; h: number };
-const DROPS = 110;
+/** 110 used to cover garden + forest + street; the smokers' corner got its own share */
+const DROPS = 140;
 const DRIFT = 8;
 
 class SkyLayer {
@@ -371,6 +376,8 @@ class SkyLayer {
 
 // ---- the whole outside ----------------------------------------------------------------------
 export class Outdoors {
+  /** solar eclipse darkness 0..1 (forest eyes come out during it) */
+  eclipse = 0;
   private car: Car;
   private truck: FoodTruck;
   private forest: Forest;
@@ -393,6 +400,17 @@ export class Outdoors {
         const { w, h } = world();
         const out: Region[] = [];
         if (g) out.push({ x: g.x * TILE + 24, y: g.y * TILE, w: g.w * TILE - 20, h: g.h * TILE });
+        // the smokers' corner (and the sidewalk lane next to it) below the weed shop
+        const shop = scene.map.areas.find((a) => a.name === "shop");
+        if (shop) {
+          const top = shop.y + 10;
+          out.push({
+            x: (shop.x - 1) * TILE,
+            y: top * TILE,
+            w: (shop.w + 1) * TILE,
+            h: (scene.map.height - 1 - top) * TILE,
+          });
+        }
         out.push({ x: -SURROUND_PX, y: -SURROUND_PX, w: w + 2 * SURROUND_PX, h: SURROUND_PX - 4 });
         out.push({ x: -SURROUND_PX, y: h + 2, w: w + 2 * SURROUND_PX, h: SURROUND_PX - 4 });
         return out;
@@ -411,6 +429,11 @@ export class Outdoors {
     this.truck.slow(day, hour);
   }
 
+  /** x of the parked food truck (open for lunch), else null */
+  truckParked(): number | null {
+    return this.truck.parked;
+  }
+
   update(dt: number, time: number, sky: SkyNow, hour: number, day: string) {
     const truckX = this.truck.blocking;
     this.car.update(dt, time, (x, dir) => {
@@ -420,7 +443,8 @@ export class Outdoors {
       return d > 70 ? 0 : Math.round(Math.min(1, (70 - d) / 30) * (LANE_DOWN - LANE_UP));
     });
     this.truck.update(dt, time);
-    this.forest.update(dt, time, werewolfHour(hour) && this.scene.night > 0.5, day);
+    const dark = this.scene.night > 0.5;
+    this.forest.update(dt, time, (werewolfHour(hour) || this.eclipse > 0.6) && dark, day);
     this.sky.update(sky, time);
   }
 }

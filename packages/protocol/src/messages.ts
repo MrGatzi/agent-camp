@@ -9,8 +9,9 @@
  * Parsers never throw; they return { ok: true, msg } | { ok: false, error }.
  */
 import { z } from "zod";
-import { AvatarSpec } from "./catalog.ts";
+import { ViewerAvatar } from "./catalog.ts";
 import { MAX_SELF_DESCRIPTION, PROTOCOL_VERSION, SHORT_SELF_DESCRIPTION } from "./constants.ts";
+import { ViewerPartyState } from "./party.ts";
 
 // ---- building blocks ----------------------------------------------------------------------
 export const AGENTS = ["claude", "codex", "pi", "unknown"] as const;
@@ -79,9 +80,11 @@ export type SessionView = z.infer<typeof SessionView>;
 export const PersonView = z.object({
   personId: PersonId,
   name: z.string().min(1).max(40),
-  avatar: AvatarSpec,
+  avatar: ViewerAvatar,
   sessions: z.array(SessionView),
   joinedAt: EpochMs,
+  /** opt-in (connector `birthday = "MM-DD"`): it is their birthday in the office time zone */
+  birthday: z.boolean().optional(),
 });
 export type PersonView = z.infer<typeof PersonView>;
 
@@ -112,6 +115,11 @@ export const ConnectorHello = msg(
     platform: z.string().max(40).optional(),
     /** user-chosen machine label shown on the agent card; older connectors omit it */
     machine: MachineName.optional(),
+    /** opt-in "MM-DD"; only "is it today" is ever shown */
+    birthday: z
+      .string()
+      .regex(/^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/)
+      .optional(),
   }),
 );
 export const PresenceSnapshot = msg(
@@ -168,6 +176,7 @@ export const OfficeSnapshot = msg(
   "office.snapshot",
   z.object({
     officeName: z.string(),
+    party: ViewerPartyState.optional().catch(undefined),
     serverTime: EpochMs,
     people: z.array(PersonView),
     /** IANA zone of the office (for day/night lighting), e.g. "Europe/Vienna" */
@@ -210,12 +219,16 @@ export const SubagentFinished = msg(
 );
 export const AvatarUpdated = msg(
   "avatar.updated",
-  z.object({ personId: PersonId, avatar: AvatarSpec }),
+  z.object({ personId: PersonId, avatar: ViewerAvatar }),
 );
 /** Context use moved by at least one 5% step (connectors round to 0.05). */
 export const SessionContextChanged = msg(
   "session.contextChanged",
   z.object({ personId: PersonId, sessionId: SessionId, context: ContextShare.nullable() }),
+);
+export const PersonBirthdayChanged = msg(
+  "person.birthdayChanged",
+  z.object({ personId: PersonId, birthday: z.boolean() }),
 );
 export const SessionConnectionChanged = msg(
   "session.connectionChanged",
@@ -224,10 +237,18 @@ export const SessionConnectionChanged = msg(
 
 /**
  * wave/coffee/cheer/message  poke a person (also a notification on their Macs)
- * paper                      throw a paper ball at a person
+ * paper / tomato             throw a paper ball / a tomato at a person (office only)
  * pet                        pet the office cat
  */
-export const INTERACTIONS = ["wave", "coffee", "cheer", "message", "paper", "pet"] as const;
+export const INTERACTIONS = [
+  "wave",
+  "coffee",
+  "cheer",
+  "message",
+  "paper",
+  "tomato",
+  "pet",
+] as const;
 export const InteractionKind = z.enum(INTERACTIONS);
 export type InteractionKind = z.infer<typeof InteractionKind>;
 /** Short name a viewer signs pokes with; viewers are otherwise anonymous. */
@@ -247,8 +268,11 @@ export const InteractionHappened = msg(
   }),
 );
 
+export const PartyUpdated = msg("party.updated", z.object({ party: ViewerPartyState }));
+
 export const ServerToViewer = z.discriminatedUnion("type", [
   OfficeSnapshot,
+  PartyUpdated,
   PersonJoined,
   PersonLeft,
   SessionStarted,
@@ -259,6 +283,7 @@ export const ServerToViewer = z.discriminatedUnion("type", [
   AvatarUpdated,
   SessionConnectionChanged,
   SessionContextChanged,
+  PersonBirthdayChanged,
   InteractionHappened,
 ]);
 export type ServerToViewer = z.infer<typeof ServerToViewer>;
@@ -268,10 +293,10 @@ export type AnyMessage = ConnectorToServer | ServerToConnector | ServerToViewer;
 export type MessageType = AnyMessage["type"];
 export type MessageOf<T extends MessageType> = Extract<AnyMessage, { type: T }>;
 export type MessageData<T extends MessageType> = MessageOf<T>["data"];
-/** What the server's diff() emits: everything but the initial snapshot and interactions. */
+/** What the server's diff() emits: everything but snapshots and transient interaction/party updates. */
 export type ViewerEvent = Exclude<
   ServerToViewer,
-  { type: "office.snapshot" | "interaction.happened" }
+  { type: "office.snapshot" | "interaction.happened" | "party.updated" }
 >;
 
 export const CONNECTOR_TO_SERVER_TYPES = ConnectorToServer.options.map((o) => o.shape.type.value);

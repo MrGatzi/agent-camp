@@ -28,17 +28,23 @@ it up for you.
 Paste this into Claude Code (or Codex / Pi), with the two values filled in:
 
 ```text
-Set up Agent Office on this Mac for me.
+Set up Agent Office on this Mac for me (only the connector, no server).
 Server: https://<server-url>
 Password: <password>
 Follow the "Instructions for coding agents" section in
 https://github.com/MrGatzi/agent-camp/blob/main/README.md
+When I'm connected, open the office in my browser.
 ```
 
 Your agent will ask you a few quick questions (your name, how you look, a name for this
-machine), install the connector, and check that you show up in the office. Approve the
-network and `launchctl` commands when it asks. Then open the server URL in your browser and
-find yourself.
+machine), install the connector, check that you show up in the office and open it in your
+browser. Approve the network and `launchctl` commands when it asks. The office asks for the
+same password the first time you open it.
+
+Paste it where Claude can run commands on your Mac: the **Code** tab of the Claude desktop
+app, or Claude Code in a terminal or IDE. A normal chat or Claude Design can't install it. The
+office shows sessions of Claude Code, Codex and Pi running on your Mac; Claude Design and
+claude.ai chats run in the cloud and don't appear.
 
 ### By hand
 
@@ -110,7 +116,8 @@ you a server URL and a password. Do this:
    rejected password means a typo; a connection error usually means a wrong URL (use the
    `https://` address of the office).
 6. If `~/.local/bin` is not on their `PATH`, offer to add it to `~/.zshrc`.
-7. Tell the human it worked and that they can watch at the server URL in any browser.
+7. Open the office for them: `open '<server-url>'` (it asks for the same password once).
+   Tell the human it worked and that they can watch at the server URL in any browser.
    Don't echo the password back in your summary.
 
 The connector only reads agent transcript metadata and never sends prompts, code or file
@@ -143,6 +150,21 @@ session (at least 2, up to 6).
 
 ![A detailed look up close](screenshots/14-detailed-look-laptop.png)
 
+Want a say? Click your name plate. The first time, tap **It's me: send a code**: a 6-digit
+code pops up as a notification on your Mac (via the connector, so its notifications must be
+allowed in macOS; if nothing shows up, send again after 30 s), and typing it in marks this
+browser as you. From then on **Customize look** opens a fullscreen studio: flip through hair,
+face, glasses, cap, outfit (jacket, hoodie, flannel, tee), something for each hand (beer,
+coffee, phone, ...), your ride and desk items with the ◀ ▶ buttons (or the arrow keys), with a
+big live preview. You can only change your own look. This is a courtesy lock for a team
+office, not real identity: anyone with the office password could start a connector under your
+name. Saving pins it; **Automatic** goes back to the one from your description. On a shared device, "not you? forget this device" (or
+logging out) drops the claim. Outfits that are not in the agent colour carry a small agent
+badge on the tee and a band across the back, so you can still tell Claude from Codex at the
+desk.
+
+![Look studio](screenshots/14-look-editor-laptop.png)
+
 ### Privacy
 
 Sent: agent kind (Claude/Codex/Pi), a salted hash of the session id, the project **folder
@@ -155,6 +177,9 @@ defaults to the short hostname, e.g. `martins-mbp`; set it to anything you like)
 description to draw your avatar (with AI on it goes to the configured AI provider) and never
 shows it to viewers; they only see the finished avatar.
 
+Optional: `agent-office configure --birthday MM-DD` and the office brings you a cake that day
+(only "it's your birthday today" is ever shown, never the date).
+
 Received: when someone in the office waves at you or sends you a short message, the
 connector shows it as a macOS notification (at most one every 5 s; macOS may list it under
 "Script Editor"). Turn it off with `agent-office configure --notifications false`.
@@ -164,12 +189,60 @@ anything else from a transcript. A unit test feeds a transcript containing a fak
 checks it never appears in any outgoing message. History keeps only events (who, which agent,
 project folder name, subagent counts), never content.
 
+## Office games and extra look items
+
+Use the existing **Customize look** editor (on a person's nameplate, or from **✦ Office games**)
+to choose ears, costumes, neon bracelets, both hand items, accent colors and a ride. There is
+one `AvatarSpec` and one editor: saved looks keep the existing custom/automatic behavior and
+appear on every sibling session. The front, side and seated previews include the new items;
+a separate ride preview appears when a vehicle is equipped. Existing automatic looks stay unchanged.
+
+The games panel adds:
+
+- **Use left/right item:** swing a lightsaber, fire confetti, toast a beer, puff cigarette/joint
+  smoke, blow bubbles, flash a disco ball, cast stars, bounce a balloon, spray water,
+  shake maracas, shelter under umbrella rain, or use the existing phone/coffee props.
+- **Dance / Wave:** send a visible shared gesture.
+- **High-five:** choose an online buddy; both earn one party point.
+- **Play tag:** choose an online buddy; send a tag spark and earn one point.
+- **Roll & race:** equip a car, skateboard, hoverboard or spaceship; a server dice roll
+  moves the ride along the Office GP strip and awards 1–6 points on the shared board.
+
+The panel uses the existing office login; there is no additional password field. Like the
+look editor and pokes, this is shared team access, not individual accounts. The initial
+player is the first online person, or your last locally selected player if still online.
+
+**No polling:** party state joins the existing viewer WebSocket snapshot, and successful moves
+broadcast `party.updated` on that socket (including to kiosks). Opening or leaving the games
+panel idle creates no extra HTTP requests or periodic server alarms. Only a deliberate move
+sends one POST. Every party POST is rate-limited per IP to one attempt per 1.2 seconds before
+body parsing, including malformed attempts; every actor also has a 1.2-second cooldown.
+The short IP limit is in memory; actor cooldowns survive restarts. Both return `429` with `Retry-After`. Hand items, vehicles and race rolls
+are server-owned; requests cannot forge equipment or points. Total hosting usage still depends
+on visitors, existing office traffic and intentional actions; rate limits cannot guarantee
+an entire deployment remains within its provider's free allowance.
+
+Points persist; effects expire after 15 seconds and never replay on later presence events.
+Textures/particles are bounded and reduced-motion preferences are respected. `?demo=party`
+uses the same UI locally without sending moves to the server. Deploy web and server together;
+no connector update or AI key is required.
+
+Local checks: `bun run lint`, `bun run typecheck`, `bun test`, `bun run test:e2e`, then
+`bun run --filter @agent-office/web build && bun tools/screenshots/party-smoke.ts`.
+The last command starts an isolated real server, two simulated participants and three browser
+viewers (including a kiosk). It verifies zero idle API requests, the shared editor and all
+usable items, WebSocket synchronization/reconnect, scores, login, rate limits and mobile fit.
+It writes desktop/mobile screenshots to `/private/tmp/agent-office-party-shots` (override with
+`PARTY_SHOTS`). Install Chromium once with
+`bun run --filter @agent-office/screenshots install-browsers`. It never connects to the live office.
+
 ## Watching
 
 | URL                  | What                                                                  |
 | -------------------- | --------------------------------------------------------------------- |
 | `/`                  | The office. Drag to pan, wheel/pinch to zoom. Click a character for its agent card, a nameplate for the person. Both have buttons to wave, ask for a coffee, cheer or send a short message (it pops up as a notification on their Mac), or throw a paper ball (office only). Click the cat to pet it. |
 | `/?kiosk=1`          | Wall/iPad mode: no chrome, bigger text, auto camera tour. Add it to the iPad home screen; it also records the timelapse (`&recorder=1`). |
+| `/?kiosk=1&view=overview` | Big wall screen: the whole office most of the time, a 12 s close-up of the busiest pod (or whoever waits) every 2 min (`&every=<seconds>`); events still get a short look. |
 | `/stats`             | Weekday × hour heatmap, leaderboards, Claude vs Codex vs Pi, CSV export. |
 | `/timelapse`         | Snapshots of the office every 15 minutes, with a play button.          |
 
@@ -190,8 +263,17 @@ bar.
 
 Other handy params: `?zoom=fit`, `?hour=22` (preview night), `?season=winter` (or spring,
 summer, autumn), `?weather=snow` (sun, clouds, rain, snow; otherwise it changes every hour),
-`?nohud=1`, `?demo=busy` (no server needed). A car drives by every minute or so: click it
-for the stats.
+`?nohud=1`, `?demo=busy` (no server needed), `?event=kaiju` (also tornado, meteors, eclipse,
+raccoons, alarm, catboss, flood, happyhour) and `?birthday=<personId>` to see the rare stuff
+now. A car drives by every minute or so: click it for the stats.
+
+East of the garden there is a street block with the **Feierabend bar** (17:00–02:00, Fridays
+from 16:00 with happy hour until 18:00) and a **weed shop** (10:00–20:00) with a smokers'
+corner outside. Idle agents pour a beer at the tap and take it to a stool or standing table,
+or buy something at the shop and smoke it in the corner. Closed places stay empty. Try
+`?demo=feierabend`, or `?bar=open` / `?shop=closed` to ignore the opening hours.
+
+![Bar, weed shop and smokers' corner](screenshots/16-bar-and-shop-laptop.png)
 
 Everything is behind the office password (the same one as the connector's): the first visit
 shows a login page and the browser stays logged in for 30 days; opening the office during the

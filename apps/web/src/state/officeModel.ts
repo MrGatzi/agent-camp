@@ -11,6 +11,7 @@ import {
   type AvatarSpec,
   avatarFromSeed,
   type InteractionKind,
+  type PartyState,
   type PersonView,
   type ServerToViewer,
   type SessionView,
@@ -22,6 +23,8 @@ export type PersonState = {
   avatar: AvatarSpec;
   joinedAt: number;
   pod: number;
+  /** it's their birthday today (opt-in on their connector) */
+  birthday: boolean;
 };
 
 export type SessionState = {
@@ -54,10 +57,12 @@ export type TimelineSegment = { activity: Activity; from: number; to: number };
 const ACTIVITY_LOG_MS = 60 * 60_000;
 
 export type ModelChange =
+  | { kind: "partyChanged" }
   | { kind: "officeRenamed"; name: string }
   | { kind: "personAdded"; personId: string; instant: boolean }
   | { kind: "personRemoved"; personId: string; instant: boolean }
   | { kind: "avatarChanged"; personId: string }
+  | { kind: "birthdayChanged"; personId: string; birthday: boolean }
   | { kind: "sessionAdded"; personId: string; sessionId: string; instant: boolean }
   | { kind: "sessionRemoved"; personId: string; sessionId: string; instant: boolean }
   | {
@@ -105,6 +110,7 @@ function dayKey(ts: number): string {
 }
 
 export class OfficeModel {
+  party: PartyState = { events: [], scores: {} };
   officeName = "Agent Office";
   timezone: string | undefined;
   /** server clock minus local clock, from the last snapshot */
@@ -196,6 +202,7 @@ export class OfficeModel {
     switch (msg.type) {
       case "office.snapshot": {
         const d = msg.data;
+        this.party = d.party ?? { events: [], scores: {} };
         this.timezone = d.timezone;
         this.clockSkew = d.serverTime - this.now();
         if (d.officeName && d.officeName !== this.officeName) {
@@ -285,6 +292,14 @@ export class OfficeModel {
         if (s) this.setOffline(s, msg.data.offline, out);
         break;
       }
+      case "person.birthdayChanged": {
+        const p = this.people.get(msg.data.personId);
+        if (p && p.birthday !== msg.data.birthday) {
+          p.birthday = msg.data.birthday;
+          out.push({ kind: "birthdayChanged", personId: p.personId, birthday: p.birthday });
+        }
+        break;
+      }
       case "session.contextChanged": {
         const s = this.sessions.get(msg.data.sessionId);
         if (s) this.setContext(s, msg.data.context ?? undefined, out);
@@ -302,6 +317,10 @@ export class OfficeModel {
         });
         break;
       }
+      case "party.updated":
+        this.party = msg.data.party;
+        out.push({ kind: "partyChanged" });
+        break;
       case "avatar.updated": {
         const p = this.people.get(msg.data.personId);
         if (p) {
@@ -370,6 +389,11 @@ export class OfficeModel {
     return i;
   }
 
+  moveDesk(sessionId: string, desk: number) {
+    const s = this.sessions.get(sessionId);
+    if (s) s.desk = desk;
+  }
+
   private freeDesk(personId: string): number {
     const used = new Set(this.sessionsOf(personId).map((s) => s.desk));
     let i = 0;
@@ -384,6 +408,7 @@ export class OfficeModel {
       avatar: pv.avatar,
       joinedAt: pv.joinedAt,
       pod: this.freePod(),
+      birthday: !!pv.birthday,
     });
     out.push({ kind: "personAdded", personId: pv.personId, instant });
   }
@@ -394,6 +419,10 @@ export class OfficeModel {
       this.addPerson(pv, instant, out);
     } else {
       existing.name = pv.name;
+      if (existing.birthday !== !!pv.birthday) {
+        existing.birthday = !!pv.birthday;
+        out.push({ kind: "birthdayChanged", personId: pv.personId, birthday: existing.birthday });
+      }
       if (JSON.stringify(existing.avatar) !== JSON.stringify(pv.avatar)) {
         existing.avatar = pv.avatar;
         out.push({ kind: "avatarChanged", personId: pv.personId });

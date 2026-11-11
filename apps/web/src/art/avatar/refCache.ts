@@ -23,6 +23,14 @@ export class RefCache<V> {
     return e.value;
   }
 
+  /** One more reference to a value this cache handed out; false (no-op) for unknown values. */
+  retain(value: V): boolean {
+    const key = this.keys.get(value);
+    if (key === undefined) return false;
+    this.entries.get(key)!.refs++;
+    return true;
+  }
+
   /** Drop one reference; unknown values are ignored. */
   release(value: V): void {
     const key = this.keys.get(value);
