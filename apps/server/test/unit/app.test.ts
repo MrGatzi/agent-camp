@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { envelope, PersonDayResponse } from "@agent-office/protocol";
+import {
+  envelope,
+  LOOK_FIXTURES,
+  PersonDayResponse,
+  parseViewerMessage,
+} from "@agent-office/protocol";
 import { OfficeApp, SNAPSHOT_MAX_BYTES, SNAPSHOT_MIN_INTERVAL_MS } from "../../src/core/app.ts";
 import { MemoryStore } from "../../src/core/store.ts";
 
@@ -186,6 +191,62 @@ describe("OfficeApp", () => {
     const { app } = setup();
     expect((await app.handleHttp(req("/api/nope")))!.status).toBe(404);
     expect(await app.handleHttp(req("/stats"))).toBeNull();
+  });
+});
+
+describe("OfficeApp detailed looks", () => {
+  test("anthropic look for a long description reaches viewers as avatar.updated", async () => {
+    const desc = "Tracht: Janker, lederhosen, panto glasses. ".repeat(40);
+    const bodies: Record<string, unknown>[] = [];
+    const sent: string[] = [];
+    const pending: Promise<unknown>[] = [];
+    const app = new OfficeApp(
+      {
+        CONNECTOR_PASSWORD: "pw",
+        GENUI_PROVIDER: "anthropic",
+        ANTHROPIC_API_KEY: "k",
+        LATEST_CONNECTOR_VERSION: "1.0.0",
+      },
+      new MemoryStore(),
+      {
+        broadcast: (d) => sent.push(d),
+        scheduleAlarm: () => {},
+        waitUntil: (p) => pending.push(p),
+      },
+      {
+        log: () => {},
+        fetch: async (_url, init) => {
+          bodies.push(JSON.parse(String(init.body)));
+          return Response.json({
+            stop_reason: "end_turn",
+            content: [{ type: "text", text: JSON.stringify(LOOK_FIXTURES.tracht) }],
+          });
+        },
+      },
+    );
+    app.connectorMessage(
+      "s1",
+      JSON.stringify(
+        envelope("connector.hello", {
+          name: "Thomas",
+          password: "pw",
+          clientId: "c",
+          connectorVersion: "1.0.0",
+          selfDescription: desc.slice(0, 200),
+          lookDescription: desc,
+        }),
+      ),
+    );
+    await Promise.all(pending);
+    expect(bodies).toHaveLength(1);
+    expect(JSON.stringify(bodies[0]!.messages)).toContain(desc.trim());
+    const updated = sent
+      .map((d) => parseViewerMessage(d))
+      .find((m) => m.ok && m.msg.type === "avatar.updated");
+    expect(updated?.ok && updated.msg.type === "avatar.updated" && updated.msg.data.avatar).toEqual(
+      LOOK_FIXTURES.tracht,
+    );
+    expect(app.store.getAvatar("thomas")?.avatar).toEqual(LOOK_FIXTURES.tracht);
   });
 });
 
