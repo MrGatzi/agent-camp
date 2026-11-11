@@ -13,12 +13,14 @@ import {
 import { podAisle } from "../src/world/map.ts";
 
 describe("helper swarm rules", () => {
-  test("every helper gets its own sprite up to the safety limit, then a +N badge", () => {
+  test("every helper gets its own sprite up to the kiosk cap, then a +N badge", () => {
+    expect(MAX_BOTS).toBeGreaterThanOrEqual(30);
+    expect(MAX_BOTS).toBeLessThanOrEqual(50);
     expect(visibleHelpers(0)).toEqual({ shown: 0, extra: 0 });
     expect(visibleHelpers(7)).toEqual({ shown: 7, extra: 0 });
-    expect(visibleHelpers(100)).toEqual({ shown: 100, extra: 0 });
+    expect(visibleHelpers(100)).toEqual({ shown: MAX_BOTS, extra: 100 - MAX_BOTS });
     expect(visibleHelpers(MAX_BOTS)).toEqual({ shown: MAX_BOTS, extra: 0 });
-    expect(visibleHelpers(300)).toEqual({ shown: MAX_BOTS, extra: 100 });
+    expect(visibleHelpers(MAX_BOTS + 100)).toEqual({ shown: MAX_BOTS, extra: 100 });
   });
 
   test("the roaming area grows with the swarm, up to the whole aisle", () => {

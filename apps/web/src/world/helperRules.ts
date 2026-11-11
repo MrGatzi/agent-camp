@@ -1,7 +1,7 @@
 /** Pure rules of the helper swarm (sizes, area, errands, escort rows); no Pixi, unit-tested. */
 
-/** Safety limit so a runaway count can't stall the renderer; beyond it a "+N" badge. */
-export const MAX_BOTS = 200;
+/** Bots drawn per swarm; beyond it a "+N" badge, so a few bursting sessions stay cheap on the kiosk. */
+export const MAX_BOTS = 40;
 /** Helpers per row while they carry someone around (rebellion): 8, up to 16 for big swarms. */
 export const ESCORT_ROW = 8;
 const ESCORT_ROW_MAX = 16;

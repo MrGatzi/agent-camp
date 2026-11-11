@@ -1548,13 +1548,14 @@ export class CharacterManager {
    */
   catPerch(personId: string, pick: number): Perch | null {
     const mine = this.charactersOf(personId);
-    const seated = mine.filter((c) => c.mode === "seated");
+    const seated = mine.filter((c) => c.mode === "seated" && c.hasDesk);
     const c = seated.length > 0 ? seated[pick % seated.length] : mine[pick % (mine.length || 1)];
     if (!c) {
       const spot = this.personSpot(personId);
       return spot ? { seat: spot, desk: null, z: spot.y } : null;
     }
-    if (c.mode !== "seated") return { seat: { x: c.x, y: c.y }, desk: null, z: c.y };
+    // no desk to hop onto (not seated, or seated without a desk): sit next to them
+    if (c.mode !== "seated" || !c.hasDesk) return { seat: { x: c.x, y: c.y }, desk: null, z: c.y };
     return { seat: { x: c.x, y: c.y }, desk: { x: c.x + 12, y: c.y - 19 }, z: c.y - 1.2 };
   }
 

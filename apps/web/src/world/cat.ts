@@ -62,6 +62,8 @@ export class OfficeCat {
   /** what a viewer asked for, if anything */
   private task: CatTask | null = null;
   private repath = 0;
+  /** The last chase goTo found no path: wait for the repath timer instead of retrying. */
+  private chaseStuck = false;
   private reachCooldown = 0;
   /** a short jump (onto a desk, at a laser dot); `then` runs on landing */
   private hop: { from: Point; to: Point; t: number; dur: number; then: () => void } | null = null;
@@ -195,6 +197,7 @@ export class OfficeCat {
     this.task = task;
     this.path = [];
     this.repath = 0;
+    this.chaseStuck = false;
     if (task.kind === "eat") {
       if (!this.goTo(task.spot)) return this.fail();
     } else if (task.kind === "visit") {
@@ -383,7 +386,7 @@ export class OfficeCat {
       return;
     }
     if (task?.kind === "chase") {
-      this.repath = 0;
+      if (!this.chaseStuck) this.repath = 0;
       return;
     }
     if (this.heading) {
@@ -417,10 +420,15 @@ export class OfficeCat {
       return;
     }
     this.repath -= dt;
-    if (this.repath <= 0 || this.path.length === 0) {
+    // a walked path re-aims at once (arrived() zeroes the timer); a failed goTo waits for it
+    if (this.repath <= 0) {
       this.repath = 0.3;
+      this.chaseStuck = false;
       if (d < 28) this.path = [t];
-      else if (!this.goTo(t)) this.path = [];
+      else if (!this.goTo(t)) {
+        this.path = [];
+        this.chaseStuck = true;
+      }
       this.mode = "walk";
     }
   }

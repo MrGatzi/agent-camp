@@ -75,6 +75,8 @@ type Dot = {
 const BOWL_FOOD_S = 9;
 const BOWL_MAX_S = 45;
 const YARN_S = 14;
+/** Bowls and yarn balls on the floor at once, each; a new one drops the oldest (viewers can spam). */
+export const MAX_TOYS = 6;
 const LASER_S = 7;
 
 export class CatColony {
@@ -281,6 +283,11 @@ export class CatColony {
     sprite.zIndex = spot.y - 2;
     this.objects.addChild(sprite);
     const bowl: Bowl = { sprite, food: BOWL_FOOD_S, t: 0, emptyAt: null };
+    while (this.bowls.length >= MAX_TOYS) {
+      const old = this.bowls.shift()!;
+      old.food = 0; // its eaters finish up
+      old.sprite.destroy();
+    }
     this.bowls.push(bowl);
     this.effects.puff(spot.x, spot.y - 3);
     const seats = [
@@ -317,6 +324,11 @@ export class CatColony {
       air: { from: { x: spot.x + side * 40, y: spot.y - 50 }, t: 0, dur: 0.55 },
       roll: 0,
     };
+    while (this.yarns.length >= MAX_TOYS) {
+      const old = this.yarns.shift()!;
+      old.t = YARN_S + 1; // its players lose interest
+      old.sprite.destroy();
+    }
     this.yarns.push(y);
     for (const cat of this.crew(slot, spot, 2, 320)) {
       cat.assign({
