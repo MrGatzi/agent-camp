@@ -570,4 +570,131 @@ describe("hub: head gif", () => {
     );
     expect(r.close?.code).toBe(CLOSE_BAD_MESSAGE);
   });
+
+  test("setGif: set, unchanged, remove, unknown person", () => {
+    const { hub, store } = setup();
+    hub.onConnectorMessage("s1", hello("Anna", "c1"), 0);
+    const set = hub.setGif("anna", GIF, 1)!;
+    expect(types(set)).toEqual(["gif.updated"]);
+    expect(set[0]!.type === "gif.updated" && set[0]!.data).toEqual({ personId: "anna", gif: GIF });
+    expect(hub.state().people[0]!.gif).toBe(GIF);
+    expect(store.kvGet("hub.state")).toContain(GIF);
+    expect(hub.setGif("anna", GIF, 2)).toEqual([]);
+    const removed = hub.setGif("anna", undefined, 3)!;
+    expect(types(removed)).toEqual(["gif.updated"]);
+    expect(removed[0]!.type === "gif.updated" && "gif" in removed[0]!.data).toBe(false);
+    expect(hub.state().people[0]!.gif).toBeUndefined();
+    expect(hub.setGif("nobody", GIF, 4)).toBeNull();
+  });
+
+  test("setGif: a person who left the office is not found", () => {
+    const { hub } = setup();
+    hub.onConnectorMessage("s1", hello("Anna", "c1"), 0);
+    hub.onConnectorMessage("s1", bye(), 1);
+    // still visible during the grace period
+    expect(hub.setGif("anna", GIF, 2)).not.toBeNull();
+    hub.tick(1 + PERSON_GRACE_MS);
+    expect(hub.state().people).toEqual([]);
+    expect(hub.setGif("anna", OTHER, 2 + PERSON_GRACE_MS)).toBeNull();
+  });
+
+  test("a UI choice survives reconnects until the connector sends a new gif", () => {
+    const { hub } = setup();
+    hub.onConnectorMessage("s1", hello("Anna", "c1", { gif: GIF }), 0);
+    hub.setGif("anna", OTHER, 1);
+    // same connector reconnects on a new socket with the unchanged config value
+    hub.onConnectorClosed("s1", 2);
+    expect(hub.onConnectorMessage("s2", hello("Anna", "c1", { gif: GIF }), 3).events).toEqual([]);
+    expect(hub.state().people[0]!.gif).toBe(OTHER);
+    // a hello without gif changes nothing and does not forget the last value
+    expect(hub.onConnectorMessage("s3", hello("Anna", "c1"), 4).events).toEqual([]);
+    expect(hub.onConnectorMessage("s4", hello("Anna", "c1", { gif: GIF }), 5).events).toEqual([]);
+    expect(hub.state().people[0]!.gif).toBe(OTHER);
+    // the user ran `agent-office gif` again: that wins
+    const third = "xT9IgG50Fb7Mi0prBC";
+    const r = hub.onConnectorMessage("s5", hello("Anna", "c1", { gif: third }), 6).events;
+    expect(types(r)).toEqual(["gif.updated"]);
+    expect(hub.state().people[0]!.gif).toBe(third);
+    // ... and so does `agent-office gif off`, after another UI choice
+    hub.setGif("anna", GIF, 7);
+    hub.onConnectorMessage("s6", hello("Anna", "c1", { gif: "" }), 8);
+    expect(hub.state().people[0]!.gif).toBeUndefined();
+  });
+
+  test("each machine of a person tracks its own last gif", () => {
+    const { hub } = setup();
+    hub.onConnectorMessage("a1", hello("Anna", "laptop", { gif: GIF }), 0);
+    // a brand-new connector with a gif counts as a change
+    hub.onConnectorMessage("b1", hello("Anna", "desktop", { gif: OTHER }), 1);
+    expect(hub.state().people[0]!.gif).toBe(OTHER);
+    // the laptop reconnecting with its unchanged value does not flip it back
+    hub.onConnectorMessage("a2", hello("Anna", "laptop", { gif: GIF }), 2);
+    expect(hub.state().people[0]!.gif).toBe(OTHER);
+  });
+
+  test("the gif is back when a person returns after leaving", () => {
+    const { hub } = setup();
+    hub.onConnectorMessage("s1", hello("Anna", "c1", { gif: GIF }), 0);
+    hub.setGif("anna", OTHER, 1);
+    hub.onConnectorMessage("s1", bye(), 2);
+    hub.tick(2 + PERSON_GRACE_MS);
+    expect(hub.state().people).toEqual([]);
+    const r = hub.onConnectorMessage("s2", hello("Anna", "c1", { gif: GIF }), 10 * PERSON_GRACE_MS);
+    const joined = r.events.find((e) => e.type === "person.joined");
+    expect(joined?.type === "person.joined" && joined.data.person.gif).toBe(OTHER);
+  });
+
+  test("UI choice and remembered hello values survive a restart and connector expiry", () => {
+    const { hub, store } = setup();
+    hub.onConnectorMessage("s1", hello("Anna", "c1", { gif: GIF }), 0);
+    hub.setGif("anna", OTHER, 1);
+    const hub2 = new Hub(CFG, store);
+    hub2.restore(1_000, [{ socketId: "s1", binding: hub.bindingOf("s1")! }]);
+    expect(hub2.state().people[0]!.gif).toBe(OTHER);
+    // the laptop goes offline long enough for its connector record and the person to expire
+    hub2.onConnectorClosed("s1", 1_001);
+    const gone = 1_001 + CONNECTOR_TIMEOUT_MS + 10;
+    hub2.tick(gone);
+    hub2.tick(gone + PERSON_GRACE_MS);
+    expect(hub2.state().people).toEqual([]);
+    const hub3 = new Hub(CFG, store);
+    hub3.restore(10_000_000);
+    expect(
+      hub3.onConnectorMessage("s2", hello("Anna", "c1", { gif: GIF }), 10_000_001).events,
+    ).toHaveLength(1); // person.joined only
+    expect(hub3.state().people[0]!.gif).toBe(OTHER);
+  });
+
+  test("old persisted state: gif on the person, last hello values seeded from connectors", () => {
+    const store = new MemoryStore();
+    const binding = { clientId: "c1", name: "Anna", personId: "anna", connectorVersion: "0.1.5" };
+    store.kvPut(
+      "hub.state",
+      JSON.stringify({
+        v: 1,
+        connectors: [{ ...binding, gif: GIF, socketId: null, lastSeen: 0, sessions: [] }],
+        people: [
+          {
+            personId: "anna",
+            name: "Anna",
+            joinedAt: 0,
+            goneSince: null,
+            avatar: avatarFromSeed("anna"),
+            gif: OTHER,
+          },
+        ],
+      }),
+    );
+    const hub = new Hub(CFG, store);
+    hub.restore(10);
+    expect(hub.state().people[0]!.gif).toBe(OTHER);
+    // the first reconnect after the deploy does not re-apply the unchanged config value
+    expect(hub.onConnectorMessage("s1", hello("Anna", "c1", { gif: GIF }), 11).events).toEqual([]);
+    expect(hub.state().people[0]!.gif).toBe(OTHER);
+    // the new format is written
+    const saved = JSON.parse(store.kvGet("hub.state")!);
+    expect(saved.gifs).toEqual({ anna: OTHER });
+    expect(saved.helloGifs).toEqual({ c1: { personId: "anna", gif: GIF } });
+    expect(saved.people[0].gif).toBeUndefined();
+  });
 });
