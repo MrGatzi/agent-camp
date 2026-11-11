@@ -21,7 +21,10 @@ export type Config = {
   notifications: boolean;
   /** opt-in "MM-DD": the office brings a cake that day */
   birthday?: string;
-  /** draw the look with a local AI tool on your own subscription: auto | claude | codex | off */
+  /**
+   * draw the look with a local AI tool on your own subscription: off | auto | claude | codex.
+   * Opt-in: missing means off, so an update or reconnect never starts spending it.
+   */
   look_generator: LookGeneratorSetting;
   client_id: string;
 };
@@ -166,7 +169,7 @@ export function toConfig(values: Record<string, TomlValue>): Config {
     share_project_names: !(share === false || share === "false"),
     notifications: !(notify === false || notify === "false"),
     birthday: validBirthday(s("birthday")),
-    look_generator: lookGeneratorSetting(s("look_generator")) ?? "auto",
+    look_generator: lookGeneratorSetting(s("look_generator")) ?? "off",
     client_id: clientId && /^[A-Za-z0-9_-]{1,64}$/.test(clientId) ? clientId : newClientId(),
   };
 }

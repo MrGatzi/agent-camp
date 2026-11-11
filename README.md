@@ -135,13 +135,21 @@ shows up on the agent card so you can tell the sessions apart.
 
 ### How do I look?
 
-Your look is drawn by AI from your description, and the AI is **your own**: the connector
-asks Claude Code (`claude -p`) or, without it, Codex (`codex exec`) on your Mac, on your own
-subscription, so the office needs no shared API key. Only your description goes to your AI
-and only the finished look goes to the office. Without either tool, the office's own AI draws
-it if the admin set one up (`GENUI_PROVIDER`), else your look comes from a hash of your name.
-`agent-office status` shows which one your Mac uses; `agent-office configure --look-generator
-claude|codex|off` picks one or turns it off (default `auto`). The description: a few words work, but a detailed one (up to ~8000 characters)
+Your look is drawn by AI from your description. If you opt in, the AI is **your own**: the
+connector asks Claude Code (`claude -p`) or, without it, Codex (`codex exec`) on your Mac, on
+your own subscription, so the office needs no shared API key. This is **off by default**
+(it spends your subscription); turn it on with
+
+```bash
+agent-office configure --look-generator auto   # or claude / codex to pick one; off turns it off
+launchctl kickstart -k gui/$(id -u)/dev.agentoffice.connector
+```
+
+Only your description goes to your AI and only the finished look goes to the office. With it
+off (or without either tool), the office's own AI draws your look if the admin set one up
+(`GENUI_PROVIDER`), else it comes from a hash of your name. `agent-office status` shows
+whether your Mac draws looks and with which tool; updates and reconnects never turn it on.
+The description: a few words work, but a detailed one (up to ~8000 characters)
 gets you a detailed character: hair cut and colour, glasses and their frame, each layer of
 clothing with its collar, buttons, pockets, pattern and embroidery, socks, shoes, even an
 expression and a pose. Exact colours (`#1f3d2b`, "forest green") are used as given. All of it

@@ -92,8 +92,9 @@ Commands:
       --machine-name LABEL  (default: short hostname; "" resets to it)
       --share-project-names true|false     --get KEY (print one value)
       --notifications true|false   show waves/messages from the office (default true)
-      --look-generator auto|claude|codex|off   draw your look with your own Claude Code /
-                           Codex subscription when the office asks (default auto)
+      --look-generator off|auto|claude|codex   opt-in: draw your look with your own Claude
+                           Code / Codex subscription when the office asks (default off;
+                           auto = Claude Code, else Codex; restart the service after changing)
       --birthday MM-DD     opt-in: the office brings you a cake that day ("" removes it)
   status            connection state and live sessions
   logs              follow the daemon log
@@ -209,14 +210,21 @@ async function cmdRun(args: Args): Promise<number> {
     return 1;
   }
 
-  // Draw the look with Claude Code / Codex on this person's own subscription. Test runs on a
-  // fixture home (--home / AGENT_OFFICE_HOME) never touch the real CLIs unless asked to.
+  // Draw the look with Claude Code / Codex on this person's own subscription, only if they
+  // opted in (look_generator, default off). Test runs on a fixture home (--home /
+  // AGENT_OFFICE_HOME) never touch the real CLIs unless asked to.
   const testHome = !!home || !!env.AGENT_OFFICE_HOME;
   const lookSetting =
     lookGeneratorSetting(env.AGENT_OFFICE_LOOK_GENERATOR) ??
     (testHome ? "off" : config.look_generator);
   const lookTools = await detectGenerators(lookSetting, bunSpawn);
   const looks = new LookGenerators({ tools: lookTools, log });
+  const looksLabel =
+    lookSetting === "off"
+      ? "off (opt in: agent-office configure --look-generator auto)"
+      : lookTools.size
+        ? describeGenerators(lookTools)
+        : `none found (look_generator = ${lookSetting})`;
 
   const hello = (): MessageData<"connector.hello"> => {
     const h: MessageData<"connector.hello"> = {
@@ -255,12 +263,12 @@ async function cmdRun(args: Args): Promise<number> {
     statusFile: statusPath(),
     onPoked: (p) => void notifier.show(p),
     looks,
-    looksLabel: describeGenerators(lookTools),
+    looksLabel,
   });
 
   log(
     `agent-office ${VERSION} (${platformId()}) starting; server ${daemon.client.url}; ` +
-      `self-update ${updater.enabled ? "on" : "off"}; looks drawn by ${describeGenerators(lookTools)}` +
+      `self-update ${updater.enabled ? "on" : "off"}; local looks ${looksLabel}` +
       `${assumeProcesses ? "; assuming processes" : ""}`,
   );
   let stopping = false;
