@@ -644,6 +644,96 @@ describe("OfficeApp look editor", () => {
       expect(app.hub.state().people[0]!.avatar).toMatchObject(tomLook);
     });
 
+    /** A provider that answers only when the test says so: `held[i](look)` for the i-th call. */
+    const heldProvider = () => {
+      const held: ((look: unknown) => void)[] = [];
+      const fetch = (async () => {
+        const look = await new Promise((resolve) => held.push(resolve));
+        return Response.json({
+          stop_reason: "end_turn",
+          content: [{ type: "text", text: JSON.stringify(look) }],
+        });
+      }) as unknown as typeof globalThis.fetch;
+      const calls = async (n: number) => {
+        while (held.length < n) await Bun.sleep(1);
+      };
+      return { fetch, held, calls };
+    };
+    type Described = { ok: boolean; result: string; avatar: AvatarSpec };
+    const picked = { ...tomLook, hairColor: "brown" };
+    async function customTom(fetch: typeof globalThis.fetch) {
+      const t = setup(aiEnv, fetch);
+      t.app.connectorMessage("s1", hello("Tom"));
+      await Promise.all(t.pending);
+      me = await claim(t, "tom");
+      expect((await put(t.app, "tom", { avatar: tomLook }))!.status).toBe(200);
+      return t;
+    }
+
+    test("a look picked while the AI draws stays; the AI look waits for Automatic", async () => {
+      const ai = heldProvider();
+      const { app, advance } = await customTom(ai.fetch);
+      const generating = describeLook(app, "tom", { description: "Tracht" });
+      await ai.calls(1);
+      advance(1_000);
+      expect((await put(app, "tom", { avatar: picked }))!.status).toBe(200);
+      ai.held[0]!(LOOK_FIXTURES.tracht);
+      const body = (await (await generating)!.json()) as Described;
+      expect(body).toMatchObject({ ok: false, result: "superseded", avatar: picked });
+      expect(app.hub.isCustomLook("tom")).toBe(true);
+      expect(app.hub.state().people[0]!.avatar).toMatchObject(picked);
+      expect(app.store.getAvatar("tom")?.avatar.look).toEqual(LOOK_FIXTURES.tracht.look);
+    });
+
+    test("a newer Generate wins, whichever answer comes first", async () => {
+      const ai = heldProvider();
+      const { app, advance } = await customTom(ai.fetch);
+      const newer = { ...LOOK_FIXTURES.tracht, hairColor: "dark-brown" };
+      // the older answer first: dropped, the picked look stays until the newer one is there
+      const first = describeLook(app, "tom", { description: "Tracht" });
+      await ai.calls(1);
+      advance(20_000);
+      const second = describeLook(app, "tom", { description: "Tracht" });
+      await ai.calls(2);
+      ai.held[0]!(LOOK_FIXTURES.tracht);
+      expect(await (await first)!.json()).toMatchObject({ result: "superseded", avatar: tomLook });
+      expect(app.hub.isCustomLook("tom")).toBe(true);
+      ai.held[1]!(newer);
+      const body = (await (await second)!.json()) as Described;
+      expect(body).toMatchObject({ ok: true, result: "ai", avatar: { hairColor: "dark-brown" } });
+      expect(app.hub.isCustomLook("tom")).toBe(false);
+
+      // the newer answer first: the older one (same text, same key) does not overwrite it
+      advance(20_000);
+      const third = describeLook(app, "tom", { description: "Tracht" });
+      await ai.calls(3);
+      advance(20_000);
+      const fourth = describeLook(app, "tom", { description: "Tracht" });
+      await ai.calls(4);
+      ai.held[3]!(LOOK_FIXTURES.tracht);
+      expect(await (await fourth)!.json()).toMatchObject({ result: "ai" });
+      ai.held[2]!(newer);
+      expect(await (await third)!.json()).toMatchObject({ result: "superseded" });
+      expect(app.hub.state().people[0]!.avatar.hairColor).toBe(LOOK_FIXTURES.tracht.hairColor);
+    });
+
+    test("a new description from the Mac meanwhile drops the answer, the picked look stays", async () => {
+      const ai = heldProvider();
+      const t = await customTom(ai.fetch);
+      const generating = describeLook(t.app, "tom", { description: "Tracht" });
+      await ai.calls(1);
+      t.app.connectorMessage("s1", hello("Tom", "red hoodie"));
+      await Promise.all(t.pending);
+      ai.held[0]!(LOOK_FIXTURES.tracht);
+      expect(await (await generating)!.json()).toMatchObject({
+        ok: false,
+        result: "superseded",
+        avatar: tomLook,
+      });
+      expect(t.app.hub.isCustomLook("tom")).toBe(true);
+      expect(t.app.store.getAvatar("tom")?.selfDescription).toBe("red hoodie");
+    });
+
     test("only your own look and a real description", async () => {
       const t = setup();
       const { app } = t;
@@ -775,6 +865,28 @@ describe("OfficeApp look editor", () => {
       await Promise.all(pending);
       expect(app.hub.isCustomLook("tom")).toBe(false);
       expect(app.hub.state().people[0]!.avatar.look).toEqual(LOOK_FIXTURES.tracht.look);
+    });
+
+    test("studio: a look picked before the Mac answers stays", async () => {
+      const t = setup();
+      const { app, sent, toConnector, pending, advance } = t;
+      app.connectorMessage("s1", helloLocal("Tom"));
+      await Promise.all(pending);
+      me = await claim(t, "tom");
+      expect((await put(app, "tom", { avatar: tomLook }))!.status).toBe(200);
+      const r = (await describeLook(app, "tom", "Tracht with lederhosen"))!;
+      expect(await r.json()).toMatchObject({ result: "pending" });
+      const ask = lookRequests(toConnector).at(-1)!;
+      advance(1_000);
+      const picked = { ...tomLook, hairColor: "brown" };
+      expect((await put(app, "tom", { avatar: picked }))!.status).toBe(200);
+      const before = sent.length;
+      app.connectorMessage("s1", answer(ask.msg.data.requestId, { avatar: LOOK_FIXTURES.tracht }));
+      await Promise.all(pending);
+      expect(app.hub.isCustomLook("tom")).toBe(true);
+      expect(app.hub.state().people[0]!.avatar).toMatchObject(picked);
+      expect(sent.length).toBe(before);
+      expect(app.store.getAvatar("tom")?.avatar.look).toEqual(LOOK_FIXTURES.tracht.look);
     });
 
     test("the Mac could not draw it: the server provider tries, else the look stays", async () => {

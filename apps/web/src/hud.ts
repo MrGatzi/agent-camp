@@ -859,6 +859,8 @@ export class Hud {
       generated = avatar.look ? structuredClone(avatar) : null;
       paintAll();
     };
+    /** bumped by saving a picked look: the server then drops the Mac's answer, stop waiting */
+    let localWait = 0;
     describeForm?.addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!this.onDescribeLook || !describeText || !describeGo) return;
@@ -876,8 +878,9 @@ export class Hud {
         say(r.message);
         // the look arrives as avatar.updated: watch the model until it changes
         const until = Date.now() + LOCAL_LOOK_WAIT_MS;
+        const wait = ++localWait;
         const watch = () => {
-          if (this.lookEditor?.box !== box) return; // studio closed
+          if (this.lookEditor?.box !== box || wait !== localWait) return; // closed or picked
           const now = this.model.people.get(p.personId)?.avatar;
           if (now && JSON.stringify(now) !== before) {
             describeGo.disabled = false;
@@ -910,6 +913,10 @@ export class Hud {
     }
     const save = async (avatar: AvatarSpec | null) => {
       if (!this.onEditLook) return;
+      if (avatar) {
+        localWait++;
+        if (describeGo) describeGo.disabled = false;
+      }
       say("...");
       const r = await this.onEditLook(p.personId, avatar);
       say(r.message, r.ok);

@@ -77,9 +77,11 @@ export const LookDescribeResponse = z.object({
    * ai = a new look from the description; off = this server has no AI looks (the description
    * is saved and used once they are turned on); failed = error, refusal, unusable answer or
    * daily cap (the previous look stays, the next join retries); pending = the person's own
-   * Mac is drawing it (`generator`), the new look arrives as avatar.updated
+   * Mac is drawing it (`generator`), the new look arrives as avatar.updated; superseded = the
+   * AI drew it, but the look changed meanwhile (a newer Generate, a new description or a look
+   * picked in the editor), so that one stays
    */
-  result: z.enum(["ai", "off", "failed", "pending"]),
+  result: z.enum(["ai", "off", "failed", "pending", "superseded"]),
   generator: LookGenerator.optional(),
 });
 export type LookDescribeResponse = z.infer<typeof LookDescribeResponse>;

@@ -585,7 +585,9 @@ async function boot() {
           ? "new look, straight from your description!"
           : body.result === "off"
             ? "saved, but AI looks are off on this server: ask the office admin to set GENUI_PROVIDER (README, Deploy)"
-            : "the AI could not draw you this time (error or daily limit); your look stays. Try again later.";
+            : body.result === "superseded"
+              ? "your look changed while the AI was drawing (a newer Generate or a saved look), so that one stays"
+              : "the AI could not draw you this time (error or daily limit); your look stays. Try again later.";
       return { ok: body.result === "ai", message, ...(body.avatar ? { avatar: body.avatar } : {}) };
     } catch {
       return { ok: false, message: "could not reach the office" };

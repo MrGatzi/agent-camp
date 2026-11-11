@@ -91,11 +91,17 @@ export const LOOK_LOCAL_RETRY_MS = 5 * 60_000;
 type PendingLook = {
   requestId: string;
   job: AvatarJob;
-  fromStudio: boolean;
+  /** the look studio's Generate this answers (see studioKey), absent for automatic looks */
+  studio?: string;
   at: number;
   generator: LookGenerator;
 };
 const pendingLookKey = (personId: string) => `look.pending.${personId}`;
+/**
+ * The person's newest look studio Generate (a random token, "" once they pick a look): an AI
+ * look replaces a picked look only for that one, so a late answer never undoes a newer choice.
+ */
+const studioKey = (personId: string) => `look.studio.${personId}`;
 
 const POKE_TEXT = {
   wave: "waved at you 👋",
@@ -244,7 +250,7 @@ export class OfficeApp {
       if (!this.requestLocalLook(job, { prefer: socketId })) {
         const p = this.genui
           .resolve(job)
-          .then((res) => this.applyLook(job, res, false))
+          .then((res) => this.applyLook(job, res))
           .catch((err) => console.error("avatar job failed", err));
         this.transport.waitUntil?.(p);
       }
@@ -277,7 +283,7 @@ export class OfficeApp {
    */
   private requestLocalLook(
     job: AvatarJob,
-    opts: { prefer?: string | undefined; fromStudio?: boolean },
+    opts: { prefer?: string | undefined; studio?: string | undefined },
   ): LookGenerator | null {
     if (!job.selfDescription?.trim() || !this.transport.sendToConnector) return null;
     const now = this.now();
@@ -299,7 +305,7 @@ export class OfficeApp {
     const pending: PendingLook = {
       requestId,
       job,
-      fromStudio: !!opts.fromStudio,
+      ...(opts.studio ? { studio: opts.studio } : {}),
       at: now,
       generator: target.generator,
     };
@@ -334,7 +340,7 @@ export class OfficeApp {
       );
       res = await this.genui.resolve(pending.job);
     }
-    this.applyLook(pending.job, res, pending.fromStudio);
+    this.applyLook(pending.job, res, pending.studio);
   }
 
   /**
@@ -345,24 +351,39 @@ export class OfficeApp {
     const pending = this.pendingLook(personId);
     if (!pending || this.now() - pending.at < LOOK_LOCAL_RETRY_MS) return;
     this.store.kvPut(pendingLookKey(personId), "");
-    if (this.requestLocalLook(pending.job, { prefer: socketId, fromStudio: pending.fromStudio }))
-      return;
+    if (this.requestLocalLook(pending.job, { prefer: socketId, studio: pending.studio })) return;
     const p = this.genui
       .resolve(pending.job)
-      .then((res) => this.applyLook(pending.job, res, pending.fromStudio))
+      .then((res) => this.applyLook(pending.job, res, pending.studio))
       .catch((err) => console.error("avatar job failed", err));
     this.transport.waitUntil?.(p);
   }
 
-  /** Store a resolved look; from the studio, a new AI look also replaces a picked one. */
-  private applyLook(job: AvatarJob, res: AvatarResult, fromStudio: boolean): void {
+  /**
+   * Store a resolved look, unless it is stale: made for an older description, or (`studio`,
+   * the studio's Generate it answers) a newer Generate is on its way. True when that Generate
+   * is still the newest and its AI look is now the person's look: then it also replaces a
+   * picked look, as "Generate" asked, but never one picked after pressing it.
+   */
+  private applyLook(job: AvatarJob, res: AvatarResult, studio?: string): boolean {
+    const { personId } = job;
+    const newest = this.store.kvGet(studioKey(personId));
+    if (
+      (studio && newest && newest !== studio) ||
+      !this.hub.isCurrentLookKey(personId, res.key) ||
+      // the description changed meanwhile, also while a picked look kept the key as it was
+      (job.selfDescription ?? "") !== this.hub.descriptionOf(personId)
+    )
+      return false;
     this.publish(
-      this.hub.setAvatar(job.personId, res.avatar, res.key, this.now(), job.selfDescription ?? ""),
+      this.hub.setAvatar(personId, res.avatar, res.key, this.now(), job.selfDescription ?? ""),
     );
-    if (fromStudio && res.source === "ai" && this.hub.isCustomLook(job.personId)) {
-      const back = this.hub.setCustomAvatar(job.personId, null, this.now());
+    if (!studio || newest !== studio || res.source !== "ai") return false;
+    if (this.hub.isCustomLook(personId)) {
+      const back = this.hub.setCustomAvatar(personId, null, this.now());
       if (back) this.publish(back.events);
     }
+    return true;
   }
 
   // ---- HTTP -------------------------------------------------------------------------------
@@ -686,6 +707,8 @@ export class OfficeApp {
 
     const r = this.hub.setCustomAvatar(personId, parsed.data.avatar, now);
     if (!r) return json({ error: "not in the office" }, { status: 404 });
+    // a look picked now wins over a studio Generate still on its way
+    if (parsed.data.avatar) this.store.kvPut(studioKey(personId), "");
     this.hub.log(`look ${personId} edited by ${parsed.data.from || "someone"}`);
     this.publish(r.events);
     let avatar = r.avatar;
@@ -740,7 +763,9 @@ export class OfficeApp {
       this.hub.state().people.find((p) => p.personId === personId)?.avatar ?? job.previous;
 
     // their own Mac draws it (their own AI subscription); the studio waits for avatar.updated
-    const generator = this.requestLocalLook(job, { fromStudio: true });
+    const studio = crypto.randomUUID();
+    this.store.kvPut(studioKey(personId), studio);
+    const generator = this.requestLocalLook(job, { studio });
     if (generator) {
       const avatar = current();
       if (avatar)
@@ -754,10 +779,15 @@ export class OfficeApp {
 
     const res = await this.genui.resolve(job);
     // a new AI look replaces a look picked in the editor: that is what "Generate" asked for
-    this.applyLook(job, res, true);
-    const avatar =
-      this.hub.state().people.find((p) => p.personId === personId)?.avatar ?? res.avatar;
-    const result = res.source === "ai" ? "ai" : this.genui.providerId === "off" ? "off" : "failed";
+    const shown = this.applyLook(job, res, studio);
+    const avatar = current() ?? res.avatar;
+    const result = shown
+      ? "ai"
+      : res.source === "ai"
+        ? "superseded"
+        : this.genui.providerId === "off"
+          ? "off"
+          : "failed";
     return json({ ok: result === "ai", avatar, result } satisfies LookDescribeResponse);
   }
 

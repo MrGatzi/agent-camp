@@ -315,6 +315,12 @@ export class Hub {
     return Number.isFinite(min) ? min : null;
   }
 
+  /** Whether a look made for this key is still wanted (else `setAvatar` drops it). */
+  isCurrentLookKey(personId: string, key: string): boolean {
+    const p = this.people.get(personId);
+    return !p?.lookKey || key.replace(/:fallback$/, "") === p.lookKey;
+  }
+
   /**
    * Store a (generated) avatar and emit avatar.updated if the person is present. A result for
    * an older job (the description changed again meanwhile) is dropped.
@@ -327,7 +333,7 @@ export class Hub {
     selfDescription?: string,
   ): ViewerEvent[] {
     const p = this.people.get(personId);
-    if (p?.lookKey && key.replace(/:fallback$/, "") !== p.lookKey) return [];
+    if (!this.isCurrentLookKey(personId, key)) return [];
     this.store.putAvatar(personId, avatar, key, selfDescription ?? p?.selfDescription ?? "");
     // a custom look stays on; the automatic one waits in its row for "Automatic"
     if (this.customAvatar(personId)) return [];
