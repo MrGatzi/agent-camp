@@ -4,14 +4,15 @@
  * Channels (one discriminated union each, so `switch (msg.type)` is exhaustive):
  *   ConnectorToServer  connector -> server on /ws/connector
  *   ServerToConnector  server -> connector on /ws/connector
- *   ServerToViewer     server -> viewer    on /ws/viewer (viewers never send anything)
+ *   ServerToViewer     server -> viewer    on /ws/viewer (viewers act via POST /api/interact)
  *
  * Parsers never throw; they return { ok: true, msg } | { ok: false, error }.
  */
 import { z } from "zod";
-import { AvatarSpec } from "./catalog.ts";
-import { PROTOCOL_VERSION } from "./constants.ts";
+import { ViewerAvatar } from "./catalog.ts";
+import { MAX_SELF_DESCRIPTION, PROTOCOL_VERSION, SHORT_SELF_DESCRIPTION } from "./constants.ts";
 import { GiphyId } from "./giphy.ts";
+import { ViewerPartyState } from "./party.ts";
 
 // ---- building blocks ----------------------------------------------------------------------
 export const AGENTS = ["claude", "codex", "pi", "unknown"] as const;
@@ -39,8 +40,14 @@ export const PersonId = z.string().min(1).max(64);
 /** Stable viewer-side session id: `${clientId}:${sessionKey}`. */
 export const SessionId = z.string().min(1).max(130);
 export const ProjectName = z.string().max(80);
+/** Share of the model's context window in use, 0..1 (rounded; omitted when unknown). */
+export const ContextShare = z.number().min(0).max(1);
 /** User-chosen label of the machine a connector runs on ("laptop", "devbox"). Optional. */
 export const MachineName = z.string().trim().max(40);
+/** What a person's subagents look like in the office (connector `helpers`); default robots. */
+export const HELPER_SKINS = ["robots", "cats"] as const;
+export const HelperSkin = z.enum(HELPER_SKINS);
+export type HelperSkin = z.infer<typeof HelperSkin>;
 
 export function sessionIdOf(clientId: string, sessionKey: string): string {
   return `${clientId}:${sessionKey}`;
@@ -55,6 +62,7 @@ export const SessionInfo = z.object({
   activity: Activity,
   subagents: z.number().int().nonnegative(),
   startedAt: EpochMs,
+  context: ContextShare.optional(),
 });
 export type SessionInfo = z.infer<typeof SessionInfo>;
 
@@ -68,17 +76,24 @@ export const SessionView = z.object({
   startedAt: EpochMs,
   /** label of the machine the session runs on (connector `machine_name`); optional */
   machine: MachineName.optional(),
+  /** the session's connector missed its heartbeat (laptop asleep, offline, crashed) */
+  offline: z.boolean().optional(),
+  context: ContextShare.optional(),
 });
 export type SessionView = z.infer<typeof SessionView>;
 
 export const PersonView = z.object({
   personId: PersonId,
   name: z.string().min(1).max(40),
-  avatar: AvatarSpec,
+  avatar: ViewerAvatar,
   sessions: z.array(SessionView),
   joinedAt: EpochMs,
   /** Giphy media id of the GIF shown over the person's head; omitted when none */
   gif: GiphyId.optional(),
+  /** opt-in (connector `birthday = "MM-DD"`): it is their birthday in the office time zone */
+  birthday: z.boolean().optional(),
+  /** opt-in (connector `helpers = "cats"`): their subagents are kittens; omitted = robots */
+  helpers: HelperSkin.optional(),
 });
 export type PersonView = z.infer<typeof PersonView>;
 
@@ -101,8 +116,10 @@ export const ConnectorHello = msg(
     password: z.string().max(256),
     clientId: ClientId,
     connectorVersion: z.string().min(1).max(32),
-    /** free-text look description for GenUI, e.g. "curly hair, round glasses" */
-    selfDescription: z.string().max(200).optional(),
+    /** free-text look description for GenUI, e.g. "curly hair, round glasses" (first 200 chars) */
+    selfDescription: z.string().max(SHORT_SELF_DESCRIPTION).optional(),
+    /** full look description when longer than 200 chars; older servers ignore it */
+    lookDescription: z.string().max(MAX_SELF_DESCRIPTION).optional(),
     /** e.g. "darwin-arm64" */
     platform: z.string().max(40).optional(),
     /** user-chosen machine label shown on the agent card; older connectors omit it */
@@ -112,6 +129,13 @@ export const ConnectorHello = msg(
      * connectors, or never set on this machine) leaves the person's GIF as it is.
      */
     gif: z.union([GiphyId, z.literal("")]).optional(),
+    /** opt-in "MM-DD"; only "is it today" is ever shown */
+    birthday: z
+      .string()
+      .regex(/^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/)
+      .optional(),
+    /** what this person's subagents look like; older connectors omit it (= robots) */
+    helpers: HelperSkin.optional(),
   }),
 );
 export const PresenceSnapshot = msg(
@@ -146,9 +170,20 @@ export const ConnectorRejected = msg(
   z.object({ reason: RejectReason, message: z.string().max(500).optional() }),
 );
 
+/** A viewer waved at / messaged this connector's person; show it as a desktop notification. */
+export const ConnectorPoked = msg(
+  "connector.poked",
+  z.object({
+    kind: z.enum(["wave", "coffee", "cheer", "message", "cat"]),
+    from: z.string().max(40).optional(),
+    text: z.string().max(200),
+  }),
+);
+
 export const ServerToConnector = z.discriminatedUnion("type", [
   ConnectorWelcomed,
   ConnectorRejected,
+  ConnectorPoked,
 ]);
 export type ServerToConnector = z.infer<typeof ServerToConnector>;
 
@@ -157,10 +192,22 @@ export const OfficeSnapshot = msg(
   "office.snapshot",
   z.object({
     officeName: z.string(),
+    party: ViewerPartyState.optional().catch(undefined),
     serverTime: EpochMs,
     people: z.array(PersonView),
     /** IANA zone of the office (for day/night lighting), e.g. "Europe/Vienna" */
     timezone: z.string().max(64).optional(),
+    /** deployed version (newest connector release, e.g. "0.1.42") */
+    version: z.string().max(40).optional(),
+    /** today's numbers from the server's history, so a reload doesn't reset the whiteboard */
+    today: z
+      .object({
+        started: z.number().int().nonnegative(),
+        peak: z.number().int().nonnegative(),
+        /** sessions running every 5 min over the last 40 min, oldest first */
+        recent: z.array(z.number().int().nonnegative()).max(12),
+      })
+      .optional(),
   }),
 );
 export const PersonJoined = msg("person.joined", z.object({ person: PersonView }));
@@ -188,8 +235,93 @@ export const SubagentFinished = msg(
 );
 export const AvatarUpdated = msg(
   "avatar.updated",
-  z.object({ personId: PersonId, avatar: AvatarSpec }),
+  z.object({ personId: PersonId, avatar: ViewerAvatar }),
 );
+/** Context use moved by at least one 5% step (connectors round to 0.05). */
+export const SessionContextChanged = msg(
+  "session.contextChanged",
+  z.object({ personId: PersonId, sessionId: SessionId, context: ContextShare.nullable() }),
+);
+export const PersonBirthdayChanged = msg(
+  "person.birthdayChanged",
+  z.object({ personId: PersonId, birthday: z.boolean() }),
+);
+/** The person's helper skin changed (robots <-> cats). */
+export const PersonHelpersChanged = msg(
+  "person.helpersChanged",
+  z.object({ personId: PersonId, helpers: HelperSkin }),
+);
+export const SessionConnectionChanged = msg(
+  "session.connectionChanged",
+  z.object({ personId: PersonId, sessionId: SessionId, offline: z.boolean() }),
+);
+
+/**
+ * wave/coffee/cheer/message  poke a person (also a notification on their Macs)
+ * paper / tomato             throw a paper ball / a tomato at a person (office only)
+ * cat                        send an office cat to sit on a person's desk (also a notification)
+ * pet / feed / yarn          pet an office cat, drop a food bowl or a yarn ball next to it
+ * laser                      a laser dot on the floor that the cats chase
+ */
+export const INTERACTIONS = [
+  "wave",
+  "coffee",
+  "cheer",
+  "message",
+  "paper",
+  "tomato",
+  "cat",
+  "pet",
+  "feed",
+  "yarn",
+  "laser",
+] as const;
+export const InteractionKind = z.enum(INTERACTIONS);
+export type InteractionKind = z.infer<typeof InteractionKind>;
+/** Interactions with the office cats themselves (no person involved). */
+export const CAT_INTERACTIONS = ["pet", "feed", "yarn", "laser"] as const;
+export type CatInteraction = (typeof CAT_INTERACTIONS)[number];
+export function isCatInteraction(kind: InteractionKind): kind is CatInteraction {
+  return (CAT_INTERACTIONS as readonly string[]).includes(kind);
+}
+/** Interactions that need a spot on the floor (`x`, `y`). */
+export const SPOT_INTERACTIONS = ["feed", "yarn", "laser"] as const;
+export function needsSpot(kind: InteractionKind): boolean {
+  return (SPOT_INTERACTIONS as readonly string[]).includes(kind);
+}
+/** At most this many office cats (one more for every two people, see the web client). */
+export const MAX_CATS = 10;
+/** Which office cat (slot 0 is the original one). */
+export const CatId = z
+  .number()
+  .int()
+  .min(0)
+  .max(MAX_CATS - 1);
+/** A floor spot in world pixels. */
+export const WorldCoord = z.number().int().min(0).max(8192);
+/** Short name a viewer signs pokes with; viewers are otherwise anonymous. */
+export const ViewerName = z.string().trim().max(40);
+export const InteractionText = z.string().trim().max(80);
+
+/** Something a viewer did, replayed for every viewer. Not part of the office state. */
+export const InteractionHappened = msg(
+  "interaction.happened",
+  z.object({
+    kind: InteractionKind,
+    personId: PersonId.optional(),
+    from: ViewerName.optional(),
+    text: InteractionText.optional(),
+    /** how many of the person's Macs got a notification */
+    delivered: z.number().int().nonnegative().optional(),
+    /** cat interactions and `cat`: which office cat */
+    catId: CatId.optional(),
+    /** feed / yarn / laser: the floor spot */
+    x: WorldCoord.optional(),
+    y: WorldCoord.optional(),
+  }),
+);
+
+export const PartyUpdated = msg("party.updated", z.object({ party: ViewerPartyState }));
 
 /** The person's head GIF changed; `gif` omitted = removed. */
 export const GifUpdated = msg(
@@ -199,6 +331,7 @@ export const GifUpdated = msg(
 
 export const ServerToViewer = z.discriminatedUnion("type", [
   OfficeSnapshot,
+  PartyUpdated,
   PersonJoined,
   PersonLeft,
   SessionStarted,
@@ -208,6 +341,11 @@ export const ServerToViewer = z.discriminatedUnion("type", [
   SubagentFinished,
   AvatarUpdated,
   GifUpdated,
+  SessionConnectionChanged,
+  SessionContextChanged,
+  PersonBirthdayChanged,
+  PersonHelpersChanged,
+  InteractionHappened,
 ]);
 export type ServerToViewer = z.infer<typeof ServerToViewer>;
 
@@ -216,8 +354,11 @@ export type AnyMessage = ConnectorToServer | ServerToConnector | ServerToViewer;
 export type MessageType = AnyMessage["type"];
 export type MessageOf<T extends MessageType> = Extract<AnyMessage, { type: T }>;
 export type MessageData<T extends MessageType> = MessageOf<T>["data"];
-/** Viewer events excluding the initial snapshot (what the server's diff() emits). */
-export type ViewerEvent = Exclude<ServerToViewer, { type: "office.snapshot" }>;
+/** What the server's diff() emits: everything but snapshots and transient interaction/party updates. */
+export type ViewerEvent = Exclude<
+  ServerToViewer,
+  { type: "office.snapshot" | "interaction.happened" | "party.updated" }
+>;
 
 export const CONNECTOR_TO_SERVER_TYPES = ConnectorToServer.options.map((o) => o.shape.type.value);
 export const SERVER_TO_CONNECTOR_TYPES = ServerToConnector.options.map((o) => o.shape.type.value);

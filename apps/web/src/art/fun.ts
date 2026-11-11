@@ -62,8 +62,18 @@ const ICONS: Record<string, { rows: string[]; colors: Record<string, string> }> 
     rows: ["o.....o", "oo...oo", "ooooooo", "okooko.", "ooopoo.", ".ooooo.", "......."],
     colors: { o: C.orange, k: C.night, p: C.pink },
   },
+  beer: {
+    rows: ["..www..", ".wwwww.", ".aayaa.", ".aaaaas", ".ayaaas", ".aaaaa.", ".aaaaa."],
+    colors: { w: C.white, a: C.amber, y: C.lemon, s: C.silver },
+  },
+  chill: {
+    rows: ["...g...", "g..g..g", ".g.g.g.", "..ggg..", "ggggggg", "..gmg..", "...m..."],
+    colors: { g: C.leaf, m: C.moss },
+  },
 };
 export const CHAT_ICONS = Object.keys(ICONS);
+/** What people chat about at random (beer/chill only come up when they hold one, cat never). */
+export const CHAT_TOPICS = CHAT_ICONS.filter((n) => n !== "cat" && n !== "beer" && n !== "chill");
 
 /** Little speech bubbles holding a single pixel icon (one per CHAT_ICONS entry). */
 export const chatIconTextures = once(() => {
@@ -103,6 +113,43 @@ export const mugTextures = once(() => {
     pc.set(2, 6, C.red);
     pc.at(0, 0);
     pc.outline(f * fw, 3, fw, fh - 3);
+  }
+  return framesOf(pc, fw, fh, 2);
+});
+
+/** A glass of lager in hand, foam bubbling (2 frames, 7x11, same frame as the mug). */
+export const beerTextures = once(() => {
+  const fw = 7;
+  const fh = 11;
+  const pc = new PixelCanvas(fw * 2, fh);
+  for (let f = 0; f < 2; f++) {
+    pc.at(f * fw + 1, 0);
+    pc.set(f ? 2 : 1, 2, C.white, 200);
+    pc.rect(0, 3, 4, 2, C.white);
+    pc.rect(0, 5, 4, 5, C.amber);
+    pc.vline(0, 5, 5, C.lemon);
+    pc.set(2, f ? 6 : 8, C.lemon);
+    pc.vline(4, 5, 3, C.silver);
+    pc.at(0, 0);
+    pc.outline(f * fw, 3, fw, fh - 3);
+  }
+  return framesOf(pc, fw, fh, 2);
+});
+
+/** A joint between the fingers with a glowing tip and a curl of smoke (2 frames, 7x11). */
+export const jointTextures = once(() => {
+  const fw = 7;
+  const fh = 11;
+  const pc = new PixelCanvas(fw * 2, fh);
+  for (let f = 0; f < 2; f++) {
+    pc.at(f * fw, 0);
+    pc.hline(1, 8, 3, C.white);
+    pc.set(4, 8, C.cream);
+    pc.set(5, 8, f ? C.amber : C.orange);
+    pc.set(5, 6 - f, C.silver, 200);
+    pc.set(4, 5 - f, C.silver, 150);
+    pc.set(5, 4 - f, C.white, 110);
+    pc.at(0, 0);
   }
   return framesOf(pc, fw, fh, 2);
 });
@@ -286,6 +333,20 @@ export const birdTextures = once(() => {
     pc.outline(f * fw, 0, fw, fh);
   }
   return framesOf(pc, fw, fh, 4);
+});
+
+/** Crumpled paper ball (thrown at people from the agent card). */
+export const paperBallTexture = once(() => {
+  const pc = new PixelCanvas(7, 7);
+  pc.at(1, 1);
+  pc.round(0, 0, 5, 5, C.white);
+  pc.set(1, 1, C.silver);
+  pc.set(3, 2, C.silver);
+  pc.set(2, 3, C.silver);
+  pc.hline(1, 4, 3, C.silver);
+  pc.at(0, 0);
+  pc.outline();
+  return Texture.from(pc.toCanvas());
 });
 
 /** Tiny pink heart (cat purrs). */
@@ -577,4 +638,92 @@ export const chefTextures = once(() => {
     pc.outline(f * fw, 0, fw, fh);
   }
   return framesOf(pc, fw, fh, 3);
+});
+
+// ---- cat toys -------------------------------------------------------------------------------
+/** Cat food bowl: full, half, empty (3 frames, 12x7). */
+export const bowlTextures = once(() => {
+  const fw = 12;
+  const fh = 7;
+  const pc = new PixelCanvas(fw * 3, fh);
+  for (let f = 0; f < 3; f++) {
+    pc.at(f * fw + 1, 1);
+    // kibble heap first, the bowl rim in front of it
+    if (f === 0) {
+      pc.rect(2, 0, 6, 2, C.wood);
+      pc.set(3, 0, C.bark);
+      pc.set(6, 0, C.clay);
+      pc.set(4, 1, C.bark);
+    } else if (f === 1) {
+      pc.rect(3, 1, 4, 1, C.wood);
+      pc.set(5, 1, C.bark);
+    }
+    pc.rect(0, 2, 10, 2, C.sky);
+    pc.hline(0, 2, 10, C.cyan);
+    pc.rect(1, 4, 8, 1, C.navy);
+    if (f === 2) pc.hline(2, 2, 6, C.navy);
+    pc.at(0, 0);
+    pc.outline(f * fw, 0, fw, fh);
+  }
+  return framesOf(pc, fw, fh, 3);
+});
+
+/** Yarn ball rolling (4 frames, 9x9; the thread turns a quarter each frame). */
+export const yarnTextures = once(() => {
+  const fw = 9;
+  const fh = 9;
+  const pc = new PixelCanvas(fw * 4, fh);
+  const threads = [
+    [
+      [1, 2],
+      [2, 3],
+      [3, 4],
+      [4, 5],
+    ],
+    [
+      [1, 4],
+      [2, 4],
+      [3, 4],
+      [5, 4],
+    ],
+    [
+      [1, 5],
+      [2, 4],
+      [3, 3],
+      [4, 2],
+    ],
+    [
+      [3, 1],
+      [3, 2],
+      [3, 3],
+      [3, 5],
+    ],
+  ] as const;
+  for (let f = 0; f < 4; f++) {
+    pc.at(f * fw + 1, 1);
+    pc.round(0, 0, 7, 7, C.berry);
+    pc.set(1, 1, C.pink);
+    pc.set(2, 1, C.pink);
+    for (const [x, y] of threads[f]!) pc.set(x, y, C.plum);
+    pc.set(6, 6, C.pink);
+    pc.at(0, 0);
+    pc.outline(f * fw, 0, fw, fh);
+  }
+  return framesOf(pc, fw, fh, 4);
+});
+
+/** Laser pointer dot, flickering (2 frames, 7x7: a hot core in a soft red halo). */
+export const laserTextures = once(() => {
+  const fw = 7;
+  const pc = new PixelCanvas(fw * 2, fw);
+  for (let f = 0; f < 2; f++) {
+    pc.at(f * fw, 0);
+    const halo = f === 0 ? 150 : 90;
+    pc.rect(2, 0, 3, 7, C.red, halo);
+    pc.rect(0, 2, 7, 3, C.red, halo);
+    pc.rect(1, 1, 5, 5, C.red, halo);
+    pc.rect(2, 2, 3, 3, C.neon);
+    pc.set(3, 3, C.white);
+  }
+  return framesOf(pc, fw, fw, 2);
 });

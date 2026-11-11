@@ -5,7 +5,14 @@
  * string ids.
  */
 import {
+  AvatarEditRequest,
+  type AvatarEditResponse,
+  envelope,
   HistoryRow,
+  InteractRequest,
+  type InteractResponse,
+  type MessageOf,
+  PartyState,
   parseGiphyId,
   type ServerToConnector,
   SetGifRequest,
@@ -13,10 +20,12 @@ import {
   type ViewerEvent,
 } from "@agent-office/protocol";
 import { z } from "zod";
+import { isAuthorized, ME_TTL_MS, makeMeToken, meCookie, meFromRequest } from "./auth.ts";
 import { type AvatarService, createAvatarService, type FetchLike, type GenuiEnv } from "./genui.ts";
 import { type Binding, Hub, type HubResult, safeEqual } from "./hub.ts";
 import { isAutoVersion, LatestVersion } from "./latest.ts";
-import { computePersonDay, computeStats, historyToCsv } from "./stats.ts";
+import { Party, readPartyBody } from "./party.ts";
+import { computeOfficeDay, computePersonDay, computeStats, historyToCsv } from "./stats.ts";
 import type { Store } from "./store.ts";
 
 export type AppEnv = GenuiEnv & {
@@ -36,6 +45,8 @@ export type AppEnv = GenuiEnv & {
 export interface Transport {
   /** send to every connected viewer */
   broadcast(json: string): void;
+  /** send to one connector socket (pokes); false if it is gone */
+  sendToConnector?(socketId: string, json: string): boolean;
   /** ask to be called back (`app.alarm()`) at `at`; null = nothing pending */
   scheduleAlarm(at: number | null): void;
   /** keep the runtime alive for background work (GenUI) */
@@ -52,6 +63,24 @@ export type SocketAction = {
 export const SNAPSHOT_MAX_BYTES = 300 * 1024;
 export const SNAPSHOT_MIN_INTERVAL_MS = 10 * 60 * 1000;
 export const BACKFILL_MAX_ROWS = 50_000;
+/** One interaction per viewer (IP) this often, and one notification per person this often. */
+export const INTERACT_MIN_INTERVAL_MS = 2_000;
+export const POKE_PER_PERSON_MS = 10_000;
+/** A "this is me" code: how long it is valid, how often one can be sent, wrong tries allowed. */
+export const CLAIM_CODE_TTL_MS = 5 * 60_000;
+export const CLAIM_RESEND_MS = 30_000;
+export const CLAIM_MAX_TRIES = 5;
+/** Codes per person per day (UTC): bounds guessing and notification spam on their Mac. */
+export const CLAIM_MAX_PER_DAY = 10;
+/** One look change per viewer (IP) this often. */
+export const LOOK_MIN_INTERVAL_MS = 1_000;
+
+const POKE_TEXT = {
+  wave: "waved at you 👋",
+  coffee: "wants to grab a coffee ☕",
+  cheer: "cheers you on 🎉",
+  cat: "sent a cat to sit on your keyboard 🐈",
+} as const;
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
 
 /** SERVER_VERSION, else a fixed LATEST_CONNECTOR_VERSION, else "dev". */
@@ -63,11 +92,6 @@ export function serverVersion(env: AppEnv): string {
 
 export function connectorPassword(env: AppEnv): string | undefined {
   return env.CONNECTOR_PASSWORD || (env.DEV_MODE === "1" ? "devpass" : undefined);
-}
-
-/** Optional VIEWER_KEY gate for /ws/viewer (query param `key`). */
-export function viewerAllowed(url: URL, env: AppEnv): boolean {
-  return !env.VIEWER_KEY || url.searchParams.get("key") === env.VIEWER_KEY;
 }
 
 export function bearerOk(req: Request, env: AppEnv): boolean {
@@ -90,6 +114,11 @@ export class OfficeApp {
   readonly genui: AvatarService;
   readonly latest: LatestVersion;
   readonly timezone: string;
+  private lastInteract = new Map<string, number>();
+  private lastPoke = new Map<string, number>();
+  readonly party: Party;
+  private lastLook = new Map<string, number>();
+  private lastClaim = new Map<string, number>();
 
   constructor(
     private env: AppEnv,
@@ -97,6 +126,7 @@ export class OfficeApp {
     private transport: Transport,
     private opts: { now?: () => number; fetch?: FetchLike; log?: (line: string) => void } = {},
   ) {
+    this.party = new Party(store);
     const log = opts.log ?? ((l: string) => console.log(l));
     this.timezone = env.OFFICE_TIMEZONE || "Europe/Vienna";
     this.genui = createAvatarService(env, store, {
@@ -157,7 +187,25 @@ export class OfficeApp {
 
   /** JSON of the office.snapshot a new viewer gets. */
   viewerSnapshot(): string {
-    return JSON.stringify(this.hub.snapshot(this.now()));
+    return JSON.stringify(this.snapshot());
+  }
+
+  /** The hub's snapshot plus the deployed version and today's whiteboard numbers. */
+  snapshot(): MessageOf<"office.snapshot"> {
+    const now = this.now();
+    const snap = this.hub.snapshot(now);
+    const live = snap.data.people.reduce((n, p) => n + p.sessions.length, 0);
+    const today = computeOfficeDay(this.store.history(now - 3 * 86_400_000), {
+      timezone: this.timezone,
+      now,
+      liveSessions: live,
+    });
+    const v = serverVersion(this.env);
+    const version = v !== "dev" ? v : this.latest.current;
+    return {
+      ...snap,
+      data: { ...snap.data, today, party: this.party.state(now), ...(version ? { version } : {}) },
+    };
   }
 
   alarm(): void {
@@ -205,18 +253,109 @@ export class OfficeApp {
     const path = url.pathname;
     const method = req.method.toUpperCase();
 
-    if (path === "/api/state" && method === "GET") return json(this.hub.snapshot(this.now()));
+    if (path === "/api/state" && method === "GET") return json(this.snapshot());
+
+    if (path === "/api/me" && method === "GET")
+      return json({ ok: true, personId: await meFromRequest(req, this.env, this.now()) });
+    if (path === "/api/me" && method === "DELETE")
+      return json({ ok: true }, { headers: { "set-cookie": meCookie(req, "", 0) } });
+
+    const claim = /^\/api\/people\/([^/]{1,64})\/claim(\/verify)?$/.exec(path);
+    if (claim && method === "POST") {
+      let personId: string;
+      try {
+        personId = decodeURIComponent(claim[1]!);
+      } catch {
+        return json({ error: "bad person id" }, { status: 400 });
+      }
+      return claim[2] ? this.verifyClaim(req, personId) : this.sendClaimCode(req, personId);
+    }
+
+    if (path === "/api/interact" && method === "POST") return this.interact(req);
+    if (path === "/api/party") {
+      if (method !== "POST") return json({ error: "method not allowed" }, { status: 405 });
+      const now = this.now();
+      const who = req.headers.get("cf-connecting-ip") ?? req.headers.get("x-forwarded-for") ?? "-";
+      const retryAfter = this.party.requestAllowed(who, now);
+      if (retryAfter !== null)
+        return json(
+          { error: "slow down" },
+          { status: 429, headers: { "retry-after": String(retryAfter) } },
+        );
+      if (!(await isAuthorized(req, this.env, now)))
+        return json({ error: "unauthorized" }, { status: 401 });
+      const body = await readPartyBody(req);
+      if (body.status)
+        return json(
+          { error: body.status === 413 ? "too large" : "invalid JSON" },
+          { status: body.status },
+        );
+      const actionAt = this.now();
+      const online = new Map(
+        this.hub
+          .state()
+          .people.filter((p) => this.hub.liveSocketsOf(p.personId, actionAt).length > 0)
+          .map((p) => [p.personId, p.avatar] as const),
+      );
+      const result = this.party.mutate(body.value, online, actionAt);
+      if (result.status === 200) {
+        const party = PartyState.parse(result.body);
+        this.transport.broadcast(
+          JSON.stringify(envelope("party.updated", { party }, { ts: actionAt })),
+        );
+      }
+      return json(result.body, {
+        status: result.status,
+        ...(result.retryAfter ? { headers: { "retry-after": String(result.retryAfter) } } : {}),
+      });
+    }
+
+    const look = /^\/api\/people\/([^/]{1,64})\/avatar$/.exec(path);
+    if (look) {
+      let personId: string;
+      try {
+        personId = decodeURIComponent(look[1]!);
+      } catch {
+        return json({ error: "bad person id" }, { status: 400 });
+      }
+      if (method === "GET") {
+        const p = this.hub.state().people.find((x) => x.personId === personId);
+        if (!p) return json({ error: "not in the office" }, { status: 404 });
+        return json({
+          ok: true,
+          avatar: p.avatar,
+          custom: this.hub.isCustomLook(personId),
+        } satisfies AvatarEditResponse);
+      }
+      if (method === "PUT") {
+        // only your own look: the browser must have proven it is this person
+        if ((await meFromRequest(req, this.env, this.now())) !== personId)
+          return json(
+            { error: "you can only change your own look (confirm it is you first)" },
+            { status: 403 },
+          );
+        return this.editLook(req, personId);
+      }
+    }
 
     if (path === "/api/stats" && method === "GET") {
       const days = Number(url.searchParams.get("days") ?? 0);
       const since = days > 0 ? this.now() - days * 86_400_000 : 0;
-      return json(
-        computeStats(this.store.history(since), {
+      const sh = this.hub.shame.snapshot(this.now());
+      const top = (m: Record<string, number>) =>
+        Object.entries(m)
+          .filter(([, v]) => v > 0)
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .slice(0, 5)
+          .map(([key, value]) => ({ key, value }));
+      return json({
+        ...computeStats(this.store.history(since), {
           timezone: this.timezone,
           now: this.now(),
           names: this.hub.knownNames(),
         }),
-      );
+        shame: { clears: top(sh.clears), waits: top(sh.longestWaitMs), fires: top(sh.fires) },
+      });
     }
 
     const person = /^\/api\/people\/([^/]{1,64})$/.exec(path);
@@ -302,18 +441,111 @@ export class OfficeApp {
   }
 
   /**
-   * PUT /api/people/:personId/gif (Bearer CONNECTOR_PASSWORD): set or remove a person's head
-   * GIF from the web UI. Auth comes first, so callers without the password learn nothing about
-   * who is in the office. A connector reconnect does not undo it (see `Hub.helloGifs`).
+   * "This is me": send a one-time code as a notification to the person's live Macs (the
+   * poke channel, so every connector shows it). Whoever can read it there may edit the look.
+   * A courtesy lock, not identity: a connector's person is just the name it reports with the
+   * shared password, so a colleague could start one under someone else's name.
+   */
+  private async sendClaimCode(req: Request, personId: string): Promise<Response> {
+    const now = this.now();
+    if (!this.hub.state().people.some((p) => p.personId === personId))
+      return json({ error: "not in the office" }, { status: 404 });
+    const who = req.headers.get("cf-connecting-ip") ?? req.headers.get("x-forwarded-for") ?? "-";
+    if (now - (this.lastClaim.get(personId) ?? 0) < CLAIM_RESEND_MS)
+      return json({ error: "a code was just sent, check the Mac" }, { status: 429 });
+    if (now - (this.lastClaim.get(`ip:${who}`) ?? 0) < INTERACT_MIN_INTERVAL_MS)
+      return json({ error: "slow down" }, { status: 429 });
+    const sockets = this.hub.liveSocketsOf(personId, now);
+    if (sockets.length === 0)
+      return json({ error: "no Mac of theirs is connected right now" }, { status: 409 });
+    const dayKey = `claim.day.${personId}.${new Date(now).toISOString().slice(0, 10)}`;
+    const today = Number(this.store.kvGet(dayKey) ?? 0);
+    if (today >= CLAIM_MAX_PER_DAY)
+      return json(
+        { error: "too many codes for this person today, try again tomorrow" },
+        { status: 429 },
+      );
+    this.store.kvPut(dayKey, String(today + 1));
+    this.lastClaim.set(personId, now);
+    this.lastClaim.set(`ip:${who}`, now);
+    if (this.lastClaim.size > 500) this.lastClaim.clear();
+    const code = String(crypto.getRandomValues(new Uint32Array(1))[0]! % 1_000_000).padStart(
+      6,
+      "0",
+    );
+    this.store.kvPut(
+      `claim.${personId}`,
+      JSON.stringify({ code, exp: now + CLAIM_CODE_TTL_MS, tries: 0 }),
+    );
+    const poke = JSON.stringify(
+      envelope("connector.poked", {
+        kind: "message",
+        from: "Agent Office",
+        text: `Your code to edit your look: ${code} (5 min). Not you? Just ignore this.`,
+      }),
+    );
+    let delivered = 0;
+    for (const socketId of sockets)
+      if (this.transport.sendToConnector?.(socketId, poke)) delivered++;
+    this.hub.log(`look ${personId} claim code sent to ${delivered} Mac(s)`);
+    if (delivered === 0)
+      return json({ error: "no Mac of theirs is connected right now" }, { status: 409 });
+    return json({ ok: true, delivered });
+  }
+
+  /** Check a "this is me" code; on success the browser gets the signed `ao_me` cookie. */
+  private async verifyClaim(req: Request, personId: string): Promise<Response> {
+    let code = "";
+    try {
+      code = String(((await req.json()) as { code?: unknown }).code ?? "").replace(/\D/g, "");
+    } catch {
+      return json({ error: "invalid JSON" }, { status: 400 });
+    }
+    const now = this.now();
+    const key = `claim.${personId}`;
+    let pending: { code: string; exp: number; tries: number } | null = null;
+    try {
+      pending = JSON.parse(this.store.kvGet(key) ?? "null");
+    } catch {
+      pending = null;
+    }
+    if (!pending || pending.exp < now || pending.tries >= CLAIM_MAX_TRIES)
+      return json({ error: "no valid code, send a new one" }, { status: 410 });
+    if (code !== pending.code) {
+      pending.tries++;
+      this.store.kvPut(key, JSON.stringify(pending));
+      return json({ error: "wrong code" }, { status: 403 });
+    }
+    this.store.kvPut(key, "null");
+    const pw = connectorPassword(this.env);
+    if (!pw) return json({ error: "office has no password" }, { status: 500 });
+    const token = await makeMeToken(pw, personId, now);
+    this.hub.log(`look ${personId} claimed by a browser`);
+    return json(
+      { ok: true, personId },
+      { headers: { "set-cookie": meCookie(req, token, ME_TTL_MS / 1000) } },
+    );
+  }
+
+  /**
+   * PUT /api/people/:personId/gif: set or remove a person's head GIF from the web UI. Own GIF
+   * only, like the look (L9): the browser needs that person's signed `ao_me` cookie ("It's
+   * me"); a Bearer connector password also works (scripts). Checked before the body or the
+   * person lookup. A connector reconnect does not undo it (see `Hub.helloGifs`).
    */
   private async putGif(req: Request, rawId: string): Promise<Response> {
-    if (!bearerOk(req, this.env)) return json({ error: "unauthorized" }, { status: 401 });
     let personId: string;
     try {
       personId = decodeURIComponent(rawId);
     } catch {
       return json({ error: "bad person id" }, { status: 400 });
     }
+    const me = await meFromRequest(req, this.env, this.now());
+    if (me !== personId && !bearerOk(req, this.env))
+      return json(
+        { error: "you can only change your own GIF (confirm it is you first)" },
+        { status: 403 },
+      );
     let body: unknown;
     try {
       body = await req.json();
@@ -322,25 +554,127 @@ export class OfficeApp {
     }
     const parsed = SetGifRequest.safeParse(body);
     if (!parsed.success)
-      return json({ error: z.prettifyError(parsed.error).slice(0, 1000) }, { status: 400 });
+      return json({ error: z.prettifyError(parsed.error).slice(0, 500) }, { status: 400 });
     const link = parsed.data.link?.trim() ?? "";
     let gif: string | undefined;
     if (link) {
       const id = parseGiphyId(link);
       if (!id)
         return json(
-          {
-            error: "not a Giphy GIF link (paste a giphy.com/gifs/... or media.giphy.com link)",
-          },
+          { error: "not a Giphy GIF link (paste a giphy.com/gifs/... or media.giphy.com link)" },
           { status: 400 },
         );
       gif = id;
     }
     const events = this.hub.setGif(personId, gif, this.now());
-    if (!events) return json({ error: "not found" }, { status: 404 });
+    if (!events) return json({ error: "not in the office" }, { status: 404 });
     this.publish(events);
     this.transport.scheduleAlarm(this.hub.nextDeadline());
     return json({ personId, gif: gif ?? null } satisfies SetGifResponse);
+  }
+
+  /** Look editor: pin a custom look or go back to the automatic one. */
+  private async editLook(req: Request, personId: string): Promise<Response> {
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return json({ error: "invalid JSON" }, { status: 400 });
+    }
+    const parsed = AvatarEditRequest.safeParse(body);
+    if (!parsed.success)
+      return json({ error: z.prettifyError(parsed.error).slice(0, 500) }, { status: 400 });
+    const now = this.now();
+    const who = req.headers.get("cf-connecting-ip") ?? req.headers.get("x-forwarded-for") ?? "-";
+    if (now - (this.lastLook.get(who) ?? 0) < LOOK_MIN_INTERVAL_MS)
+      return json({ error: "slow down" }, { status: 429 });
+    this.lastLook.set(who, now);
+    if (this.lastLook.size > 500) this.lastLook.clear();
+
+    const r = this.hub.setCustomAvatar(personId, parsed.data.avatar, now);
+    if (!r) return json({ error: "not in the office" }, { status: 404 });
+    this.hub.log(`look ${personId} edited by ${parsed.data.from || "someone"}`);
+    this.publish(r.events);
+    let avatar = r.avatar;
+    if (r.avatarJob) {
+      const job = r.avatarJob;
+      const res = await this.genui.resolve(job);
+      this.publish(
+        this.hub.setAvatar(
+          job.personId,
+          res.avatar,
+          res.key,
+          this.now(),
+          job.selfDescription ?? "",
+        ),
+      );
+      avatar = res.avatar;
+    }
+    this.transport.scheduleAlarm(this.hub.nextDeadline());
+    return json({
+      ok: true,
+      avatar,
+      custom: parsed.data.avatar !== null,
+    } satisfies AvatarEditResponse);
+  }
+
+  private async interact(req: Request): Promise<Response> {
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return json({ error: "invalid JSON" }, { status: 400 });
+    }
+    const parsed = InteractRequest.safeParse(body);
+    if (!parsed.success)
+      return json({ error: z.prettifyError(parsed.error).slice(0, 500) }, { status: 400 });
+    const r = parsed.data;
+    const now = this.now();
+
+    const who = req.headers.get("cf-connecting-ip") ?? req.headers.get("x-forwarded-for") ?? "-";
+    if (now - (this.lastInteract.get(who) ?? 0) < INTERACT_MIN_INTERVAL_MS)
+      return json({ error: "slow down" }, { status: 429 });
+    this.lastInteract.set(who, now);
+    if (this.lastInteract.size > 500) this.lastInteract.clear();
+
+    if (r.personId && !this.hub.state().people.some((p) => p.personId === r.personId))
+      return json({ error: "not in the office" }, { status: 404 });
+
+    let delivered = 0;
+    const kind = r.kind;
+    const pokes =
+      kind === "wave" ||
+      kind === "coffee" ||
+      kind === "cheer" ||
+      kind === "message" ||
+      kind === "cat";
+    const officeOnly = !pokes;
+    if (r.personId && pokes) {
+      if (now - (this.lastPoke.get(r.personId) ?? 0) < POKE_PER_PERSON_MS)
+        return json({ error: "they were just poked, give them a moment" }, { status: 429 });
+      this.lastPoke.set(r.personId, now);
+      const from = r.from || undefined;
+      const text = kind === "message" ? r.text! : `${from ?? "Someone"} ${POKE_TEXT[kind]}`;
+      const poke = JSON.stringify(
+        envelope("connector.poked", { kind, text, ...(from ? { from } : {}) }),
+      );
+      for (const socketId of this.hub.liveSocketsOf(r.personId, now)) {
+        if (this.transport.sendToConnector?.(socketId, poke)) delivered++;
+      }
+    }
+
+    const event: MessageOf<"interaction.happened"> = envelope("interaction.happened", {
+      kind: r.kind,
+      ...(r.personId ? { personId: r.personId } : {}),
+      ...(r.from ? { from: r.from } : {}),
+      ...(r.text && r.kind === "message" ? { text: r.text } : {}),
+      ...(r.personId && !officeOnly ? { delivered } : {}),
+      ...(r.catId !== undefined ? { catId: r.catId } : {}),
+      ...(r.x !== undefined && r.y !== undefined ? { x: r.x, y: r.y } : {}),
+    });
+    this.transport.broadcast(JSON.stringify(event));
+    this.hub.log(`interaction ${r.kind} ${r.personId ?? "-"} delivered=${delivered}`);
+    return json({ ok: true, delivered } satisfies InteractResponse);
   }
 
   private async uploadSnapshot(req: Request): Promise<Response> {

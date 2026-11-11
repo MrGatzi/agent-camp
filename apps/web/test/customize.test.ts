@@ -1,47 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import {
-  clearPassword,
-  getPassword,
   HINT_INVALID,
   HINT_SAME,
+  MSG_LOGGED_OUT,
   MSG_NETWORK,
   MSG_NOT_FOUND,
-  MSG_WRONG_PASSWORD,
-  PASSWORD_KEY,
-  PasswordStore,
-  type StorageLike,
+  MSG_NOT_YOU,
   saveOutcome,
-  setPassword,
   validateGifInput,
 } from "../src/ui/customize.ts";
 
 const GIF = "JIX9t2j0ZTN9S";
 const OTHER = "l0MYt5jPR6QX5pnqM";
-
-class MemStorage implements StorageLike {
-  data = new Map<string, string>();
-  getItem(k: string) {
-    return this.data.get(k) ?? null;
-  }
-  setItem(k: string, v: string) {
-    this.data.set(k, v);
-  }
-  removeItem(k: string) {
-    this.data.delete(k);
-  }
-}
-
-const throwing: StorageLike = {
-  getItem() {
-    throw new Error("SecurityError");
-  },
-  setItem() {
-    throw new Error("QuotaExceededError");
-  },
-  removeItem() {
-    throw new Error("SecurityError");
-  },
-};
 
 describe("validateGifInput", () => {
   test("empty / whitespace: nothing to save, no hint", () => {
@@ -91,10 +61,16 @@ describe("saveOutcome", () => {
     expect(saveOutcome({ status: 200, body: null })).toEqual({ kind: "saved" });
   });
 
-  test("401 asks for the password again", () => {
+  test("401 logged out, 403 not confirmed as this person", () => {
     expect(saveOutcome({ status: 401, body: { error: "unauthorized" } })).toEqual({
-      kind: "needPassword",
-      message: MSG_WRONG_PASSWORD,
+      kind: "error",
+      message: MSG_LOGGED_OUT,
+    });
+    expect(
+      saveOutcome({ status: 403, body: { error: "you can only change your own GIF" } }),
+    ).toEqual({
+      kind: "error",
+      message: MSG_NOT_YOU,
     });
   });
 
@@ -136,64 +112,5 @@ describe("saveOutcome", () => {
       kind: "error",
       message: "slow down",
     });
-  });
-});
-
-describe("password storage", () => {
-  test("get / set / clear", () => {
-    const s = new MemStorage();
-    expect(getPassword(s)).toBeNull();
-    expect(setPassword(s, "hunter2")).toBe(true);
-    expect(s.data.get(PASSWORD_KEY)).toBe("hunter2");
-    expect(getPassword(s)).toBe("hunter2");
-    clearPassword(s);
-    expect(getPassword(s)).toBeNull();
-    expect(PASSWORD_KEY).toBe("agent-office.password");
-  });
-
-  test("empty stored value counts as none", () => {
-    const s = new MemStorage();
-    s.setItem(PASSWORD_KEY, "");
-    expect(getPassword(s)).toBeNull();
-  });
-
-  test("no storage", () => {
-    expect(getPassword(null)).toBeNull();
-    expect(setPassword(undefined, "x")).toBe(false);
-    expect(() => clearPassword(null)).not.toThrow();
-  });
-
-  test("storage that throws", () => {
-    expect(getPassword(throwing)).toBeNull();
-    expect(setPassword(throwing, "x")).toBe(false);
-    expect(() => clearPassword(throwing)).not.toThrow();
-  });
-
-  test("PasswordStore persists to storage", () => {
-    const s = new MemStorage();
-    const a = new PasswordStore(() => s);
-    expect(a.get()).toBeNull();
-    a.set("pw");
-    // a second page load reads it back
-    expect(new PasswordStore(() => s).get()).toBe("pw");
-    a.clear();
-    expect(new PasswordStore(() => s).get()).toBeNull();
-  });
-
-  test("PasswordStore falls back to memory when storage throws or is missing", () => {
-    for (const getter of [
-      () => throwing,
-      () => null,
-      () => {
-        throw new Error("localStorage access denied");
-      },
-    ]) {
-      const st = new PasswordStore(getter);
-      expect(st.get()).toBeNull();
-      st.set("pw");
-      expect(st.get()).toBe("pw");
-      st.clear();
-      expect(st.get()).toBeNull();
-    }
   });
 });

@@ -4,6 +4,9 @@
  */
 import "./theme.css";
 import "./pages.css";
+import { registerServiceWorker } from "../pwa.ts";
+
+registerServiceWorker();
 
 export const esc = (s: string) =>
   s.replace(
@@ -40,6 +43,7 @@ export function pageShell(title: string, current: PageNav, actions = ""): HTMLEl
         ${nav("stats", "Stats")}
         ${nav("timelapse", "Timelapse")}
         <a class="pixel-btn back" href="${officeHref()}">&larr; Office</a>
+        <form method="post" action="/api/logout" class="logout"><button class="pixel-btn" type="submit" title="Log out of the office">Log out</button></form>
       </nav>
     </header>
     <main class="page-main"></main>`;
@@ -65,6 +69,9 @@ export function notice(title: string, html: string, tone: "info" | "error" = "in
 
 export async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { headers: { accept: "application/json" } });
+  if (res.status === 401) {
+    location.href = `/login?next=${encodeURIComponent(location.pathname + location.search)}`;
+  }
   if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
   return (await res.json()) as T;
 }

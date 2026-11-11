@@ -4,12 +4,65 @@
  *   GET  /api/snapshots        -> SnapshotList
  *   GET  /api/people/:personId -> PersonDayResponse
  *   POST /api/history/backfill <- HistoryRow[]   (Bearer CONNECTOR_PASSWORD)
- *   PUT  /api/people/:personId/gif <- SetGifRequest -> SetGifResponse (Bearer CONNECTOR_PASSWORD)
- * Errors are `ApiError` bodies (400 bad input, 401 wrong or missing password, 404 unknown).
+ *   POST /api/interact         <- InteractRequest -> InteractResponse
+ *   PUT  /api/people/:personId/avatar <- AvatarEditRequest -> AvatarEditResponse
+ *   PUT  /api/people/:personId/gif    <- SetGifRequest -> SetGifResponse
+ * Errors are `ApiError` bodies.
  */
 import { z } from "zod";
+import { AvatarSpec } from "./catalog.ts";
 import { GiphyId } from "./giphy.ts";
-import { Activity, AgentKind } from "./messages.ts";
+import {
+  Activity,
+  AgentKind,
+  CatId,
+  InteractionKind,
+  InteractionText,
+  isCatInteraction,
+  needsSpot,
+  PersonId,
+  ViewerName,
+  WorldCoord,
+} from "./messages.ts";
+
+/** A viewer pokes a person, throws a paper ball, or plays with the office cats. */
+export const InteractRequest = z
+  .object({
+    kind: InteractionKind,
+    personId: PersonId.optional(),
+    from: ViewerName.optional(),
+    text: InteractionText.optional(),
+    catId: CatId.optional(),
+    x: WorldCoord.optional(),
+    y: WorldCoord.optional(),
+  })
+  .refine((r) => isCatInteraction(r.kind) || !!r.personId, { message: "personId required" })
+  .refine((r) => r.kind !== "message" || !!r.text, { message: "text required" })
+  .refine((r) => !needsSpot(r.kind) || (r.x !== undefined && r.y !== undefined), {
+    message: "x and y required",
+  });
+export type InteractRequest = z.infer<typeof InteractRequest>;
+
+export const InteractResponse = z.object({ ok: z.boolean(), delivered: z.number() });
+export type InteractResponse = z.infer<typeof InteractResponse>;
+
+/**
+ * A viewer picks a person's look in the look editor (catalog ids only). `avatar: null` drops
+ * the custom look and goes back to the automatic one (description / seed).
+ */
+export const AvatarEditRequest = z.object({
+  avatar: AvatarSpec.nullable(),
+  from: ViewerName.optional(),
+});
+export type AvatarEditRequest = z.infer<typeof AvatarEditRequest>;
+
+export const AvatarEditResponse = z.object({
+  ok: z.boolean(),
+  /** the look now shown (for a reset: the current one until the new automatic look lands) */
+  avatar: AvatarSpec,
+  custom: z.boolean(),
+});
+export type AvatarEditResponse = z.infer<typeof AvatarEditResponse>;
 
 /** Error body of a failed API request. */
 export const ApiError = z.object({ error: z.string() });
@@ -63,6 +116,14 @@ export const StatsResponse = z.object({
   }),
   /** personId -> latest display name seen (best effort) */
   names: z.record(z.string(), z.string()),
+  /** wall of shame, today in the office time zone (top 5 each; waits in ms) */
+  shame: z
+    .object({
+      clears: z.array(LeaderboardEntry),
+      waits: z.array(LeaderboardEntry),
+      fires: z.array(LeaderboardEntry),
+    })
+    .optional(),
 });
 export type StatsResponse = z.infer<typeof StatsResponse>;
 

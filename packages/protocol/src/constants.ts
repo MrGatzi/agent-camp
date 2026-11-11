@@ -9,6 +9,11 @@ export const CLOSE_TOO_OLD = 4002;
 /** Malformed / schema-invalid message (not in PLAN, but handy). */
 export const CLOSE_BAD_MESSAGE = 4003;
 
+/** Look description: `selfDescription` carries the first 200 chars (all servers accept it). */
+export const SHORT_SELF_DESCRIPTION = 200;
+/** Look description: the full text (`lookDescription`, newer servers), and the config limit. */
+export const MAX_SELF_DESCRIPTION = 8000;
+
 /** WebSocket paths. */
 export const WS_CONNECTOR_PATH = "/ws/connector";
 export const WS_VIEWER_PATH = "/ws/viewer";
@@ -18,8 +23,10 @@ export const WS_VIEWER_PATH = "/ws/viewer";
 export const SNAPSHOT_DEBOUNCE_MS = 500;
 /** Connector re-sends its snapshot at least this often (heartbeat). */
 export const HEARTBEAT_MS = 30_000;
+/** Server shows a connector's sessions as offline after this long without any message. */
+export const CONNECTOR_STALE_MS = 45_000;
 /** Server treats a connector as gone after this long without any message. */
-export const CONNECTOR_TIMEOUT_MS = 75_000;
+export const CONNECTOR_TIMEOUT_MS = 180_000;
 /** After a person's last connector is gone, wait this long before `person.left`. */
 export const PERSON_GRACE_MS = 60_000;
 /** Reconnect backoff bounds (exponential with jitter), both sides. */

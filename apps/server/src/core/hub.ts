@@ -10,9 +10,12 @@ import {
   CLOSE_BAD_MESSAGE,
   CLOSE_BAD_PASSWORD,
   CLOSE_TOO_OLD,
+  CONNECTOR_STALE_MS,
   CONNECTOR_TIMEOUT_MS,
+  catalogAvatar,
   compareVersions,
   envelope,
+  type HelperSkin,
   hashString,
   type MessageOf,
   PERSON_GRACE_MS,
@@ -20,14 +23,17 @@ import {
   parseConnectorMessage,
   personIdFromName,
   type RejectReason,
+  repairAvatar,
   type ServerToConnector,
   type SessionInfo,
   type SessionView,
+  SHORT_SELF_DESCRIPTION,
   sessionIdOf,
   type ViewerEvent,
 } from "@agent-office/protocol";
 import { diff, EMPTY_STATE, type OfficeState } from "./diff.ts";
 import { historyRow, logLine, lookupIn } from "./events.ts";
+import { ShameTracker } from "./shame.ts";
 import type { Store } from "./store.ts";
 
 export type HubConfig = {
@@ -59,9 +65,14 @@ export type Binding = {
    * when it differs from what this clientId sent before for this person (see `Hub.helloGifs`).
    */
   gif?: string;
+  /** opt-in "MM-DD" */
+  birthday?: string;
+  /** opt-in: this person's subagents are kittens (omitted = robots) */
+  helpers?: HelperSkin;
 };
 
-type ConnectorRec = Binding & {
+/** A connector as the hub tracks and persists it (its description lives on the person). */
+type ConnectorRec = Omit<Binding, "selfDescription"> & {
   socketId: string | null;
   lastSeen: number;
   sessions: SessionInfo[];
@@ -75,15 +86,23 @@ type PersonRec = {
   goneSince: number | null;
   avatar: AvatarSpec;
   /**
-   * Person-level look description ("" = none). Last non-empty one from any of the person's
-   * connectors wins; a hello without one never changes it. Missing in old persisted state.
+   * Person-level look description ("" = none). Changes only when a connector sends a
+   * description that is new for that connector (see ensurePerson); a hello without one never
+   * changes it. Not persisted in hub.state (the avatars row keeps it); undefined after restore.
    */
   selfDescription?: string;
   /** avatar key of the look stored or already requested (not persisted) */
   lookKey?: string;
 };
 
-export type AvatarJob = { personId: string; name: string; selfDescription?: string; key: string };
+export type AvatarJob = {
+  personId: string;
+  name: string;
+  selfDescription?: string;
+  key: string;
+  /** the stored look, kept when there is no description or generation fails */
+  previous?: AvatarSpec;
+};
 
 export type HubResult = {
   reply?: ServerToConnector;
@@ -114,12 +133,63 @@ export const RECENT_ACTIVITY_MS = 30 * 60_000;
 
 const STATE_KEY = "hub.state";
 const NAMES_KEY = "hub.names";
+/** clientId -> hash of the last non-empty description that connector sent */
+const CLIENT_DESCS_KEY = "hub.clientDescs";
 
 export const defaultAvatarKey = (name: string, desc: string | undefined) =>
   `seed:${hashString(`${name}\n${desc ?? ""}`).toString(36)}`;
 
+/** Descriptions can be ~8000 chars: fingerprint them instead of copying them into every signature. */
+const descSig = (desc: string | undefined) => (desc ? hashString(desc).toString(36) : "");
+
+/**
+ * The binding as stored in the socket attachment (Workers cap it at 2 KiB). A long description
+ * is left out: the person record and the avatars row keep it, and a binding without one never
+ * changes the person's description.
+ */
+const withoutDescription = (b: Binding): Omit<Binding, "selfDescription"> => {
+  const { selfDescription: _d, ...rest } = b;
+  return rest;
+};
+
+/** Persisted people: no description text, no detailed look (the avatars row has both). */
+const persistable = (p: PersonRec): PersonRec => {
+  const { lookKey: _k, selfDescription: _d, ...rest } = p;
+  const { look: _l, ...catalog } = p.avatar;
+  return { ...rest, avatar: catalog };
+};
+
+const attachable = (b: Binding): Binding => {
+  if ((b.selfDescription?.length ?? 0) <= SHORT_SELF_DESCRIPTION) return b;
+  const { selfDescription: _d, ...rest } = b;
+  return rest;
+};
+
 /** Trim and collapse whitespace ("  Martin  K " -> "Martin K"). */
 export const cleanName = (name: string) => name.trim().replace(/\s+/g, " ");
+
+/** "YYYY-MM-DD" of `ts` in an IANA zone (bad zone -> UTC). */
+export function dayKeyIn(timeZone: string, ts: number): string {
+  const o = { year: "numeric", month: "2-digit", day: "2-digit" } as const;
+  try {
+    return new Intl.DateTimeFormat("en-CA", { ...o, timeZone }).format(ts);
+  } catch {
+    return new Intl.DateTimeFormat("en-CA", { ...o, timeZone: "UTC" }).format(ts);
+  }
+}
+
+/** "MM-DD" of `now` in an IANA zone (bad zone -> UTC). */
+export function monthDayIn(timeZone: string, now: number): string {
+  const o = { month: "2-digit", day: "2-digit" } as const;
+  let parts: Intl.DateTimeFormatPart[];
+  try {
+    parts = new Intl.DateTimeFormat("en-US", { ...o, timeZone }).formatToParts(now);
+  } catch {
+    parts = new Intl.DateTimeFormat("en-US", { ...o, timeZone: "UTC" }).formatToParts(now);
+  }
+  const v = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
+  return `${v("month")}-${v("day")}`;
+}
 
 export function safeEqual(a: string, b: string): boolean {
   let diffBits = a.length ^ b.length;
@@ -148,21 +218,31 @@ export class Hub {
   /** socketId -> binding (only sockets that said hello) */
   private sockets = new Map<string, Binding>();
   private current: OfficeState = EMPTY_STATE;
+  /** `now` of the last derive(); offline flags in `current` are as of then */
+  private derivedAt = 0;
   private persistedSig = "";
   private names: Record<string, string> = {};
+  private clientDescs: Record<string, string> = {};
   /** sessionId -> recent activity changes (memory only; the agent card's timeline) */
   private recent = new Map<string, { activity: Activity; at: number }[]>();
   /** sink for readable event lines */
   log: (line: string) => void = () => {};
+  readonly shame: ShameTracker;
 
   constructor(
     private cfg: HubConfig,
     private store: Store,
   ) {
+    this.shame = new ShameTracker(store, (ts) => dayKeyIn(cfg.timezone, ts));
     try {
       this.names = JSON.parse(store.kvGet(NAMES_KEY) ?? "{}");
     } catch {
       this.names = {};
+    }
+    try {
+      this.clientDescs = JSON.parse(store.kvGet(CLIENT_DESCS_KEY) ?? "{}");
+    } catch {
+      this.clientDescs = {};
     }
   }
 
@@ -179,14 +259,28 @@ export class Hub {
     if (raw) {
       try {
         const p = JSON.parse(raw) as Persisted;
-        for (const c of p.connectors ?? []) {
+        for (const c of (p.connectors ?? []) as (ConnectorRec & { selfDescription?: string })[]) {
+          // state from before descriptions moved out: remember what this connector sent
+          if (c.selfDescription && this.clientDescs[c.clientId] === undefined)
+            this.rememberClientDesc(c.clientId, c.selfDescription);
+          const { selfDescription: _d, ...rec } = c;
           // fresh liveness window: live connectors heartbeat again within 30 s
-          this.connectors.set(c.clientId, { ...c, lastSeen: Math.max(c.lastSeen, now) });
+          this.connectors.set(c.clientId, { ...rec, lastSeen: Math.max(c.lastSeen, now) });
         }
-        for (const { gif, ...person } of p.people ?? []) {
+        for (const person of p.people ?? []) {
+          // the avatars table is the source of truth (setAvatar does not re-persist the state,
+          // and the persisted copy has no detailed look)
+          const stored = this.storedAvatar(person.personId);
+          person.avatar = stored?.avatar ?? repairAvatar(person.avatar, person.personId).avatar;
+          // the custom look is the source of truth, even if the state was written before it
+          const custom = this.customAvatar(person.personId);
+          if (custom) person.avatar = custom;
           this.people.set(person.personId, person);
-          // state from before `gifs`: the GIF lived on the person record
-          if (gif && !p.gifs) this.gifs.set(person.personId, gif);
+        }
+        // state from before `gifs`: the GIF lived on the person record
+        for (const person of p.people ?? []) {
+          if (person.gif && !p.gifs) this.gifs.set(person.personId, person.gif);
+          delete person.gif;
         }
         for (const [id, gif] of Object.entries(p.gifs ?? {})) this.gifs.set(id, gif);
         if (p.helloGifs) {
@@ -202,7 +296,7 @@ export class Hub {
       }
     }
     for (const s of sockets) if (s.binding) this.sockets.set(s.socketId, s.binding);
-    this.current = this.derive();
+    this.current = this.derive(now);
     // the activity log is memory only: after a restart it starts now
     for (const p of this.current.people)
       for (const x of p.sessions) this.recent.set(x.sessionId, [{ activity: x.activity, at: now }]);
@@ -238,7 +332,7 @@ export class Hub {
     return { events: this.commit(now) };
   }
 
-  /** Expire silent connectors and people past their grace period. */
+  /** Mark silent connectors offline, expire them and people past their grace period. */
   tick(now: number): ViewerEvent[] {
     return this.commit(now);
   }
@@ -246,8 +340,10 @@ export class Hub {
   /** Earliest time `tick` would change something, or null when nothing is pending. */
   nextDeadline(): number | null {
     let min = Number.POSITIVE_INFINITY;
-    for (const c of this.connectors.values())
-      min = Math.min(min, c.lastSeen + CONNECTOR_TIMEOUT_MS + 1);
+    for (const c of this.connectors.values()) {
+      const at = this.isStale(c, this.derivedAt) ? CONNECTOR_TIMEOUT_MS : CONNECTOR_STALE_MS;
+      min = Math.min(min, c.lastSeen + at + 1);
+    }
     for (const p of this.people.values()) {
       if (p.goneSince !== null) min = Math.min(min, p.goneSince + PERSON_GRACE_MS);
     }
@@ -268,6 +364,8 @@ export class Hub {
     const p = this.people.get(personId);
     if (p?.lookKey && key.replace(/:fallback$/, "") !== p.lookKey) return [];
     this.store.putAvatar(personId, avatar, key, selfDescription ?? p?.selfDescription ?? "");
+    // a custom look stays on; the automatic one waits in its row for "Automatic"
+    if (this.customAvatar(personId)) return [];
     if (p) p.avatar = avatar;
     return this.commit(now);
   }
@@ -281,6 +379,56 @@ export class Hub {
     if (!this.people.has(personId)) return null;
     this.applyGif(personId, gif || undefined);
     return this.commit(now);
+  }
+
+  /**
+   * Look editor: pin a custom look (catalog ids, already validated) or, with `null`, drop it
+   * and go back to the automatic look. The automatic look is kept in its own row, so going
+   * back is free; an avatar job is returned only when that row is missing or was made for an
+   * older description. Only for people in the office; returns null otherwise.
+   */
+  setCustomAvatar(
+    personId: string,
+    avatar: AvatarSpec | null,
+    now: number,
+  ): { events: ViewerEvent[]; avatarJob?: AvatarJob; avatar: AvatarSpec } | null {
+    const p = this.people.get(personId);
+    if (!p) return null;
+    const stored = this.storedAvatar(personId);
+    if (p.selfDescription === undefined) p.selfDescription = stored?.selfDescription ?? "";
+    if (avatar) {
+      // catalog ids only: the look comes from them, never from a GenUI answer
+      const custom = catalogAvatar(avatar);
+      this.store.putCustomAvatar(personId, custom);
+      p.avatar = custom;
+      this.log(`look ${personId} custom`);
+      return { events: this.commit(now), avatar: custom };
+    }
+    this.store.putCustomAvatar(personId, null);
+    const keyFn = this.cfg.avatarKey ?? defaultAvatarKey;
+    const want = keyFn(personId, p.selfDescription || undefined);
+    p.lookKey = want;
+    p.avatar = stored?.avatar ?? avatarFromSeed(personId);
+    const events = this.commit(now);
+    this.log(`look ${personId} back to automatic`);
+    if (stored && stored.key.replace(/:fallback$/, "") === want)
+      return { events, avatar: p.avatar };
+    return {
+      events,
+      avatar: p.avatar,
+      avatarJob: {
+        personId,
+        name: p.name,
+        key: want,
+        ...(p.selfDescription ? { selfDescription: p.selfDescription } : {}),
+        ...(stored ? { previous: stored.avatar } : {}),
+      },
+    };
+  }
+
+  /** Whether a person's look was picked in the look editor. */
+  isCustomLook(personId: string): boolean {
+    return this.customAvatar(personId) !== null;
   }
 
   state(): OfficeState {
@@ -323,6 +471,19 @@ export class Hub {
     return this.sockets.get(socketId);
   }
 
+  /** Open sockets of a person's connectors that are still heartbeating. */
+  liveSocketsOf(personId: string, now: number): string[] {
+    const out: string[] = [];
+    for (const c of this.connectors.values()) {
+      if (c.personId === personId && c.socketId && !this.isStale(c, now)) out.push(c.socketId);
+    }
+    return out;
+  }
+
+  private isStale(c: ConnectorRec, now: number): boolean {
+    return now - c.lastSeen > CONNECTOR_STALE_MS;
+  }
+
   // ---- message handlers -------------------------------------------------------------------
 
   private reject(reason: RejectReason, code: number, message?: string): HubResult {
@@ -352,7 +513,8 @@ export class Hub {
     }
 
     const name = cleanName(d.name);
-    const desc = d.selfDescription?.trim();
+    // the full description (up to MAX_SELF_DESCRIPTION) when the connector sent one
+    const desc = d.lookDescription?.trim() || d.selfDescription?.trim();
     const machine = d.machine?.trim();
     const binding: Binding = {
       clientId: d.clientId,
@@ -362,6 +524,8 @@ export class Hub {
       ...(desc ? { selfDescription: desc } : {}),
       ...(machine ? { machine } : {}),
       ...(d.gif !== undefined ? { gif: d.gif } : {}),
+      ...(d.birthday ? { birthday: d.birthday } : {}),
+      ...(d.helpers === "cats" ? { helpers: d.helpers } : {}),
     };
     // a hello on a socket that was bound to another clientId: drop the old binding
     this.sockets.set(socketId, binding);
@@ -374,7 +538,7 @@ export class Hub {
     }
     const existing = this.connectors.get(d.clientId);
     this.connectors.set(d.clientId, {
-      ...binding,
+      ...withoutDescription(binding),
       socketId,
       lastSeen: now,
       // same laptop reconnecting keeps its sessions until the next snapshot arrives
@@ -388,7 +552,7 @@ export class Hub {
       latestConnectorVersion: this.cfg.latestConnectorVersion,
       minConnectorVersion: this.cfg.minConnectorVersion,
     });
-    const res: HubResult = { reply, events: this.commit(now), binding };
+    const res: HubResult = { reply, events: this.commit(now), binding: attachable(binding) };
     if (avatarJob) res.avatarJob = avatarJob;
     return res;
   }
@@ -405,7 +569,7 @@ export class Hub {
     }
     if (!rec) {
       // connector timed out but the socket is still alive: revive it
-      rec = { ...binding, socketId, lastSeen: now, sessions: [] };
+      rec = { ...withoutDescription(binding), socketId, lastSeen: now, sessions: [] };
       this.connectors.set(binding.clientId, rec);
       this.ensurePerson(binding, now);
     }
@@ -424,14 +588,15 @@ export class Hub {
    */
   private ensurePerson(b: Binding, now: number): AvatarJob | undefined {
     let p = this.people.get(b.personId);
-    const stored = this.store.getAvatar(b.personId);
+    const stored = this.storedAvatar(b.personId);
+    const custom = this.customAvatar(b.personId);
     if (!p) {
       p = {
         personId: b.personId,
         name: b.name,
         joinedAt: now,
         goneSince: null,
-        avatar: stored?.avatar ?? avatarFromSeed(b.personId),
+        avatar: custom ?? stored?.avatar ?? avatarFromSeed(b.personId),
       };
       this.people.set(b.personId, p);
     }
@@ -442,11 +607,43 @@ export class Hub {
       this.store.kvPut(NAMES_KEY, JSON.stringify(this.names));
     }
 
-    // person-level description: last non-empty wins, empty never changes it
+    // Person-level description. It changes only when this connector's own description is new
+    // (first hello from it, or its user set another one) or the person has none yet. Two
+    // machines that keep sending different descriptions (an old truncated config, say) then
+    // never flip it back and forth on reconnects. Empty never changes it.
     if (p.selfDescription === undefined) p.selfDescription = stored?.selfDescription ?? "";
     const desc = b.selfDescription ?? "";
-    if (desc && desc !== p.selfDescription) p.selfDescription = desc;
+    if (desc) {
+      const changedHere = this.clientDescs[b.clientId] !== descSig(desc);
+      this.rememberClientDesc(b.clientId, desc);
+      if (desc !== p.selfDescription && (changedHere || !p.selfDescription)) {
+        p.selfDescription = desc;
+        // keep it with the stored look right away (hub.state does not carry descriptions)
+        // (never the custom look: it has its own row)
+        if (!stored || stored.selfDescription !== undefined)
+          this.store.putAvatar(
+            b.personId,
+            stored?.avatar ?? (custom ? avatarFromSeed(b.personId) : p.avatar),
+            stored?.key ?? "",
+            desc,
+          );
+      }
+    }
 
+    // a look picked in the look editor wins over any description: no job while it is on (a
+    // new description is remembered in the automatic row, whose key then no longer matches,
+    // so "Automatic" regenerates for it)
+    if (custom) {
+      p.avatar = custom;
+      if (!stored || stored.selfDescription !== p.selfDescription)
+        this.store.putAvatar(
+          b.personId,
+          stored?.avatar ?? avatarFromSeed(b.personId),
+          stored?.key ?? "",
+          p.selfDescription,
+        );
+      return undefined;
+    }
     const keyFn = this.cfg.avatarKey ?? defaultAvatarKey;
     const want = keyFn(b.personId, p.selfDescription || undefined);
     if (p.lookKey === want) return undefined;
@@ -473,12 +670,38 @@ export class Hub {
       name: p.name,
       key: want,
       ...(p.selfDescription ? { selfDescription: p.selfDescription } : {}),
+      ...(stored ? { previous: stored.avatar } : {}),
     };
   }
 
   private applyGif(personId: string, gif: string | undefined): void {
     if (gif) this.gifs.set(personId, gif);
     else this.gifs.delete(personId);
+  }
+
+  private rememberClientDesc(clientId: string, desc: string): void {
+    const sig = descSig(desc);
+    if (this.clientDescs[clientId] === sig) return;
+    this.clientDescs[clientId] = sig;
+    this.store.kvPut(CLIENT_DESCS_KEY, JSON.stringify(this.clientDescs));
+  }
+
+  /**
+   * The look picked in the look editor, if any. It is catalog ids only: a detailed `look` (say
+   * one copied from the GenUI avatar it was edited from, or a row stored before this rule) is
+   * dropped, so the look is derived from the picked ids (`lookFromCatalog`) and no GenUI
+   * answer can show through.
+   */
+  private customAvatar(personId: string): AvatarSpec | null {
+    const custom = this.store.getCustomAvatar(personId);
+    return custom ? catalogAvatar(custom) : null;
+  }
+
+  /** Stored avatar row with its look repaired (rows are not validated when written/read). */
+  private storedAvatar(personId: string): ReturnType<Store["getAvatar"]> {
+    const stored = this.store.getAvatar(personId);
+    if (!stored) return null;
+    return { ...stored, avatar: repairAvatar(stored.avatar, personId).avatar };
   }
 
   /**
@@ -512,10 +735,11 @@ export class Hub {
     }
 
     const prev = this.current;
-    const next = this.derive();
+    const next = this.derive(now);
     const events = diff(prev, next, now);
     this.current = next;
     this.trackActivity(events, now);
+    this.shame.record(events, prev, now);
     if (events.length > 0) {
       const lookup = lookupIn(next, prev);
       const prevLookup = lookupIn(prev, next);
@@ -548,8 +772,10 @@ export class Hub {
     }
   }
 
-  private derive(): OfficeState {
+  private derive(now: number): OfficeState {
+    this.derivedAt = now;
     const people: PersonView[] = [];
+    const today = monthDayIn(this.cfg.timezone, now);
     const sorted = [...this.people.values()].sort(
       (a, b) => a.joinedAt - b.joinedAt || a.personId.localeCompare(b.personId),
     );
@@ -558,6 +784,7 @@ export class Hub {
       const sessions: SessionView[] = [];
       for (const c of this.connectors.values()) {
         if (c.personId !== p.personId) continue;
+        const offline = this.isStale(c, now);
         for (const s of c.sessions) {
           sessions.push({
             sessionId: sessionIdOf(c.clientId, s.sessionKey),
@@ -567,10 +794,19 @@ export class Hub {
             subagents: s.subagents,
             startedAt: s.startedAt,
             ...(c.machine ? { machine: c.machine } : {}),
+            ...(offline ? { offline } : {}),
+            ...(s.context !== undefined ? { context: s.context } : {}),
           });
         }
       }
       sessions.sort((a, b) => a.startedAt - b.startedAt || a.sessionId.localeCompare(b.sessionId));
+      let birthday = false;
+      let cats = false;
+      for (const c of this.connectors.values()) {
+        if (c.personId !== p.personId) continue;
+        if (c.birthday === today) birthday = true;
+        if (c.helpers === "cats") cats = true;
+      }
       people.push({
         personId: p.personId,
         name: p.name,
@@ -578,6 +814,8 @@ export class Hub {
         sessions,
         joinedAt: p.joinedAt,
         ...(gif ? { gif } : {}),
+        ...(birthday ? { birthday } : {}),
+        ...(cats ? { helpers: "cats" as const } : {}),
       });
     }
     return { people };
@@ -589,19 +827,17 @@ export class Hub {
       c.clientId,
       c.personId,
       c.name,
-      c.selfDescription ?? "",
       c.machine ?? "",
       c.gif ?? "-",
+      c.helpers ?? "",
       c.socketId ?? "",
       c.sessions.map((s) => s.sessionKey).join(","),
     ]);
-    const ps = [...this.people.values()].map((p) => [
-      p.personId,
-      p.name,
-      p.goneSince,
-      p.joinedAt,
-      p.selfDescription ?? "",
-    ]);
+    // the persisted (catalog) avatar is part of it, so a custom look survives hibernation
+    const ps = [...this.people.values()].map((p) => {
+      const { look: _l, ...catalog } = p.avatar;
+      return [p.personId, p.name, JSON.stringify(catalog), p.goneSince, p.joinedAt];
+    });
     return JSON.stringify([cs, ps, [...this.gifs], [...this.helloGifs]]);
   }
 
@@ -612,7 +848,7 @@ export class Hub {
     const state: Persisted = {
       v: 1,
       connectors: [...this.connectors.values()],
-      people: [...this.people.values()].map(({ lookKey: _k, ...p }) => p),
+      people: [...this.people.values()].map(persistable),
       gifs: Object.fromEntries(this.gifs),
       helloGifs: Object.fromEntries(this.helloGifs),
     };

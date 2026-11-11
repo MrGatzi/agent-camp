@@ -12,6 +12,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
+import { LOOK_FIXTURES } from "@agent-office/protocol/fixtures";
 import { generateWeek, postBackfill, runScenario, type SimHandle } from "@agent-office/sim";
 import type { Browser, BrowserContext, Page } from "playwright";
 import { encodeGif, type RgbaFrame } from "./gif.ts";
@@ -119,6 +120,10 @@ async function context(vp: Viewport): Promise<BrowserContext> {
     deviceScaleFactor: 1,
     timezoneId: TIMEZONE,
     locale: "en-GB",
+    extraHTTPHeaders: { authorization: `Bearer ${PASSWORD}` },
+    // every scene's server is a new origin, so each would keep its own service worker alive
+    // for the rest of the run; shots never need the offline cache
+    serviceWorkers: "block",
   });
   return contexts[vp];
 }
@@ -445,6 +450,38 @@ async function sceneOfficeLife() {
   }
 }
 
+/**
+ * 16: Friday after work in the east street block (`?feierabend=1`): happy hour in the bar,
+ * beers at the standing tables, someone smoking in the corner by the weed shop.
+ */
+async function sceneBarAndShop() {
+  const name = "16-bar-and-shop";
+  if (!want(name)) return;
+  log(name);
+  const o = await office("busy");
+  try {
+    for (const vp of Object.keys(VIEWPORTS) as Viewport[]) {
+      const page = await openOffice(
+        vp,
+        `${o.http}/?feierabend=1&weather=sun&zoom=1.7`,
+        BUSY.people,
+        BUSY.sessions,
+        800,
+      );
+      await livenUp(page);
+      await sleep(40_000);
+      // frame both buildings: the bar on top, the shop and the smokers' corner below
+      await page.evaluate(() => window.__office.camera.lookAt(68, 15.5, 1.7));
+      await sleep(1000);
+      await page.evaluate(() => window.__office.setSpeed(0));
+      await shoot(page, `${name}-${vp}`);
+      await page.close();
+    }
+  } finally {
+    o.stop();
+  }
+}
+
 /** 13: a `/clear` (end + restart a second later): the old character gets zapped. */
 async function sceneCleared() {
   const name = "13-cleared-session";
@@ -486,6 +523,55 @@ async function sceneCleared() {
     await page.close();
   } finally {
     o.stop();
+  }
+}
+
+/**
+ * 14: a detailed look (the hand-authored `tracht` fixture, no AI) on Anna of the `one`
+ * scenario, close up. Injected client-side as the server's avatar.updated would carry it;
+ * she is set to waiting so she faces the camera.
+ */
+async function sceneDetailedLook() {
+  const name = "14-detailed-look";
+  if (!want(name)) return;
+  log(name);
+  const o = await office("one");
+  try {
+    for (const vp of Object.keys(VIEWPORTS) as Viewport[]) {
+      const page = await openOffice(vp, `${o.http}/?hour=14`, 1, 1, 1500);
+      const [x] = await sessionsOf(page);
+      if (!x) throw new Error("no session in scenario one");
+      await inject(page, "avatar.updated", { personId: x.personId, avatar: LOOK_FIXTURES.tracht });
+      await inject(page, "session.activityChanged", {
+        personId: x.personId,
+        sessionId: x.sessionId,
+        activity: "waiting",
+        previous: x.activity,
+      });
+      await page.evaluate((p) => window.__office.camera.focusPerson(p, 6), x.personId);
+      await sleep(1500);
+      await shoot(page, `${name}-${vp}`);
+      await page.close();
+    }
+  } finally {
+    o.stop();
+  }
+}
+
+/** 15: the dev look gallery (`?gallery=look`): hero frames of the tracht look + full sheets. */
+async function sceneLookGallery() {
+  const name = "15-look-gallery";
+  if (!want(name)) return;
+  log(name);
+  const srv = await startServer();
+  try {
+    const page = await openPage("laptop", `${srv.http}/?gallery=look&look=tracht`);
+    await page.waitForFunction(() => window.__galleryReady === true, null, { timeout: 30_000 });
+    await sleep(500);
+    await shoot(page, name, { fullPage: true });
+    await page.close();
+  } finally {
+    srv.stop();
   }
 }
 
@@ -701,7 +787,10 @@ async function main() {
     await sceneAgentCard();
     await sceneOfficeLife();
     await sceneCleared();
+    await sceneBarAndShop();
     await sceneTerminal();
+    await sceneDetailedLook();
+    await sceneLookGallery();
   } finally {
     await browser.close();
     cleanup();
@@ -712,6 +801,8 @@ async function main() {
 
 declare global {
   interface Window {
+    /** set by the `?gallery=look` dev page once every sheet is drawn */
+    __galleryReady?: boolean;
     __office: {
       ready: boolean;
       fps(): number;
@@ -719,6 +810,7 @@ declare global {
       camera: {
         zoomToFit(): void;
         focusArea(name: string): void;
+        lookAt(tileX: number, tileY: number, zoom: number): void;
         focusPerson(personId: string, zoom?: number): boolean;
       };
       snapshotPng(): Promise<string | null>;

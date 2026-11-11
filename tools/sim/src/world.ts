@@ -8,9 +8,12 @@ import {
   type AgentKind,
   ConnectorToServer,
   envelope,
+  type HelperSkin,
+  MAX_SELF_DESCRIPTION,
   type MessageOf,
   personIdFromName,
   type SessionInfo,
+  SHORT_SELF_DESCRIPTION,
 } from "@agent-office/protocol";
 
 export type LaptopDef = {
@@ -19,6 +22,8 @@ export type LaptopDef = {
   description?: string;
   /** machine label sent in hello ("laptop", "devbox") */
   machine?: string;
+  /** what this person's subagents look like (connector `helpers`); omitted = robots */
+  helpers?: HelperSkin;
 };
 
 export type SessionSpec = {
@@ -157,6 +162,10 @@ export class World {
         activity: s.activity,
         subagents: s.subagents,
         startedAt: s.startedAt,
+        // a stable per-session context share, so the office shows some smoke and fire
+        context: [0.15, 0.35, 0.55, 0.2, 0.3, 0.4, 0.65, 0.1, 0.25, 0.45, 0.85, 0.3, 0.2, 0.5][
+          s.key.charCodeAt(s.key.length - 1) % 14
+        ]!,
       };
       if (s.project) info.project = s.project;
       return info;
@@ -175,6 +184,23 @@ export function validateOutgoing<M>(msg: M): M {
   return msg;
 }
 
+/**
+ * Same split as the real connector (apps/connector `helloDescription`): the first 200 chars as
+ * `selfDescription` (older servers), the full text up to 8000 chars as `lookDescription` when
+ * it is longer than that.
+ */
+export function helloDescription(
+  description: string | undefined,
+): Pick<MessageOf<"connector.hello">["data"], "selfDescription" | "lookDescription"> {
+  const d = description?.trim();
+  if (!d) return {};
+  if (d.length <= SHORT_SELF_DESCRIPTION) return { selfDescription: d };
+  return {
+    selfDescription: d.slice(0, SHORT_SELF_DESCRIPTION),
+    lookDescription: d.slice(0, MAX_SELF_DESCRIPTION),
+  };
+}
+
 export function helloMessage(
   laptop: LaptopDef,
   password: string,
@@ -187,8 +213,9 @@ export function helloMessage(
     connectorVersion: SIM_CONNECTOR_VERSION,
     platform: "sim",
   };
-  if (laptop.description) data.selfDescription = laptop.description;
+  Object.assign(data, helloDescription(laptop.description));
   if (laptop.machine) data.machine = laptop.machine;
+  if (laptop.helpers === "cats") data.helpers = "cats";
   return validateOutgoing(envelope("connector.hello", data, ts === undefined ? {} : { ts }));
 }
 

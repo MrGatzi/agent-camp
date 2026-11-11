@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname } from "node:path";
+import { HELPER_SKINS, type HelperSkin } from "@agent-office/protocol";
 
 export type Config = {
   server?: string;
@@ -18,6 +19,12 @@ export type Config = {
   /** Giphy id of the GIF over your head; "" = explicitly none (removes it everywhere) */
   gif?: string;
   share_project_names: boolean;
+  /** show pokes from the office as macOS notifications */
+  notifications: boolean;
+  /** opt-in "MM-DD": the office brings a cake that day */
+  birthday?: string;
+  /** what your subagents look like in the office: "robots" (default) or "cats" */
+  helpers: HelperSkin;
   client_id: string;
 };
 
@@ -29,6 +36,9 @@ export const CONFIG_KEYS = [
   "machine_name",
   "gif",
   "share_project_names",
+  "notifications",
+  "birthday",
+  "helpers",
   "client_id",
 ] as const;
 
@@ -126,6 +136,18 @@ export function machineName(config: Pick<Config, "machine_name">, host?: string)
   return v || defaultMachineName(host);
 }
 
+/** "MM-DD" or undefined. */
+export function validBirthday(v: string | undefined): string | undefined {
+  const t = v?.trim();
+  return t && /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(t) ? t : undefined;
+}
+
+/** "robots" | "cats" (trimmed, any case) or undefined for anything else. */
+export function validHelpers(v: string | undefined): HelperSkin | undefined {
+  const t = v?.trim().toLowerCase();
+  return (HELPER_SKINS as readonly string[]).includes(t ?? "") ? (t as HelperSkin) : undefined;
+}
+
 export function newClientId(): string {
   return `c_${randomBytes(9).toString("hex")}`;
 }
@@ -134,6 +156,7 @@ export function newClientId(): string {
 export function toConfig(values: Record<string, TomlValue>): Config {
   const s = (k: string) => (typeof values[k] === "string" ? (values[k] as string) : undefined);
   const share = values.share_project_names;
+  const notify = values.notifications;
   const clientId = s("client_id");
   return {
     server: s("server"),
@@ -143,6 +166,9 @@ export function toConfig(values: Record<string, TomlValue>): Config {
     machine_name: s("machine_name"),
     gif: s("gif"),
     share_project_names: !(share === false || share === "false"),
+    notifications: !(notify === false || notify === "false"),
+    birthday: validBirthday(s("birthday")),
+    helpers: validHelpers(s("helpers")) ?? "robots",
     client_id: clientId && /^[A-Za-z0-9_-]{1,64}$/.test(clientId) ? clientId : newClientId(),
   };
 }
@@ -170,6 +196,9 @@ export function saveConfig(path: string, config: Config): void {
       machine_name: config.machine_name,
       gif: config.gif,
       share_project_names: config.share_project_names,
+      notifications: config.notifications,
+      birthday: config.birthday,
+      helpers: config.helpers,
       client_id: config.client_id,
     }),
     { mode: 0o600 },

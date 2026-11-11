@@ -70,7 +70,12 @@ const pad = (s: string, n: number) => (s.length >= n ? s : s + " ".repeat(n - s.
 /** One concise human-readable line for an action (computed before it is applied). */
 export function describeAction(world: World, a: Action): string {
   if (a.op === "connect") {
-    const desc = a.laptop.description ? ` "${a.laptop.description}"` : "";
+    const d = a.laptop.description;
+    const desc = !d
+      ? ""
+      : d.length > 60
+        ? ` "${d.slice(0, 57)}..." (${d.length} chars)`
+        : ` "${d}"`;
     return `${pad(a.laptop.name, 9)} connect   ${a.laptop.clientId}${desc}`;
   }
   const l = world.laptops.get(a.clientId);
@@ -190,7 +195,9 @@ export function runScenario(opts: SimOptions = {}): SimHandle {
     const deadline = Date.now() + (opts.settleTimeoutMs ?? 8_000);
     while (!stopping && Date.now() < deadline) {
       try {
-        const res = await fetch(`${urls.http}/api/state`);
+        const res = await fetch(`${urls.http}/api/state`, {
+          headers: { authorization: `Bearer ${password}` },
+        });
         if (res.ok && stateMatches((await res.json()) as z.infer<typeof OfficeSnapshot>, world))
           return;
       } catch {

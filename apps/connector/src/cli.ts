@@ -7,9 +7,11 @@ import { dirname } from "node:path";
 import {
   envelope,
   giphyPageUrl,
+  MAX_SELF_DESCRIPTION,
   type MessageData,
   PresenceSnapshot,
   parseGiphyId,
+  SHORT_SELF_DESCRIPTION,
 } from "@agent-office/protocol";
 import {
   CONFIG_KEYS,
@@ -18,10 +20,13 @@ import {
   machineName,
   newClientId,
   saveConfig,
+  validBirthday,
+  validHelpers,
 } from "./config.ts";
 import { Daemon, type StatusFile } from "./daemon.ts";
 import { Detector } from "./detect/index.ts";
 import { log } from "./log.ts";
+import { Notifier } from "./notify.ts";
 import {
   agentDirs,
   configDir,
@@ -82,10 +87,15 @@ Commands:
       --assume-processes  treat every agent as running (tests; also AGENT_OFFICE_ASSUME_PROCESSES=1)
       --once              print one presence.snapshot JSON to stdout and exit
   configure         write ~/.config/agent-office/config.toml
-      --server URL --password PW --name NAME --description TEXT
+      --server URL --password PW --name NAME
+      --description TEXT  how you look, a few words or a detailed paragraph (up to 8000 chars)
+      --description-file PATH|-  read the description from a file or stdin (wins over --description)
       --machine-name LABEL  (default: short hostname; "" resets to it)
       --gif GIPHY-LINK|off  GIF over your head (see \`gif\`)
       --share-project-names true|false     --get KEY (print one value)
+      --notifications true|false   show waves/messages from the office (default true)
+      --birthday MM-DD     opt-in: the office brings you a cake that day ("" removes it)
+      --helpers robots|cats   what your subagents look like in the office (default robots)
   gif [GIPHY-LINK|off]
                     show any GIF from giphy.com over your head (paste the page or media
                     link, or the id); "off" removes it; no argument prints the current one.
@@ -97,9 +107,15 @@ Commands:
   version           print the version
   help              this text
 
+Long look descriptions are easiest kept in a file:
+  agent-office configure --description-file ~/look.md
+then restart the service so the office redraws you:
+  launchctl kickstart -k gui/$(id -u)/${LAUNCHD_LABEL}
+
 Only status metadata is sent: agent kind, hashed session id, project folder name
-(disable with share_project_names = false), activity, subagent count, start time,
-the machine label you chose (machine_name) and the Giphy id of your head GIF (gif).`;
+(disable with share_project_names = false), activity, subagent count, context use %, start time,
+the machine label you chose (machine_name), your look description and the Giphy id of your
+head GIF (gif).`;
 
 export async function main(argv: string[]): Promise<number> {
   const args = parseArgs(argv);
@@ -111,7 +127,7 @@ export async function main(argv: string[]): Promise<number> {
     case "run":
       return cmdRun(args);
     case "configure":
-      return cmdConfigure(args);
+      return await cmdConfigure(args);
     case "gif":
       return cmdGif(args);
     case "status":
@@ -137,6 +153,22 @@ export async function main(argv: string[]): Promise<number> {
 }
 
 // ---- run ----------------------------------------------------------------------------------
+/**
+ * Look description fields for connector.hello: every server accepts the 200-char head
+ * (`selfDescription`); newer servers use the full text (`lookDescription`, only when longer).
+ */
+export function helloDescription(
+  description: string | undefined,
+): Pick<MessageData<"connector.hello">, "selfDescription" | "lookDescription"> {
+  const d = description?.trim();
+  if (!d) return {};
+  const out: Pick<MessageData<"connector.hello">, "selfDescription" | "lookDescription"> = {
+    selfDescription: d.slice(0, SHORT_SELF_DESCRIPTION),
+  };
+  if (d.length > SHORT_SELF_DESCRIPTION) out.lookDescription = d.slice(0, MAX_SELF_DESCRIPTION);
+  return out;
+}
+
 async function cmdRun(args: Args): Promise<number> {
   const { flags } = args;
   const env = process.env;
@@ -199,8 +231,7 @@ async function cmdRun(args: Args): Promise<number> {
       connectorVersion: VERSION,
       platform: platformId(),
     };
-    const d = description?.trim();
-    if (d) h.selfDescription = d.slice(0, 200);
+    Object.assign(h, helloDescription(description));
     if (machine) h.machine = machine;
     // a stored id that no longer parses (hand-edited config) is simply not sent
     if (gif === "") h.gif = "";
@@ -208,6 +239,8 @@ async function cmdRun(args: Args): Promise<number> {
       const id = parseGiphyId(gif);
       if (id) h.gif = id;
     }
+    if (config.birthday) h.birthday = config.birthday;
+    if (config.helpers === "cats") h.helpers = "cats";
     return h;
   };
 
@@ -222,6 +255,7 @@ async function cmdRun(args: Args): Promise<number> {
     log,
   });
 
+  const notifier = new Notifier({ enabled: config.notifications, log });
   const daemon = new Daemon({
     server,
     hello,
@@ -230,6 +264,7 @@ async function cmdRun(args: Args): Promise<number> {
     log,
     version: VERSION,
     statusFile: statusPath(),
+    onPoked: (p) => void notifier.show(p),
   });
 
   log(
@@ -251,7 +286,17 @@ async function cmdRun(args: Args): Promise<number> {
 }
 
 // ---- configure ----------------------------------------------------------------------------
-function cmdConfigure(args: Args): number {
+/** `--description-file PATH|-`: the file's (or stdin's) text, or an error message. */
+async function readDescriptionFile(path: string): Promise<{ text: string } | { error: string }> {
+  try {
+    const text = path === "-" ? await Bun.stdin.text() : readFileSync(path, "utf8");
+    return { text };
+  } catch (e) {
+    return { error: `cannot read description file ${path}: ${(e as Error).message}` };
+  }
+}
+
+async function cmdConfigure(args: Args): Promise<number> {
   const { flags } = args;
   const path = configPath();
   const { config } = loadConfig(path);
@@ -278,8 +323,37 @@ function cmdConfigure(args: Args): number {
   set("name", "name");
   set("description", "self_description");
   set("machine-name", "machine_name");
+  const descFile = flagStr(flags, "description-file");
+  if (descFile !== undefined) {
+    const r = await readDescriptionFile(descFile);
+    if ("error" in r) {
+      console.error(r.error);
+      return 1;
+    }
+    const text = r.text.trim();
+    next.self_description = text === "" ? undefined : text;
+  }
   const share = flags["share-project-names"];
   if (share !== undefined) next.share_project_names = !(share === "false" || share === "0");
+  const bday = flagStr(flags, "birthday");
+  if (bday !== undefined) {
+    if (bday.trim() && !validBirthday(bday)) {
+      console.error("birthday must look like MM-DD, e.g. 03-14");
+      return 2;
+    }
+    next.birthday = validBirthday(bday);
+  }
+  const helpers = flagStr(flags, "helpers");
+  if (helpers !== undefined) {
+    const skin = helpers.trim() === "" ? "robots" : validHelpers(helpers);
+    if (!skin) {
+      console.error("helpers must be robots or cats");
+      return 2;
+    }
+    next.helpers = skin;
+  }
+  const notify = flags.notifications;
+  if (notify !== undefined) next.notifications = !(notify === "false" || notify === "0");
   if (next.name && next.name.trim().length > 40) {
     console.error("name must be at most 40 characters");
     return 2;
@@ -288,8 +362,12 @@ function cmdConfigure(args: Args): number {
     console.error("machine name must be at most 40 characters");
     return 2;
   }
-  if (next.self_description && next.self_description.length > 200) {
-    next.self_description = next.self_description.slice(0, 200);
+  if (next.self_description && next.self_description.length > MAX_SELF_DESCRIPTION) {
+    console.error(
+      `note: description is ${next.self_description.length} characters; ` +
+        `keeping the first ${MAX_SELF_DESCRIPTION}`,
+    );
+    next.self_description = next.self_description.slice(0, MAX_SELF_DESCRIPTION);
   }
   const gifFlag = flagStr(flags, "gif");
   if (gifFlag !== undefined) {

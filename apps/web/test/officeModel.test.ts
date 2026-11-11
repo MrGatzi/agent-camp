@@ -29,6 +29,84 @@ const snap = (people: PersonView[]) =>
   envelope("office.snapshot", { officeName: "Camp", serverTime: T0, people }, { ts: T0 });
 
 describe("OfficeModel", () => {
+  test("helper skin: robots by default, cats from snapshot and event", () => {
+    const m = new OfficeModel(() => T0);
+    m.apply(snap([person("Anna"), { ...person("Bob"), helpers: "cats" }]));
+    expect(m.people.get("anna")?.helpers).toBe("robots");
+    expect(m.people.get("bob")?.helpers).toBe("cats");
+    const ch = m.apply(envelope("person.helpersChanged", { personId: "anna", helpers: "cats" }));
+    expect(ch).toEqual([{ kind: "helpersChanged", personId: "anna", helpers: "cats" }]);
+    expect(
+      m.apply(envelope("person.helpersChanged", { personId: "anna", helpers: "cats" })),
+    ).toEqual([]);
+    // a resync snapshot without the field turns Bob back to robots
+    const back = m.apply(snap([{ ...person("Anna"), helpers: "cats" }, person("Bob")]));
+    expect(back).toContainEqual({ kind: "helpersChanged", personId: "bob", helpers: "robots" });
+  });
+
+  test("cat interactions carry the cat and the floor spot", () => {
+    const m = new OfficeModel(() => T0);
+    m.apply(snap([person("Anna")]));
+    const yarn = m.apply(
+      envelope("interaction.happened", { kind: "yarn", from: "Lea", catId: 2, x: 600, y: 140 }),
+    );
+    expect(yarn).toEqual([
+      {
+        kind: "interaction",
+        interaction: "yarn",
+        personId: undefined,
+        from: "Lea",
+        text: undefined,
+        delivered: undefined,
+        catId: 2,
+        spot: { x: 600, y: 140 },
+      },
+    ]);
+    const visit = m.apply(
+      envelope("interaction.happened", { kind: "cat", personId: "anna", catId: 1, delivered: 0 }),
+    );
+    expect(visit[0]).toMatchObject({ interaction: "cat", personId: "anna", catId: 1 });
+    expect(visit[0]).toMatchObject({ spot: undefined });
+  });
+
+  test("party scores and equipment reconcile through socket snapshots and events", () => {
+    const m = new OfficeModel(() => T0);
+    const p = person("Anna", [sess("a1")]);
+    m.apply(snap([p]));
+    const avatar = { ...p.avatar, rightHand: "lightsaber" as const, vehicle: "car" as const };
+    m.apply(envelope("avatar.updated", { personId: "anna", avatar }));
+    const party = {
+      scores: { anna: 3 },
+      events: [
+        {
+          id: "party-1",
+          personId: "anna",
+          action: "race" as const,
+          item: "lightsaber" as const,
+          vehicle: "car" as const,
+          at: T0,
+          roll: 3,
+        },
+      ],
+    };
+    expect(m.apply(envelope("party.updated", { party }))).toEqual([{ kind: "partyChanged" }]);
+    expect(m.party.scores.anna).toBe(3);
+    expect(m.people.get("anna")!.avatar.rightHand).toBe("lightsaber");
+    // Party updates must leave the reported coding session state intact.
+    expect(m.sessions.get("laptop:a1")!.activity).toBe("typing");
+    m.apply(
+      envelope("office.snapshot", {
+        officeName: "Camp",
+        serverTime: T0,
+        people: [{ ...p, avatar }],
+        party,
+      }),
+    );
+    expect(m.party).toEqual(party);
+    m.apply(snap([p]));
+    expect(m.party).toEqual({ events: [], scores: {} });
+  });
+
   test("agent card data: machine, subagent peak, activity timeline", () => {
     let now = T0;
     const m = new OfficeModel(() => now);
@@ -112,6 +190,16 @@ describe("OfficeModel", () => {
     m.apply(envelope("session.ended", { personId: "ben", sessionId: "laptop:b2" }));
     m.apply(envelope("session.started", { personId: "ben", session: sess("b4") }));
     expect(m.sessions.get("laptop:b4")!.desk).toBe(1);
+  });
+
+  test("a session moved into a freed desk frees its old one", () => {
+    const m = new OfficeModel(() => T0);
+    m.apply(snap([person("Ben", [sess("b1"), sess("b2"), sess("b3")])]));
+    m.apply(envelope("session.ended", { personId: "ben", sessionId: "laptop:b1" }));
+    m.moveDesk("laptop:b3", 0);
+    expect(m.sessionsOf("ben").map((s) => s.desk)).toEqual([0, 1]);
+    m.apply(envelope("session.started", { personId: "ben", session: sess("b4") }));
+    expect(m.sessions.get("laptop:b4")!.desk).toBe(2);
   });
 
   test("events produce animated changes", () => {

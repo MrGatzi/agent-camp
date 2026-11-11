@@ -1,8 +1,10 @@
 /**
- * `?demo=busy|one|empty|join|party` (or `?demo=1` = busy): a local fake event stream, no server.
+ * `?demo=busy|one|empty|join|party|feierabend` (or `?demo=1` = busy): a local fake event
+ * stream, no server. `feierabend` = Friday 17:30: most people idle, the bar full, the weed
+ * shop and smokers' corner busy.
  * `party` plays the office-life moments quickly: idle people (coffee, chats, arcade), a long
  * waiter, a helper burst to 10 (party mode), `/clear` restarts, a long session that ships, new
- * records of parallel agents.
+ * records of parallel agents, and the cats: a food bowl, the laser, a yarn ball, a cat visit.
  * Deterministic for a given `seed`: the same sequence of messages in the same order
  * (timing is wall clock, so only order and content are reproducible).
  * Every message is built with `envelope()` and is schema-valid.
@@ -11,16 +13,18 @@ import {
   ACTIVITIES,
   type Activity,
   type AgentKind,
+  type AvatarSpec,
   avatarFromSeed,
   envelope,
   type PersonView,
+  repairAvatar,
   type ServerToViewer,
   type SessionView,
   seededRandom,
   sessionIdOf,
 } from "@agent-office/protocol";
 
-export type DemoMode = "busy" | "one" | "empty" | "join" | "party";
+export type DemoMode = "busy" | "one" | "empty" | "join" | "party" | "feierabend";
 
 export const DEMO_NAMES = [
   "Anna",
@@ -62,6 +66,8 @@ export type DemoOptions = {
   sessions?: number;
   /** speed multiplier for the event clock (default 1) */
   speed?: number;
+  /** avatar of the first demo person (`?look=`), e.g. a detailed look fixture */
+  look?: AvatarSpec;
 };
 
 type Sink = (msg: ServerToViewer) => void;
@@ -111,6 +117,10 @@ export class DemoFeed {
     }
     if (mode === "party") {
       this.startParty();
+      return;
+    }
+    if (mode === "feierabend") {
+      this.startFeierabend();
       return;
     }
     // busy
@@ -186,6 +196,10 @@ export class DemoFeed {
   ): SessionView {
     // every third session runs on the devbox (no rand() call: keeps seeded demos unchanged)
     const machine = this.sessionCounter % 3 === 2 ? "devbox" : "MacBook";
+    // fixed context ramp per session (no rand(): seeded demos stay the same); some smoke, one burns
+    const context = [0.15, 0.35, 0.55, 0.2, 0.3, 0.4, 0.65, 0.1, 0.25, 0.45, 0.85, 0.3, 0.2, 0.5][
+      this.sessionCounter % 14
+    ]!;
     const key = `demo${(this.sessionCounter++).toString(36).padStart(6, "0")}${Math.floor(this.rand() * 1e6)}`;
     return {
       sessionId: sessionIdOf("demo-laptop", key),
@@ -195,16 +209,18 @@ export class DemoFeed {
       subagents,
       startedAt: this.now() - Math.floor(this.rand() * 3 * 3600_000),
       machine,
+      context,
     };
   }
 
   private makePerson(sessions: number): PersonView {
     const name = DEMO_NAMES[this.nameIdx++ % DEMO_NAMES.length]!;
     const personId = name.toLowerCase();
+    const first = this.nameIdx === 1 && this.opts.look;
     const p: PersonView = {
       personId,
       name,
-      avatar: avatarFromSeed(personId),
+      avatar: first ? structuredClone(this.opts.look!) : avatarFromSeed(personId),
       sessions: [],
       joinedAt: this.now() - Math.floor(this.rand() * 5 * 3600_000),
     };
@@ -286,6 +302,21 @@ export class DemoFeed {
     this.after(19000, () => this.endSession(anna!, anna!.sessions[0]));
     this.after(24000, () => this.startSession(martin!, "reading"));
     this.after(34000, () => this.clearSession(martin!));
+    // the cats get some attention too: a bowl, the laser, a yarn ball, a cat on Lea's desk
+    this.after(5000, () => this.catPlay("feed", "Mia", 0, 720, 140));
+    this.after(10000, () => this.catPlay("laser", "Jonas", 1, 600, 140));
+    this.after(18000, () => this.catPlay("yarn", "Max", 2, 700, 400));
+    this.after(26000, () =>
+      this.emit(
+        envelope("interaction.happened", {
+          kind: "cat",
+          personId: "lea",
+          from: "Felix",
+          catId: 3,
+          delivered: 0,
+        }),
+      ),
+    );
     // keep the busy ones busy, the idle ones idle (they wander, chat, play)
     this.loop(2600, () => {
       const busy = [...this.people.values()].flatMap((p) =>
@@ -310,6 +341,39 @@ export class DemoFeed {
           this.after(5000, () => this.startSession(p, "typing"));
         }
       }
+    });
+  }
+
+  private catPlay(
+    kind: "feed" | "yarn" | "laser",
+    from: string,
+    catId: number,
+    x: number,
+    y: number,
+  ) {
+    this.emit(envelope("interaction.happened", { kind, from, catId, x, y }));
+  }
+
+  // ---- feierabend -------------------------------------------------------------------------
+  /** Friday after work: nearly everybody's agents idle, two people still pushing. */
+  private startFeierabend() {
+    const H = 3600_000;
+    const plan: Activity[] = ["idle", "idle", "typing", "idle", "idle", "idle", "running", "idle"];
+    const people = plan.map((activity) => {
+      const p = this.makePerson(0);
+      const ses = this.makeSession(this.agent(), activity, 0);
+      ses.startedAt = this.now() - Math.floor((0.5 + this.rand() * 2) * H);
+      p.sessions.push(ses);
+      return p;
+    });
+    this.snapshot(people);
+    this.loop(3000, () => {
+      const busy = [...this.people.values()].flatMap((p) =>
+        p.sessions.filter((x) => x.activity !== "idle").map((x) => [p, x] as const),
+      );
+      if (busy.length === 0) return;
+      const [p, x] = this.pick(busy);
+      this.setActivity(p.personId, x, this.pick(["typing", "reading", "running"] as const));
     });
   }
 
@@ -419,8 +483,54 @@ export function parseDemoMode(value: string | null): DemoMode | null {
     value === "empty" ||
     value === "join" ||
     value === "busy" ||
-    value === "party"
+    value === "party" ||
+    value === "feierabend"
   )
     return value;
   return "busy";
 }
+
+/**
+ * `?look=` value -> avatar: a fixture name (`tracht`, looked up in `fixtures`) or
+ * `b64:<base64url AvatarSpec JSON>`. Untrusted input goes through `repairAvatar`; values with
+ * nothing usable give null. Fixtures are passed in (loaded on demand from
+ * `@agent-office/protocol/fixtures`) so they stay out of the main bundle.
+ */
+export function parseLookParam(
+  value: string | null,
+  fixtures: Readonly<Record<string, AvatarSpec>> = {},
+): AvatarSpec | null {
+  if (!value) return null;
+  if (Object.hasOwn(fixtures, value)) return fixtures[value]!;
+  if (!value.startsWith("b64:")) return null;
+  let candidate: unknown;
+  try {
+    const b64 = value.slice(4).replace(/-/g, "+").replace(/_/g, "/");
+    const bin = atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, "="));
+    candidate = JSON.parse(
+      new TextDecoder().decode(Uint8Array.from(bin, (ch) => ch.charCodeAt(0))),
+    );
+  } catch {
+    return null;
+  }
+  if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) return null;
+  const { avatar, repaired } = repairAvatar(candidate, "look-param");
+  if (!repaired) return avatar;
+  // repaired: keep it only if something from the candidate survived (a look or a catalog field)
+  const c = candidate as Record<string, unknown>;
+  const kept =
+    (avatar.look !== undefined && "look" in c) ||
+    LOOK_CATALOG_KEYS.some((k) => k in c && JSON.stringify(c[k]) === JSON.stringify(avatar[k]));
+  return kept ? avatar : null;
+}
+
+const LOOK_CATALOG_KEYS = [
+  "hairStyle",
+  "hairColor",
+  "skinTone",
+  "glasses",
+  "facialHair",
+  "accessory",
+  "deskProps",
+  "deskMess",
+] as const;

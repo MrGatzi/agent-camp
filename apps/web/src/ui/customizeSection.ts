@@ -1,30 +1,25 @@
 /**
- * "Customize" section of the person card: shows the GIF over the person's head and lets a
- * viewer paste a Giphy link to set, change or remove it (PUT /api/people/:id/gif with the
- * office password).
+ * "Head GIF" section of your own person card (only once this browser confirmed "It's me",
+ * like the look editor): shows the GIF over your head and lets you paste a Giphy link to set,
+ * change or remove it (PUT /api/people/:id/gif; the server checks the `ao_me` cookie).
  *
  * The HUD re-renders the rest of the card with innerHTML on nearly every model change, so this
- * section is a long-lived element (one per opened person) that the HUD keeps mounted next to
- * the re-rendered part; `update()` only refreshes the "current GIF" bits. The current GIF
- * follows the model (`gif.updated`), never the PUT response.
+ * section is a long-lived element (one per opened person) that the HUD re-appends after each
+ * render and doesn't re-render while it has focus; `update()` only refreshes the "current GIF"
+ * bits. The current GIF follows the model (`gif.updated`), never the PUT response.
  *
  * Every string goes in via textContent; image URLs are only ever built by giphyGifUrl().
  */
 import { giphyGifUrl, giphyPageUrl } from "@agent-office/protocol";
 import {
   type GifInputCheck,
-  type PasswordStore,
   type PutGifResult,
   saveOutcome,
   validateGifInput,
 } from "./customize.ts";
 
 /** Injected by main.ts: PUT the link (null = remove). Resolves with status 0 on network errors. */
-export type PutGif = (
-  personId: string,
-  link: string | null,
-  password: string,
-) => Promise<PutGifResult>;
+export type PutGif = (personId: string, link: string | null) => Promise<PutGifResult>;
 
 type Tone = "info" | "ok" | "error";
 
@@ -44,8 +39,6 @@ export class CustomizeSection {
   private newBox: HTMLElement;
   private newImg: HTMLImageElement;
   private hint: HTMLElement;
-  private pwWrap: HTMLElement;
-  private pwInput: HTMLInputElement;
   private saveBtn: HTMLButtonElement;
   private removeBtn: HTMLButtonElement;
   private status: HTMLElement;
@@ -54,19 +47,15 @@ export class CustomizeSection {
   private gif: string | undefined;
   private check: GifInputCheck = { state: "empty" };
   private saving = false;
-  private askPassword = false;
-  /** what Enter in the password field confirms */
-  private pending: "save" | "remove" = "save";
 
   constructor(
     readonly personId: string,
     gif: string | undefined,
     private readonly putGif: PutGif,
-    private readonly passwords: PasswordStore,
   ) {
     this.root = node("section", "customize");
-    this.root.setAttribute("aria-label", "Customize");
-    const title = node("div", "today-title customize-title", "Customize");
+    this.root.setAttribute("aria-label", "Head GIF");
+    const title = node("div", "today-title customize-title", "GIF over your head");
 
     const current = node("div", "customize-current");
     this.currentLink = node("a", "customize-current-link");
@@ -81,7 +70,7 @@ export class CustomizeSection {
     this.none = node("span", "customize-none dim", "No GIF yet");
     current.append(this.currentLink, this.none);
 
-    // a form so password managers recognise the password field; Enter is handled per input
+    // Enter is handled on the input
     const form = node("form", "customize-form");
     form.noValidate = true;
     form.addEventListener("submit", (e) => e.preventDefault());
@@ -101,7 +90,7 @@ export class CustomizeSection {
       if (!this.saving) this.setStatus("", "info");
       this.revalidate();
     });
-    this.input.addEventListener("keydown", (e) => this.onKey(e, "save"));
+    this.input.addEventListener("keydown", (e) => this.onKey(e));
 
     this.newBox = node("div", "customize-new");
     this.newImg = node("img", "customize-new-img");
@@ -117,17 +106,6 @@ export class CustomizeSection {
     this.hint = node("div", "customize-hint");
     this.hint.setAttribute("aria-live", "polite");
 
-    this.pwWrap = node("label", "customize-password");
-    this.pwInput = node("input", "customize-password-input");
-    this.pwInput.type = "password";
-    this.pwInput.autocomplete = "current-password";
-    this.pwInput.setAttribute("enterkeyhint", "done");
-    this.pwInput.addEventListener("keydown", (e) => this.onKey(e, null));
-    this.pwInput.addEventListener("input", () => {
-      if (!this.saving) this.setStatus("", "info");
-    });
-    this.pwWrap.append(node("span", "customize-password-label", "Office password"), this.pwInput);
-
     const buttons = node("div", "customize-buttons");
     this.saveBtn = node("button", "pixel-btn customize-save", "Save");
     this.saveBtn.type = "button";
@@ -140,9 +118,8 @@ export class CustomizeSection {
     this.status = node("div", "customize-status");
     this.status.setAttribute("role", "status");
 
-    form.append(this.input, this.newBox, this.hint, this.pwWrap, buttons, this.status);
+    form.append(this.input, this.newBox, this.hint, buttons, this.status);
     this.root.append(title, current, form);
-    this.showPassword(false);
     this.showCurrent(gif);
     this.revalidate();
   }
@@ -186,13 +163,6 @@ export class CustomizeSection {
     this.saveBtn.disabled = this.saving || this.check.state !== "valid";
     this.removeBtn.disabled = this.saving || !this.gif;
     this.input.readOnly = this.saving;
-    this.pwInput.readOnly = this.saving;
-  }
-
-  private showPassword(show: boolean) {
-    this.askPassword = show;
-    this.pwWrap.hidden = !show;
-    if (!show) this.pwInput.value = "";
   }
 
   private setStatus(text: string, tone: Tone, clearAfterMs = 0) {
@@ -206,16 +176,15 @@ export class CustomizeSection {
       }, clearAfterMs);
   }
 
-  /** Enter saves (or confirms the pending action from the password field); Escape blurs. */
-  private onKey(e: KeyboardEvent, action: "save" | null) {
+  /** Enter saves; Escape blurs. Typing must not reach the office keyboard shortcuts. */
+  private onKey(e: KeyboardEvent) {
+    e.stopPropagation();
     if (e.key === "Escape") {
       // keep the card (and an unsaved link) open; a second Escape closes the card
-      e.stopPropagation();
       (e.currentTarget as HTMLElement).blur();
     } else if (e.key === "Enter" && !e.isComposing) {
       e.preventDefault();
-      const a = action ?? this.pending;
-      if (a === "save" ? !this.saveBtn.disabled : !this.removeBtn.disabled) void this.submit(a);
+      if (!this.saveBtn.disabled) void this.submit("save");
     }
   }
 
@@ -223,41 +192,17 @@ export class CustomizeSection {
     if (this.saving) return;
     const link = action === "save" && this.check.state === "valid" ? this.check.id : null;
     if (action === "save" ? link === null : !this.gif) return;
-    this.pending = action;
-
-    const password = this.askPassword ? this.pwInput.value : this.passwords.get();
-    if (!password) {
-      const again = action === "save" ? "Save" : "Remove";
-      this.setStatus(
-        this.askPassword
-          ? "Enter the office password"
-          : `Enter the office password, then ${again} again`,
-        this.askPassword ? "error" : "info",
-      );
-      this.showPassword(true);
-      this.pwInput.focus();
-      return;
-    }
-
     this.saving = true;
     this.setStatus("Saving…", "info");
     this.renderButtons();
-    const res = await this.putGif(this.personId, link, password).catch(
+    const res = await this.putGif(this.personId, link).catch(
       (): PutGifResult => ({ status: 0, body: null }),
     );
     this.saving = false;
     const out = saveOutcome(res);
     if (out.kind === "saved") {
-      this.passwords.set(password);
-      this.showPassword(false);
       if (action === "save") this.input.value = "";
       this.setStatus(action === "save" ? "Saved" : "Removed", "ok", 3000);
-    } else if (out.kind === "needPassword") {
-      this.passwords.clear();
-      this.showPassword(true);
-      this.pwInput.value = "";
-      this.setStatus(out.message, "error");
-      this.pwInput.focus();
     } else {
       this.setStatus(out.message, "error");
     }

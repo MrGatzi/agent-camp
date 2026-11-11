@@ -1,6 +1,6 @@
 /**
- * Decision logic for the "Customize" section of the person card (set / change / remove the
- * GIF over someone's head). Pure: no DOM, storage passed in, so it is unit tested.
+ * Decision logic for the "Head GIF" section of your own person card (set / change / remove the
+ * GIF over your head). Pure: no DOM, so it is unit tested.
  */
 import { ApiError, parseGiphyId } from "@agent-office/protocol";
 
@@ -34,12 +34,10 @@ export type PutGifResult = { status: number; body: unknown };
 
 export type SaveOutcome =
   /** 200: the server broadcasts `gif.updated`; the card follows the model, not this response */
-  | { kind: "saved" }
-  /** 401: forget the stored password and ask for it again */
-  | { kind: "needPassword"; message: string }
-  | { kind: "error"; message: string };
+  { kind: "saved" } | { kind: "error"; message: string };
 
-export const MSG_WRONG_PASSWORD = "Wrong password";
+export const MSG_LOGGED_OUT = "Your login ran out. Reload the page and sign in again.";
+export const MSG_NOT_YOU = "Only you can change your GIF: confirm it's you first.";
 export const MSG_NOT_FOUND = "Not in the office right now";
 export const MSG_NETWORK = "Couldn't reach the office. Check your connection and try again.";
 
@@ -51,7 +49,8 @@ const serverError = (body: unknown): string | null => {
 /** Map a save attempt's HTTP status + body to what the card shows. */
 export function saveOutcome({ status, body }: PutGifResult): SaveOutcome {
   if (status >= 200 && status < 300) return { kind: "saved" };
-  if (status === 401) return { kind: "needPassword", message: MSG_WRONG_PASSWORD };
+  if (status === 401) return { kind: "error", message: MSG_LOGGED_OUT };
+  if (status === 403) return { kind: "error", message: MSG_NOT_YOU };
   if (status === 404) return { kind: "error", message: MSG_NOT_FOUND };
   if (status === 0) return { kind: "error", message: MSG_NETWORK };
   if (status === 400) return { kind: "error", message: serverError(body) ?? "That didn't work" };
@@ -59,71 +58,4 @@ export function saveOutcome({ status, body }: PutGifResult): SaveOutcome {
     kind: "error",
     message: serverError(body) ?? `Something went wrong (HTTP ${status}). Try again.`,
   };
-}
-
-// ---- remembered office password ---------------------------------------------------------------
-
-export const PASSWORD_KEY = "agent-office.password";
-
-export type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
-
-/** Stored password, or null (no storage, nothing stored, storage throws). */
-export function getPassword(storage: StorageLike | null | undefined): string | null {
-  try {
-    const v = storage?.getItem(PASSWORD_KEY);
-    return v ? v : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Remember the password; false when storage is missing or refuses (private mode, quota). */
-export function setPassword(storage: StorageLike | null | undefined, password: string): boolean {
-  try {
-    if (!storage) return false;
-    storage.setItem(PASSWORD_KEY, password);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function clearPassword(storage: StorageLike | null | undefined): void {
-  try {
-    storage?.removeItem(PASSWORD_KEY);
-  } catch {
-    // nothing to do
-  }
-}
-
-/**
- * The password for this browser: localStorage when it works, else kept in memory for this page
- * so a viewer without storage only types it once per visit. `storage` is a getter because even
- * touching `window.localStorage` can throw (sandboxed iframes, blocked site data).
- */
-export class PasswordStore {
-  private mem: string | null = null;
-  constructor(private readonly storage: () => StorageLike | null | undefined) {}
-
-  private safeStorage(): StorageLike | null {
-    try {
-      return this.storage() ?? null;
-    } catch {
-      return null;
-    }
-  }
-
-  get(): string | null {
-    return getPassword(this.safeStorage()) ?? this.mem;
-  }
-
-  set(password: string) {
-    this.mem = password;
-    setPassword(this.safeStorage(), password);
-  }
-
-  clear() {
-    this.mem = null;
-    clearPassword(this.safeStorage());
-  }
 }

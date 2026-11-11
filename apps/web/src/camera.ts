@@ -17,9 +17,18 @@ export type CameraOptions = {
   kiosk: boolean;
   /** disable auto-pilot until the user interacts (e.g. ?zoom=fit screenshots) */
   holdAuto?: boolean;
-  /** HUD height at the top, kept clear when fitting */
-  topInset?: number;
+  /** HUD height at the top (px, or read live: it grows by the notch inset), kept clear when fitting */
+  topInset?: number | (() => number);
+  /**
+   * Auto-pilot style. "tour" (default) visits the areas zoomed in; "overview" (big wall
+   * screens) shows the whole office and only every `overviewEvery` s zooms in for a short look.
+   */
+  view?: "tour" | "overview";
+  overviewEvery?: number;
 };
+
+/** How long an overview close-up lasts (s). */
+export const CLOSEUP_S = 12;
 
 export class Camera {
   x = 0;
@@ -37,7 +46,18 @@ export class Camera {
   /** last placed by zoomToFit (re-fit on resize) */
   private fitted = false;
   onTap: (wx: number, wy: number) => void = () => {};
+  /** overview mode: where the close-up goes (the busiest pod, someone waiting, ...) */
+  hotSpot: () => { x: number; y: number } | null = () => null;
+  private closeT = 0;
   onDoubleTap: (wx: number, wy: number) => boolean = () => false;
+  /**
+   * Width (px) the fitted / overview view frames, from x 0. Defaults to the whole world; main.ts
+   * frames the original office and adds the east street block only while someone is there.
+   */
+  fitWidth: () => number = () => this.worldSize().width;
+  /** tour stops that are skipped right now (e.g. the bar while it is closed) */
+  skipStop: (name: AreaName) => boolean = () => false;
+  private fitW = 0;
 
   constructor(
     private readonly world: Container,
@@ -47,6 +67,8 @@ export class Camera {
     private readonly opts: CameraOptions,
   ) {
     this.hold = !!opts.holdAuto;
+    // overview: start on the whole office, the first close-up comes after one interval
+    if (opts.view === "overview") this.tourT = opts.overviewEvery ?? 120;
     const w = worldSize();
     this.x = this.target.x = w.width / 2;
     this.y = this.target.y = w.height / 2;
@@ -60,15 +82,21 @@ export class Camera {
     return this.opts.kiosk || performance.now() - this.lastInput > IDLE_BEFORE_AUTO_MS;
   }
 
-  fitZoom() {
-    const s = this.screen();
-    const w = this.worldSize();
-    const inset = this.opts.topInset ?? 0;
-    return Math.min(s.width / w.width, (s.height - inset) / w.height);
+  private inset() {
+    const t = this.opts.topInset;
+    return typeof t === "function" ? t() : (t ?? 0);
   }
 
+  fitZoom(width = this.fitWidth()) {
+    const s = this.screen();
+    const w = this.worldSize();
+    const inset = this.inset();
+    return Math.min(s.width / width, (s.height - inset) / w.height);
+  }
+
+  /** zooming out by hand still reaches the whole world, also when the fit frames less */
   minZoom() {
-    return Math.min(1, this.fitZoom() * 0.95);
+    return Math.min(1, this.fitZoom(this.worldSize().width) * 0.95);
   }
 
   private clampTarget() {
@@ -76,7 +104,7 @@ export class Camera {
     t.zoom = Math.min(MAX_ZOOM, Math.max(this.minZoom(), t.zoom));
     const s = this.screen();
     const w = this.worldSize();
-    const inset = this.opts.topInset ?? 0;
+    const inset = this.inset();
     // the HUD covers the top `inset` px: the usable view is centered below it
     const shiftY = inset / 2 / t.zoom;
     const halfW = s.width / 2 / t.zoom;
@@ -104,10 +132,12 @@ export class Camera {
 
   zoomToFit(instant = false) {
     const w = this.worldSize();
-    const inset = this.opts.topInset ?? 0;
-    const z = this.fitZoom();
-    this.set({ x: w.width / 2, y: w.height / 2 - inset / 2 / z, zoom: z }, instant);
+    const inset = this.inset();
+    const fw = Math.min(w.width, this.fitWidth());
+    const z = this.fitZoom(fw);
+    this.set({ x: fw / 2, y: w.height / 2 - inset / 2 / z, zoom: z }, instant);
     this.fitted = true;
+    this.fitW = fw;
   }
 
   focus(x: number, y: number, zoom?: number) {
@@ -148,6 +178,8 @@ export class Camera {
     this.lastInput = performance.now();
     this.hold = false;
     this.followT = 0;
+    // panned / zoomed by hand: no longer the fit view (no re-fit when the east block changes)
+    this.fitted = false;
   }
 
   attach(el: HTMLElement) {
@@ -261,8 +293,10 @@ export class Camera {
   private tour(dt: number) {
     if (this.followT > 0) {
       this.followT -= dt;
+      if (this.followT <= 0 && this.opts.view === "overview") this.zoomToFit();
       return;
     }
+    if (this.opts.view === "overview") return this.overview(dt);
     this.tourT -= dt;
     if (this.tourT > 0) return;
     const stops: (AreaName | "all")[] = [
@@ -273,9 +307,17 @@ export class Camera {
       "game",
       "desks",
       "garden",
+      "bar",
+      "desks",
+      "shop",
       "all",
     ];
-    const stop = stops[this.tourIdx++ % stops.length]!;
+    let stop = stops[this.tourIdx++ % stops.length]!;
+    // closed places are skipped (the next stop is always the desk floor)
+    if (stop !== "all" && this.skipStop(stop)) stop = stops[this.tourIdx++ % stops.length]!;
+    // a portrait phone would show the whole office as a thin strip: stay on the desks
+    const s = this.screen();
+    if (stop === "all" && s.height > s.width * 1.15) stop = "desks";
     this.tourT = TOUR_STOP_S;
     if (stop === "desks") {
       // pan across the desk floor in thirds
@@ -289,8 +331,28 @@ export class Camera {
     this.focusArea(stop);
   }
 
+  /** Whole office most of the time; a close-up of the hot spot every `overviewEvery` s. */
+  private overview(dt: number) {
+    this.tourT -= dt;
+    if (this.closeT > 0) {
+      this.closeT -= dt;
+      if (this.closeT <= 0) this.zoomToFit();
+      return;
+    }
+    if (!this.fitted) this.zoomToFit();
+    if (this.tourT > 0) return;
+    this.tourT = this.opts.overviewEvery ?? 120;
+    const spot = this.hotSpot();
+    if (!spot) return;
+    this.closeT = CLOSEUP_S;
+    this.set({ x: spot.x, y: spot.y, zoom: 3 });
+  }
+
   update(dt: number) {
     if (this.auto) this.tour(dt);
+    // someone walked into (or left) the east block: a fitted view eases to the new frame
+    if (this.fitted && Math.min(this.worldSize().width, this.fitWidth()) !== this.fitW)
+      this.zoomToFit();
     if (this.rushT > 0) this.rushT -= dt;
     const k = 1 - Math.exp(-dt * (!this.auto ? 9 : this.rushT > 0 ? 3.2 : 1.4));
     this.x += (this.target.x - this.x) * k;
