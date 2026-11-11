@@ -1,6 +1,6 @@
 /**
- * Kiosk helpers: keep the screen awake (Screen Wake Lock, re-acquired on return), and reload
- * when a deploy has replaced the web build this page is running.
+ * Keep the kiosk screen awake (Screen Wake Lock, re-acquired on return), and notice when a
+ * deploy has replaced the web build this page is running.
  */
 type WakeLockSentinelLike = { release(): Promise<void> };
 
@@ -27,7 +27,7 @@ export function keepAwake() {
   return () => void lock?.release();
 }
 
-const BUILD_CHECK_MS = 10 * 60_000;
+const BUILD_CHECK_MS = 2 * 60_000;
 const RELOADED_FOR = "ao-reloaded-for";
 
 /** The entry module of a built page (`<script type="module" src="./assets/index-<hash>.js">`). */
@@ -35,12 +35,16 @@ export function moduleScriptSrc(html: string): string | null {
   return /<script\b[^>]*\btype="module"[^>]*\bsrc="([^"]+)"/.exec(html)?.[1] ?? null;
 }
 
+const runningSrc = () =>
+  document.querySelector('script[type="module"][src]')?.getAttribute("src") ?? null;
+
 /**
- * Reload once the server serves a different entry module than the one running here. Checks
- * every 10 minutes and whenever the returned function is called (after a reconnect).
+ * Call `onNewBuild` once the server serves a different entry module than the one running here.
+ * Checks every 2 minutes, when the tab comes back into view, and whenever the returned
+ * function is called (after a reconnect).
  */
-export function reloadOnNewBuild(): () => void {
-  const running = document.querySelector('script[type="module"][src]')?.getAttribute("src");
+export function watchForNewBuild(onNewBuild: (served: string) => void): () => void {
+  const running = runningSrc();
   let busy = false;
   const check = async () => {
     if (!running || busy) return;
@@ -49,18 +53,29 @@ export function reloadOnNewBuild(): () => void {
       const r = await fetch(location.href, { cache: "no-store", headers: { accept: "text/html" } });
       if (!r.ok || r.redirected) return;
       const served = moduleScriptSrc(await r.text());
-      if (!served || served === running) return;
-      // a reload that still runs the old build (stale cache) must not loop
-      const move = `${running} -> ${served}`;
-      if (sessionStorage.getItem(RELOADED_FOR) === move) return;
-      sessionStorage.setItem(RELOADED_FOR, move);
-      location.reload();
+      if (served && served !== running) onNewBuild(served);
     } catch {
-      // offline or storage blocked: try again later
+      // offline: try again later
     } finally {
       busy = false;
     }
   };
   setInterval(() => void check(), BUILD_CHECK_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void check();
+  });
   return () => void check();
+}
+
+/** Reload into `served`; false if a reload already tried and still ran the old build (stale cache). */
+export function reloadInto(served: string): boolean {
+  const move = `${runningSrc()} -> ${served}`;
+  try {
+    if (sessionStorage.getItem(RELOADED_FOR) === move) return false;
+    sessionStorage.setItem(RELOADED_FOR, move);
+  } catch {
+    // storage blocked: reload anyway, the next check decides again
+  }
+  location.reload();
+  return true;
 }
