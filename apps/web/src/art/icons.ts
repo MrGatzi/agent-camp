@@ -53,8 +53,7 @@ const ICON_ROWS = {
     ".b............b.",
     ".b............b.",
   ],
-  // agent kinds (agent card): Claude sunburst, Codex terminal, Pi glyph, Design artboard + pen,
-  // unknown "?"
+  // agent kinds (agent card): Claude sunburst, Codex terminal, Pi glyph, unknown "?"
   claude: [
     ".......r........",
     "...r...r...r....",
@@ -91,18 +90,6 @@ const ICON_ROWS = {
     "...aa.....aa....",
     "..aa......aaa...",
   ],
-  design: [
-    "................",
-    ".kkkkkkkkkkk.pp.",
-    ".kwwwwwwwwwkppp.",
-    ".kwrrrwwwwwppp..",
-    ".kwrrrwwwwpppk..",
-    ".kwrrrwwwpppwk..",
-    ".kwwwwwwlppwwk..",
-    ".kwcccccllwwwk..",
-    ".kwwwwwwwwwwwk..",
-    ".kkkkkkkkkkkkk..",
-  ],
   unknown: [
     ".....wwwwww.....",
     "....ww....ww....",
@@ -137,7 +124,6 @@ const COLORS: Record<string, string> = {
 const AGENT_ICON_COLORS: Partial<Record<string, Record<string, string>>> = {
   claude: { ...COLORS, c: C.lemon, r: C.clay },
   pi: { ...COLORS, a: C.leaf },
-  design: { ...COLORS, p: C.berry, r: C.pink, c: C.slate },
   unknown: { ...COLORS, w: C.silver },
 };
 

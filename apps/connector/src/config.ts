@@ -29,11 +29,6 @@ export type Config = {
   look_generator: LookGeneratorSetting;
   /** what your subagents look like in the office: "robots" (default) or "cats" */
   helpers: HelperSkin;
-  /**
-   * opt-in: show a desk while a Claude Design canvas is open in the Claude desktop app
-   * (macOS; needs the Accessibility permission)
-   */
-  design_window: boolean;
   /** opt-in: show Cowork sessions of the Claude desktop app (often not coding work) */
   cowork: boolean;
   client_id: string;
@@ -50,7 +45,6 @@ export const CONFIG_KEYS = [
   "birthday",
   "look_generator",
   "helpers",
-  "design_window",
   "cowork",
   "client_id",
 ] as const;
@@ -178,7 +172,6 @@ export function toConfig(values: Record<string, TomlValue>): Config {
   const s = (k: string) => (typeof values[k] === "string" ? (values[k] as string) : undefined);
   const share = values.share_project_names;
   const notify = values.notifications;
-  const design = values.design_window;
   const cowork = values.cowork;
   const clientId = s("client_id");
   return {
@@ -192,7 +185,6 @@ export function toConfig(values: Record<string, TomlValue>): Config {
     birthday: validBirthday(s("birthday")),
     look_generator: lookGeneratorSetting(s("look_generator")) ?? "off",
     helpers: validHelpers(s("helpers")) ?? "robots",
-    design_window: design === true || design === "true",
     cowork: cowork === true || cowork === "true",
     client_id: clientId && /^[A-Za-z0-9_-]{1,64}$/.test(clientId) ? clientId : newClientId(),
   };
@@ -224,7 +216,6 @@ export function saveConfig(path: string, config: Config): void {
       birthday: config.birthday,
       look_generator: config.look_generator,
       helpers: config.helpers,
-      design_window: config.design_window,
       cowork: config.cowork,
       client_id: config.client_id,
     }),

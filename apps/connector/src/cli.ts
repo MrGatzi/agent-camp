@@ -22,8 +22,7 @@ import {
   validBirthday,
   validHelpers,
 } from "./config.ts";
-import { Daemon, DESIGN_STATUS_TEXT, type StatusFile } from "./daemon.ts";
-import { DesignWatcher, systemDesignWindows } from "./desktop.ts";
+import { Daemon, type StatusFile } from "./daemon.ts";
 import { Detector } from "./detect/index.ts";
 import { log } from "./log.ts";
 import { bunSpawn, describeGenerators, detectGenerators, LookGenerators } from "./lookgen.ts";
@@ -99,8 +98,6 @@ Commands:
                            service after changing)
       --birthday MM-DD     opt-in: the office brings you a cake that day ("" removes it)
       --helpers robots|cats   what your subagents look like in the office (default robots)
-      --design-window true|false   opt-in (macOS): show a desk while a Claude Design canvas is
-                           open in the Claude app; needs the Accessibility permission
       --cowork true|false  opt-in: show Cowork sessions of the Claude desktop app
   status            connection state and live sessions
   logs              follow the daemon log
@@ -116,8 +113,7 @@ then restart the service so the office redraws you:
 
 Only status metadata is sent: agent kind, hashed session id, project folder name
 (disable with share_project_names = false), activity, subagent count, context use %, start time,
-the machine label you chose (machine_name) and your look description. For Claude Design
-(--design-window) only "a Design canvas is open / the app is in front" is sent.`;
+the machine label you chose (machine_name) and your look description.`;
 
 export async function main(argv: string[]): Promise<number> {
   const args = parseArgs(argv);
@@ -189,7 +185,6 @@ async function cmdRun(args: Args): Promise<number> {
   }
   const clientId = existed ? config.client_id : (env.AGENT_OFFICE_CLIENT_ID ?? newClientId());
 
-  const watchDesign = config.design_window && process.platform === "darwin";
   const detector = new Detector({
     dirs: agentDirs(env, home),
     clientId,
@@ -197,7 +192,6 @@ async function cmdRun(args: Args): Promise<number> {
     processes: systemProcesses(),
     assumeProcesses,
     cowork: config.cowork,
-    ...(watchDesign ? { design: new DesignWatcher(systemDesignWindows()) } : {}),
   });
 
   if (flags.once) {
@@ -374,8 +368,6 @@ async function cmdConfigure(args: Args): Promise<number> {
     }
     next.look_generator = v;
   }
-  const design = flags["design-window"];
-  if (design !== undefined) next.design_window = !(design === "false" || design === "0");
   const cowork = flags.cowork;
   if (cowork !== undefined) next.cowork = !(cowork === "false" || cowork === "0");
   if (next.name && next.name.trim().length > 40) {
@@ -398,7 +390,6 @@ async function cmdConfigure(args: Args): Promise<number> {
     `saved ${path} (server: ${next.server ?? "-"}, name: ${next.name ?? "-"}, ` +
       `password: ${next.password ? "set" : "not set"})`,
   );
-  if (design !== undefined && next.design_window) console.log(DESIGN_WINDOW_HELP);
   if (cowork !== undefined && next.cowork) {
     console.log(`Cowork sessions are on. Restart the connector to apply: ${RESTART_HINT}`);
   }
@@ -406,14 +397,6 @@ async function cmdConfigure(args: Args): Promise<number> {
 }
 
 const RESTART_HINT = `launchctl kickstart -k gui/$(id -u)/${LAUNCHD_LABEL}`;
-
-export const DESIGN_WINDOW_HELP = `Claude Design watch is on (macOS only).
-  1. Allow agent-office under System Settings > Privacy & Security > Accessibility.
-     (If you run the connector by hand, your terminal app needs the permission instead.)
-  2. Restart the connector: ${RESTART_HINT}
-  3. Open a Claude Design canvas (a design, slides or doc) in the Claude app.
-  4. Check with: agent-office status
-The office only learns that a Design canvas is open and whether the Claude app is in front.`;
 
 // ---- status -------------------------------------------------------------------------------
 function ago(ms: number): string {
@@ -459,7 +442,7 @@ async function launchdState(): Promise<string | null> {
 export function formatSessions(sessions: StatusFile["sessions"], now = Date.now()): string[] {
   return sessions.map((s) => {
     const sub = s.subagents ? `${s.subagents} subagent${s.subagents === 1 ? "" : "s"}` : "";
-    return `    ${s.agent.padEnd(7)}${(s.project ?? (s.agent === "design" ? "-" : "(hidden)")).padEnd(22)}${s.activity.padEnd(10)}${sub.padEnd(14)}started ${ago(now - s.startedAt)}`;
+    return `    ${s.agent.padEnd(7)}${(s.project ?? "(hidden)").padEnd(22)}${s.activity.padEnd(10)}${sub.padEnd(14)}started ${ago(now - s.startedAt)}`;
   });
 }
 
@@ -497,18 +480,6 @@ async function cmdStatus(): Promise<number> {
       lines.push(`  sessions  ${status.sessions.length} live`);
       lines.push(...formatSessions(status.sessions, now));
     }
-  }
-  if (config.design_window) {
-    const fresh = status && now - status.updatedAt < 10_000 && pidAlive(status.pid);
-    lines.push(
-      `  design    ${
-        process.platform !== "darwin"
-          ? "on, but only macOS is supported"
-          : fresh && status?.designWindow
-            ? DESIGN_STATUS_TEXT[status.designWindow]
-            : `on (restart the connector to apply: ${RESTART_HINT})`
-      }`,
-    );
   }
   const ld = await launchdState();
   if (ld) lines.push(`  launchd   ${ld}`);
