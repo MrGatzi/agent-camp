@@ -56,7 +56,7 @@ export type Binding = {
   machine?: string;
   /**
    * Giphy id from this connector's hello; "" = remove, undefined = leave as is. Only applied
-   * when it differs from what this clientId sent before (see `Hub.helloGifs`).
+   * when it differs from what this clientId sent before for this person (see `Hub.helloGifs`).
    */
   gif?: string;
 };
@@ -95,8 +95,8 @@ export type HubResult = {
   binding?: Binding;
 };
 
-/** What a connector last said about the head GIF in a hello. */
-type HelloGif = { personId: string; gif: string };
+/** `helloGifs` key: one entry per connector and person (client ids never contain "/"). */
+const helloKey = (clientId: string, personId: string) => `${clientId}/${personId}`;
 
 type Persisted = {
   v: 1;
@@ -105,8 +105,8 @@ type Persisted = {
   people: (PersonRec & { gif?: string })[];
   /** personId -> Giphy id (missing in old state) */
   gifs?: Record<string, string>;
-  /** clientId -> last gif that connector sent in a hello (missing in old state) */
-  helloGifs?: Record<string, HelloGif>;
+  /** "clientId/personId" -> last gif that connector sent for that person (missing in old state) */
+  helloGifs?: Record<string, string>;
 };
 
 /** How long the in-memory activity log of a live session reaches back. */
@@ -121,7 +121,7 @@ export const defaultAvatarKey = (name: string, desc: string | undefined) =>
 /** Trim and collapse whitespace ("  Martin  K " -> "Martin K"). */
 export const cleanName = (name: string) => name.trim().replace(/\s+/g, " ");
 
-function safeEqual(a: string, b: string): boolean {
+export function safeEqual(a: string, b: string): boolean {
   let diffBits = a.length ^ b.length;
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
     diffBits |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
@@ -138,12 +138,13 @@ export class Hub {
    */
   private gifs = new Map<string, string>();
   /**
-   * clientId -> the last `gif` that connector sent in a hello. A hello only changes the
-   * person's GIF when its value differs from this (the user ran `agent-office gif` again), so
-   * a reconnect never overwrites a GIF chosen in the web UI. Outlives connector records
-   * (they expire when a laptop stays offline) and is persisted.
+   * `helloKey(clientId, personId)` -> the last `gif` that connector sent in a hello for that
+   * person. A hello only changes the person's GIF when its value differs from this (the user
+   * ran `agent-office gif` again), so a reconnect never overwrites a GIF chosen in the web UI.
+   * Keyed per person too, so renaming and renaming back doesn't re-apply an old value.
+   * Outlives connector records (they expire when a laptop stays offline) and is persisted.
    */
-  private helloGifs = new Map<string, HelloGif>();
+  private helloGifs = new Map<string, string>();
   /** socketId -> binding (only sockets that said hello) */
   private sockets = new Map<string, Binding>();
   private current: OfficeState = EMPTY_STATE;
@@ -194,8 +195,7 @@ export class Hub {
           // state from before `helloGifs`: what each connector last sent is on its record, so
           // the first reconnect after the deploy doesn't re-apply an unchanged config value
           for (const c of p.connectors ?? [])
-            if (c.gif !== undefined)
-              this.helloGifs.set(c.clientId, { personId: c.personId, gif: c.gif });
+            if (c.gif !== undefined) this.helloGifs.set(helloKey(c.clientId, c.personId), c.gif);
         }
       } catch {
         // corrupt state: start empty
@@ -368,9 +368,9 @@ export class Hub {
     // head GIF: only a value this connector did not send before counts (see `helloGifs`)
     let gif: string | undefined;
     if (d.gif !== undefined) {
-      const last = this.helloGifs.get(d.clientId);
-      if (!last || last.gif !== d.gif || last.personId !== binding.personId) gif = d.gif;
-      this.helloGifs.set(d.clientId, { personId: binding.personId, gif: d.gif });
+      const key = helloKey(d.clientId, binding.personId);
+      if (this.helloGifs.get(key) !== d.gif) gif = d.gif;
+      this.helloGifs.set(key, d.gif);
     }
     const existing = this.connectors.get(d.clientId);
     this.connectors.set(d.clientId, {

@@ -339,6 +339,15 @@ async function cmdGif(args: Args): Promise<number> {
     console.error("agent-office is not configured yet. Run the installer first.");
     return 1;
   }
+  if ((config.gif ?? "") === gif) {
+    // the office only takes a value this connector did not send before (DECISIONS F13)
+    console.log(
+      `${gif ? `GIF already set to ${giphyPageUrl(gif)}` : "GIF already off"} on this machine.\n` +
+        "If someone changed it on the office page since, change it there (click your nameplate)\n" +
+        "or pick a different GIF here.",
+    );
+    return 0;
+  }
   saveConfig(path, { ...config, gif });
   console.log(gif ? `GIF set: ${giphyPageUrl(gif)}` : "GIF removed");
   if (await restartService()) console.log("connector restarted; the office updates in a moment");

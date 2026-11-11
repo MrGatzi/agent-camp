@@ -632,6 +632,18 @@ describe("hub: head gif", () => {
     expect(hub.state().people[0]!.gif).toBe(OTHER);
   });
 
+  test("renaming applies the config gif to the new person; renaming back does not undo a UI choice", () => {
+    const { hub } = setup();
+    hub.onConnectorMessage("s1", hello("Anna", "c1", { gif: GIF }), 0);
+    hub.setGif("anna", OTHER, 1);
+    // renamed: a new person, so the connector's gif counts for them
+    hub.onConnectorMessage("s2", hello("Annie", "c1", { gif: GIF }), 2);
+    expect(hub.state().people.find((p) => p.personId === "annie")?.gif).toBe(GIF);
+    // back to Anna with the same config value: anna keeps the GIF chosen in the UI
+    hub.onConnectorMessage("s3", hello("Anna", "c1", { gif: GIF }), 3);
+    expect(hub.state().people.find((p) => p.personId === "anna")?.gif).toBe(OTHER);
+  });
+
   test("the gif is back when a person returns after leaving", () => {
     const { hub } = setup();
     hub.onConnectorMessage("s1", hello("Anna", "c1", { gif: GIF }), 0);
@@ -694,7 +706,7 @@ describe("hub: head gif", () => {
     // the new format is written
     const saved = JSON.parse(store.kvGet("hub.state")!);
     expect(saved.gifs).toEqual({ anna: OTHER });
-    expect(saved.helloGifs).toEqual({ c1: { personId: "anna", gif: GIF } });
+    expect(saved.helloGifs).toEqual({ "c1/anna": GIF });
     expect(saved.people[0].gif).toBeUndefined();
   });
 });

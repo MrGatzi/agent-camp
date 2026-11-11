@@ -14,7 +14,7 @@ import {
 } from "@agent-office/protocol";
 import { z } from "zod";
 import { type AvatarService, createAvatarService, type FetchLike, type GenuiEnv } from "./genui.ts";
-import { type Binding, Hub, type HubResult } from "./hub.ts";
+import { type Binding, Hub, type HubResult, safeEqual } from "./hub.ts";
 import { isAutoVersion, LatestVersion } from "./latest.ts";
 import { computePersonDay, computeStats, historyToCsv } from "./stats.ts";
 import type { Store } from "./store.ts";
@@ -72,7 +72,7 @@ export function viewerAllowed(url: URL, env: AppEnv): boolean {
 
 export function bearerOk(req: Request, env: AppEnv): boolean {
   const pw = connectorPassword(env);
-  return !!pw && req.headers.get("authorization") === `Bearer ${pw}`;
+  return !!pw && safeEqual(req.headers.get("authorization") ?? "", `Bearer ${pw}`);
 }
 
 const json = (data: unknown, init: ResponseInit = {}) =>

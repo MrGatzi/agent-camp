@@ -141,6 +141,10 @@ describe("head gif", () => {
       expect(set.out).toContain("GIF set: https://giphy.com/gifs/JIX9t2j0ZTN9S");
       expect((await run("configure", "--get", "gif")).out).toBe("JIX9t2j0ZTN9S");
       expect((await run("gif")).out).toBe("https://giphy.com/gifs/JIX9t2j0ZTN9S");
+      // same value again: nothing to send, explain why the office may show another GIF
+      const again = await run("gif", "JIX9t2j0ZTN9S");
+      expect(again.code).toBe(0);
+      expect(again.out).toContain("already set");
       expect((await run("gif", "https://example.com/cat.gif")).code).toBe(2);
       expect((await run("configure", "--get", "gif")).out).toBe("JIX9t2j0ZTN9S");
       expect((await run("gif", "off")).code).toBe(0);
