@@ -211,8 +211,13 @@ the office; only when that Mac cannot does it go to the office's AI provider.
 Optional: `agent-office configure --birthday MM-DD` and the office brings you a cake that day
 (only "it's your birthday today" is ever shown, never the date).
 
-Received: when someone in the office waves at you or sends you a short message, the
-connector shows it as a macOS notification (at most one every 5 s; macOS may list it under
+Fun: every live subagent shows up as its own little helper scurrying around your desk. They
+are robots by default; `agent-office configure --helpers cats` turns them into kittens
+(`--helpers robots` switches back). Restart the connector to apply it:
+`launchctl kickstart -k gui/$(id -u)/dev.agentoffice.connector`.
+
+Received: when someone in the office waves at you, sends you a short message or sends a cat
+to sit on your keyboard, the connector shows it as a macOS notification (at most one every 5 s; macOS may list it under
 "Script Editor"). Turn it off with `agent-office configure --notifications false`.
 
 Never sent: prompts, responses, code, file contents or paths, commands, tool output, or
@@ -271,7 +276,7 @@ It writes desktop/mobile screenshots to `/private/tmp/agent-office-party-shots` 
 
 | URL                  | What                                                                  |
 | -------------------- | --------------------------------------------------------------------- |
-| `/`                  | The office. Drag to pan, wheel/pinch to zoom. Click a character for its agent card, a nameplate for the person. Both have buttons to wave, ask for a coffee, cheer or send a short message (it pops up as a notification on their Mac), or throw a paper ball (office only). Click the cat to pet it. |
+| `/`                  | The office. Drag to pan, wheel/pinch to zoom. Click a character for its agent card, a nameplate for the person. Both have buttons to wave, ask for a coffee, cheer or send a short message (it pops up as a notification on their Mac), send a cat to sit on their desk, or throw a paper ball (office only). There is one office cat, plus one for every two people (up to 10): click one to pet it and open its card, then feed it, toss it a yarn ball, or get out the laser pointer and tap the floor. |
 | `/?kiosk=1`          | Wall/iPad mode: no chrome, bigger text, auto camera tour. Add it to the iPad home screen; it also records the timelapse (`&recorder=1`). |
 | `/?kiosk=1&view=overview` | Big wall screen: the whole office most of the time, a 12 s close-up of the busiest pod (or whoever waits) every 2 min (`&every=<seconds>`); events still get a short look. |
 | `/stats`             | Weekday × hour heatmap, leaderboards, Claude vs Codex vs Pi, CSV export. |
@@ -383,7 +388,7 @@ GitHub.
 | Build variable   | `BUN_VERSION` = `1.4.4` (same Bun as the lockfile) |
 
 From then on every push to `main` deploys the office (Cloudflare) and publishes new connector
-binaries (GitHub Release `v0.1.N`). Connectors update themselves: the server looks up the newest
+binaries (GitHub Release `v0.2.N`: the minor from package.json, then the commit count of main). Connectors update themselves: the server looks up the newest
 GitHub release when they connect, and each connector also checks GitHub every 5 minutes. If the
 build ever complains about Bun, use the npm-only build command
 `npx -y bun@1.4.4 install --frozen-lockfile && npx -y bun@1.4.4 run --filter @agent-office/web build`.

@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname } from "node:path";
+import { HELPER_SKINS, type HelperSkin } from "@agent-office/protocol";
 import { LOOK_GENERATOR_SETTINGS, type LookGeneratorSetting } from "./lookgen.ts";
 
 export type Config = {
@@ -26,6 +27,8 @@ export type Config = {
    * Opt-in: missing (or unknown) means off, so an update or reconnect never starts spending it.
    */
   look_generator: LookGeneratorSetting;
+  /** what your subagents look like in the office: "robots" (default) or "cats" */
+  helpers: HelperSkin;
   client_id: string;
 };
 
@@ -39,6 +42,7 @@ export const CONFIG_KEYS = [
   "notifications",
   "birthday",
   "look_generator",
+  "helpers",
   "client_id",
 ] as const;
 
@@ -150,6 +154,12 @@ export function validBirthday(v: string | undefined): string | undefined {
   return t && /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(t) ? t : undefined;
 }
 
+/** "robots" | "cats" (trimmed, any case) or undefined for anything else. */
+export function validHelpers(v: string | undefined): HelperSkin | undefined {
+  const t = v?.trim().toLowerCase();
+  return (HELPER_SKINS as readonly string[]).includes(t ?? "") ? (t as HelperSkin) : undefined;
+}
+
 export function newClientId(): string {
   return `c_${randomBytes(9).toString("hex")}`;
 }
@@ -170,6 +180,7 @@ export function toConfig(values: Record<string, TomlValue>): Config {
     notifications: !(notify === false || notify === "false"),
     birthday: validBirthday(s("birthday")),
     look_generator: lookGeneratorSetting(s("look_generator")) ?? "off",
+    helpers: validHelpers(s("helpers")) ?? "robots",
     client_id: clientId && /^[A-Za-z0-9_-]{1,64}$/.test(clientId) ? clientId : newClientId(),
   };
 }
@@ -199,6 +210,7 @@ export function saveConfig(path: string, config: Config): void {
       notifications: config.notifications,
       birthday: config.birthday,
       look_generator: config.look_generator,
+      helpers: config.helpers,
       client_id: config.client_id,
     }),
     { mode: 0o600 },

@@ -21,6 +21,7 @@ import {
   stringifyToml,
   toConfig,
   tomlString,
+  validHelpers,
 } from "../src/config.ts";
 import { detectGenerators, LookGenerators, type LookSpawn } from "../src/lookgen.ts";
 
@@ -41,6 +42,7 @@ describe("config.toml", () => {
         self_description: 'curly hair, "round" glasses',
         machine_name: "devbox",
         share_project_names: false,
+        helpers: "cats" as const,
       };
       saveConfig(path, written);
       expect(statSync(path).mode & 0o777).toBe(0o600);
@@ -81,6 +83,7 @@ describe("config.toml", () => {
         share_project_names: true,
         notifications: true,
         look_generator: "auto",
+        helpers: "robots",
         client_id: "c_abc",
         name: "Zoe",
       });
@@ -124,6 +127,44 @@ describe("config.toml", () => {
       const refused = await run("configure", "--look-generator", "codex");
       expect(refused.code).toBe(2);
       expect(refused.err).toContain("auto, claude or off");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("helpers", () => {
+  test("robots by default; cats when set; junk falls back to robots", () => {
+    expect(toConfig({}).helpers).toBe("robots");
+    expect(toConfig({ helpers: "cats" }).helpers).toBe("cats");
+    expect(toConfig({ helpers: " Cats " }).helpers).toBe("cats");
+    expect(toConfig({ helpers: "dogs" }).helpers).toBe("robots");
+    expect(toConfig({ helpers: true }).helpers).toBe("robots");
+    expect(validHelpers("robots")).toBe("robots");
+    expect(validHelpers("")).toBeUndefined();
+  });
+
+  test("configure --helpers writes it; --get reads it back; bad values exit 2", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ao-cfg-"));
+    try {
+      const main = join(import.meta.dir, "..", "src", "main.ts");
+      const env = { ...process.env, AGENT_OFFICE_CONFIG_DIR: dir };
+      const run = async (...args: string[]) => {
+        const p = Bun.spawn([process.execPath, main, ...args], {
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const out = await new Response(p.stdout).text();
+        return { code: await p.exited, out: out.trim() };
+      };
+      expect((await run("configure", "--get", "helpers")).out).toBe("robots");
+      expect((await run("configure", "--helpers", "cats")).code).toBe(0);
+      expect((await run("configure", "--get", "helpers")).out).toBe("cats");
+      expect((await run("configure", "--helpers", "dogs")).code).toBe(2);
+      expect((await run("configure", "--get", "helpers")).out).toBe("cats");
+      expect((await run("configure", "--helpers", "robots")).code).toBe(0);
+      expect((await run("configure", "--get", "helpers")).out).toBe("robots");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

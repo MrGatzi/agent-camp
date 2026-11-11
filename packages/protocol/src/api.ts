@@ -14,23 +14,33 @@ import { MAX_SELF_DESCRIPTION } from "./constants.ts";
 import {
   Activity,
   AgentKind,
+  CatId,
   InteractionKind,
   InteractionText,
+  isCatInteraction,
   LookGenerator,
+  needsSpot,
   PersonId,
   ViewerName,
+  WorldCoord,
 } from "./messages.ts";
 
-/** A viewer pokes a person, throws a paper ball or pets the cat. */
+/** A viewer pokes a person, throws a paper ball, or plays with the office cats. */
 export const InteractRequest = z
   .object({
     kind: InteractionKind,
     personId: PersonId.optional(),
     from: ViewerName.optional(),
     text: InteractionText.optional(),
+    catId: CatId.optional(),
+    x: WorldCoord.optional(),
+    y: WorldCoord.optional(),
   })
-  .refine((r) => r.kind === "pet" || !!r.personId, { message: "personId required" })
-  .refine((r) => r.kind !== "message" || !!r.text, { message: "text required" });
+  .refine((r) => isCatInteraction(r.kind) || !!r.personId, { message: "personId required" })
+  .refine((r) => r.kind !== "message" || !!r.text, { message: "text required" })
+  .refine((r) => !needsSpot(r.kind) || (r.x !== undefined && r.y !== undefined), {
+    message: "x and y required",
+  });
 export type InteractRequest = z.infer<typeof InteractRequest>;
 
 export const InteractResponse = z.object({ ok: z.boolean(), delivered: z.number() });
