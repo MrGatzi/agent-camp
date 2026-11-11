@@ -859,11 +859,13 @@ async function boot() {
     const p = best && model.people.get(best.personId);
     return p ? podCenter(p.pod) : null;
   };
-  camera.busyDesks = () =>
-    [...model.people.values()]
-      .filter((p) => model.sessionsOf(p.personId).some((s) => !s.offline && s.activity !== "idle"))
-      .sort((a, b) => a.pod - b.pod)
-      .map((p) => podCenter(p.pod));
+  camera.busyDesks = () => {
+    const pods = new Set<number>();
+    for (const p of model.people.values())
+      if (model.sessionsOf(p.personId).some((s) => !s.offline && s.activity !== "idle"))
+        pods.add(p.pod);
+    return [...pods].sort((a, b) => a - b).map(podCenter);
+  };
   const focusParam = params.get("focus");
   games = new PartyPanel(host, model, {
     demo: !!demo,
