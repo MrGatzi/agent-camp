@@ -12,7 +12,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
-import { LOOK_FIXTURES } from "@agent-office/protocol";
+import { LOOK_FIXTURES } from "@agent-office/protocol/fixtures";
 import { generateWeek, postBackfill, runScenario, type SimHandle } from "@agent-office/sim";
 import type { Browser, BrowserContext, Page } from "playwright";
 import { encodeGif, type RgbaFrame } from "./gif.ts";

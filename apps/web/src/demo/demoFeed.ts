@@ -16,7 +16,6 @@ import {
   type AvatarSpec,
   avatarFromSeed,
   envelope,
-  LOOK_FIXTURES,
   type PersonView,
   repairAvatar,
   type ServerToViewer,
@@ -467,13 +466,17 @@ export function parseDemoMode(value: string | null): DemoMode | null {
 }
 
 /**
- * `?look=` value -> avatar: a fixture name (`tracht`) or `b64:<base64url AvatarSpec JSON>`.
- * Untrusted input goes through `repairAvatar`; values with nothing usable give null.
+ * `?look=` value -> avatar: a fixture name (`tracht`, looked up in `fixtures`) or
+ * `b64:<base64url AvatarSpec JSON>`. Untrusted input goes through `repairAvatar`; values with
+ * nothing usable give null. Fixtures are passed in (loaded on demand from
+ * `@agent-office/protocol/fixtures`) so they stay out of the main bundle.
  */
-export function parseLookParam(value: string | null): AvatarSpec | null {
+export function parseLookParam(
+  value: string | null,
+  fixtures: Readonly<Record<string, AvatarSpec>> = {},
+): AvatarSpec | null {
   if (!value) return null;
-  if (Object.hasOwn(LOOK_FIXTURES, value))
-    return LOOK_FIXTURES[value as keyof typeof LOOK_FIXTURES];
+  if (Object.hasOwn(fixtures, value)) return fixtures[value]!;
   if (!value.startsWith("b64:")) return null;
   let candidate: unknown;
   try {

@@ -7,9 +7,9 @@ import {
   type AgentKind,
   type AvatarSpec,
   avatarFromSeed,
-  LOOK_FIXTURES,
   sessionVariation,
 } from "@agent-office/protocol";
+import { LOOK_FIXTURES } from "@agent-office/protocol/fixtures";
 import { type Application, Container, Sprite, Text } from "pixi.js";
 import { ANIM, CHAR_H, CHAR_W, characterSheet, lookFor } from "../art/characters.ts";
 import { chairTexture, deskTexture, monitorTextures, propTexture } from "../art/desk.ts";
@@ -64,7 +64,11 @@ const SHOWCASE: [Partial<AvatarSpec>, AgentKind][] = [
 export function showGallery(app: Application) {
   const params = new URLSearchParams(location.search);
   if (params.get("gallery") === "look") {
-    showLookGallery(app, parseLookParam(params.get("look")) ?? LOOK_FIXTURES.tracht, params);
+    showLookGallery(
+      app,
+      parseLookParam(params.get("look"), LOOK_FIXTURES) ?? LOOK_FIXTURES.tracht,
+      params,
+    );
     return;
   }
   const root = new Container();

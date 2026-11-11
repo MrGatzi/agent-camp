@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 import {
   type AvatarSpec,
   envelope,
-  LOOK_FIXTURES,
   PersonDayResponse,
   parseViewerMessage,
   resolveLook,
 } from "@agent-office/protocol";
+import { LOOK_FIXTURES } from "@agent-office/protocol/fixtures";
 import { OfficeApp, SNAPSHOT_MAX_BYTES, SNAPSHOT_MIN_INTERVAL_MS } from "../../src/core/app.ts";
 import { MemoryStore } from "../../src/core/store.ts";
 

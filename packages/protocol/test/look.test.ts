@@ -16,7 +16,6 @@ import {
   HairStyle,
   HELD_ITEMS,
   HELD_KINDS,
-  LOOK_FIXTURES,
   LOOK_SECTIONS,
   lookFromCatalog,
   MAX_SELF_DESCRIPTION,
@@ -34,6 +33,7 @@ import {
   WRIST_KINDS,
   WRISTWEAR,
 } from "../src/index.ts";
+import { LOOK_FIXTURES } from "../src/lookFixtures.ts";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
 const load = (name: string): unknown =>
@@ -65,7 +65,7 @@ describe("lookFromCatalog", () => {
     expect(look.skin).toEqual({ base: sk.hex, shadow: sk.shade, light: sk.light });
     expect(look.face.cheeks).toBe("none"); // no blush on deep skin, as today
     expect(lookFromCatalog({ ...a, skinTone: "light" }).face.cheeks).toBe("blush");
-    expect(look.outer).toMatchObject({ kind: "jacket", agentColored: true, open: false });
+    expect(look.outer).toMatchObject({ kind: "jacket", agentColored: true, open: true });
     expect(look.shirt.ramp.base).toBe("#ffffff");
     expect(look.bottoms.ramp).toMatchObject({ base: "#3a4466", shadow: "#262b44" });
     expect(look.shoes.ramp.base).toBe("#3e2731");
@@ -118,12 +118,12 @@ describe("lookFromCatalog: look editor items (#11 and later)", () => {
   test("every outfit maps to its own layers and colours", () => {
     const jacket = of({ outfit: "jacket" });
     expect(jacket).toEqual(lookFromCatalog(a)); // the original look
-    expect(jacket.outer).toMatchObject({ kind: "jacket", agentColored: true, open: false });
+    expect(jacket.outer).toMatchObject({ kind: "jacket", agentColored: true, open: true });
     expect(jacket.shirt).toMatchObject({ kind: "tshirt", sleeves: "long" });
     expect(jacket.shirt.ramp.base).toBe("#ffffff");
 
     expect(of({ outfit: "hoodie" }).outer).toMatchObject({
-      kind: "zip-hoodie",
+      kind: "hoodie", // pullover, no zip (as on main)
       agentColored: true,
       collar: "hood",
       pockets: "kangaroo",
@@ -132,7 +132,7 @@ describe("lookFromCatalog: look editor items (#11 and later)", () => {
     const flannel = of({ outfit: "flannel" });
     expect(flannel.outer).toMatchObject({
       kind: "jacket",
-      agentColored: false, // own colours: the agent shows as armband + pin
+      agentColored: false, // own colours: the agent shows as badge + back patch
       open: true,
       collar: "shirt",
       ramp: { base: "#8b9bb4", shadow: "#5a6988", light: "#c0cbdc" },

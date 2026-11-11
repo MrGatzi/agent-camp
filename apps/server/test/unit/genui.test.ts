@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
   type AvatarSpec,
   avatarFromSeed,
-  LOOK_FIXTURES,
   lookFromCatalog,
   MAX_SELF_DESCRIPTION,
 } from "@agent-office/protocol";
+import { LOOK_FIXTURES } from "@agent-office/protocol/fixtures";
 import {
   AI_AVATAR_SCHEMA,
   createAvatarService,

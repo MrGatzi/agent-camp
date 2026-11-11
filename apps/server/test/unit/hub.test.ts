@@ -9,7 +9,6 @@ import {
   CONNECTOR_TIMEOUT_MS,
   envelope,
   hashString,
-  LOOK_FIXTURES,
   lookFromCatalog,
   MAX_SELF_DESCRIPTION,
   PERSON_GRACE_MS,
@@ -19,6 +18,7 @@ import {
   type SessionInfo,
   type ViewerEvent,
 } from "@agent-office/protocol";
+import { LOOK_FIXTURES } from "@agent-office/protocol/fixtures";
 import { createAvatarService } from "../../src/core/genui.ts";
 import { defaultAvatarKey, Hub, type HubConfig, RECENT_ACTIVITY_MS } from "../../src/core/hub.ts";
 import { MemoryStore } from "../../src/core/store.ts";

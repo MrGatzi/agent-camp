@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { avatarFromSeed, LOOK_FIXTURES, MAX_SELF_DESCRIPTION } from "@agent-office/protocol";
+import { avatarFromSeed, MAX_SELF_DESCRIPTION } from "@agent-office/protocol";
+import { LOOK_FIXTURES } from "@agent-office/protocol/fixtures";
 import { MemoryStore, SqlStore, type Store } from "../../src/core/store.ts";
 
 const sqlite = () => {

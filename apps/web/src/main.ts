@@ -615,7 +615,13 @@ async function boot() {
   };
 
   if (demo) {
-    const lookParam = parseLookParam(params.get("look"));
+    const lookRaw = params.get("look");
+    // fixture names (`?look=tracht`) load the fixtures chunk only when asked for
+    const fixtures =
+      lookRaw && !lookRaw.startsWith("b64:")
+        ? (await import("@agent-office/protocol/fixtures")).LOOK_FIXTURES
+        : {};
+    const lookParam = parseLookParam(lookRaw, fixtures);
     const feed = new DemoFeed(
       {
         mode: demo,
