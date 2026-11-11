@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
+import { releaseVersion } from "../../scripts/version.ts";
 
 const SERVER = process.env.AGENT_OFFICE_SERVER ?? "http://localhost:8787";
 
@@ -19,12 +20,16 @@ function buildId(): string {
 export default defineConfig({
   // Relative asset URLs keep the build portable (Worker static assets, previews).
   base: "./",
-  define: { __BUILD__: JSON.stringify(buildId()) },
+  define: {
+    __BUILD__: JSON.stringify(buildId()),
+    __VERSION__: JSON.stringify(releaseVersion() ?? ""),
+  },
   server: {
     port: 5173,
     proxy: {
       "/ws": { target: SERVER, ws: true, changeOrigin: true },
-      "/api": { target: SERVER, changeOrigin: true },
+      // Preserve the viewer Host so API Origin checks also work through the dev proxy.
+      "/api": { target: SERVER, changeOrigin: false },
       "/healthz": { target: SERVER, changeOrigin: true },
       "/install.sh": { target: SERVER, changeOrigin: true },
       "/login": { target: SERVER, changeOrigin: true },

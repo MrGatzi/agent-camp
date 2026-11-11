@@ -23,23 +23,33 @@ import "./ui/office.css";
 import {
   type AvatarEditResponse,
   type AvatarSpec,
+  type InteractRequest,
+  isCatInteraction,
+  type LookDescribeResponse,
+  MESSAGE_MAX_ROWS,
+  MESSAGE_RETENTION_MS,
+  type MessageRecord,
   type PartyEvent,
   type PersonDayResponse,
   parseViewerMessage,
+  type SendMessageRequest,
+  type SendMessageResponse,
   type ServerToViewer,
 } from "@agent-office/protocol";
 import { Application, TextureStyle } from "pixi.js";
 import { CHAR_H, CHAR_RES, CHAR_W, lookFor, lookPreview } from "./art/characters.ts";
 import { fitText } from "./art/font.ts";
 import { trophyCanvas } from "./art/fun.ts";
+import { CAT, catTextures } from "./art/fx.ts";
 import { C } from "./art/palette.ts";
 import { avatarPortrait } from "./art/party.ts";
 import { setArtSeason } from "./art/seasons.ts";
 import { Camera } from "./camera.ts";
 import { CHANGELOG } from "./changelog.ts";
 import { DemoFeed, parseDemoMode, parseLookParam } from "./demo/demoFeed.ts";
-import { Hud, type PokeRequest, type PokeResult } from "./hud.ts";
+import { type CatAction, Hud, type PokeResult } from "./hud.ts";
 import { keepAwake, reloadInto, watchForNewBuild } from "./kiosk.ts";
+import { MessagesClient } from "./net/messages.ts";
 import { connectViewer, loginIfLoggedOut } from "./net/viewer.ts";
 import { PartyPanel } from "./partyPanel.ts";
 import { registerServiceWorker } from "./pwa.ts";
@@ -52,14 +62,16 @@ import {
   saveSeen,
   shouldCelebrate,
 } from "./release.ts";
+import { MessageModel } from "./state/messageModel.ts";
 import { type ModelChange, OfficeModel } from "./state/officeModel.ts";
 import { Celebration } from "./ui/celebration.ts";
+import { MessagesPanel, storedMessageRead } from "./ui/messages.ts";
 import { Minimap } from "./ui/minimap.ts";
-import { OfficeCat } from "./world/cat.ts";
 import { CharacterManager } from "./world/characters.ts";
+import { CatColony } from "./world/colony.ts";
 import { Effects } from "./world/effects.ts";
 import { OfficeLife } from "./world/life.ts";
-import { SEASONS, type Season, seasonFor } from "./world/lifeRules.ts";
+import { catCount, SEASONS, type Season, seasonFor } from "./world/lifeRules.ts";
 import { Living } from "./world/living.ts";
 import {
   type AreaName,
@@ -93,6 +105,8 @@ type OfficeApi = {
   openSession(sessionId: string): boolean;
   snapshotPng(): Promise<string | null>;
   characters(): number;
+  /** office cats right now (not counting the ones walking out) */
+  cats(): number;
   /** slow down / freeze the world clock (screenshots of short moments); 1 = normal */
   setSpeed(k: number): void;
 };
@@ -164,15 +178,17 @@ async function boot() {
   }
   // Friday after work: the shop sells more, so the smokers' corner fills up quickly
   if (feierabend) chars.shopChance = 0.4;
-  const cat = new OfficeCat(
-    scene.objects,
-    scene.fx,
-    scene.map,
-    () => chars.idleSpots(),
-    effects,
-    () => chars.catWaitSpots(),
-  );
-  chars.catEats = (sprite, x, y) => cat.tryEat(sprite, x, y);
+  const colony = new CatColony(scene.objects, scene.fx, scene.map, effects, {
+    idleSpots: () => chars.idleSpots(),
+    waitSpots: () => chars.catWaitSpots(),
+    perchFor: (personId, pick) => chars.catPerch(personId, pick),
+    personName: (personId) => model.people.get(personId)?.name ?? personId,
+    onVisit: (personId) => {
+      const c = chars.charactersOf(personId)[0];
+      if (c) effects.after(0.6, () => chars.say(c, "AWW, A CAT!"));
+    },
+  });
+  chars.catEats = (sprite, x, y) => colony.tryEat(sprite, x, y);
   const queen = new OfficeQueen(
     scene.objects,
     scene.map,
@@ -181,8 +197,7 @@ async function boot() {
     (id, text) => chars.answerPage(id, text),
   );
   if (party) {
-    cat.eatChance = 0.6;
-    cat.eatRange = 900;
+    colony.setHunting(0.6, 900);
     queen.pageEvery = 12;
   }
   const hourValue =
@@ -203,7 +218,7 @@ async function boot() {
       burning: () => chars.burningCount(),
       evacuate: (spot) => chars.evacuate(spot),
       personSpot: (personId) => chars.personSpot(personId),
-      catBoss: (spot) => cat.setBoss(spot),
+      catBoss: (spot) => colony.setBoss(spot),
     },
     {
       weather:
@@ -226,15 +241,18 @@ async function boot() {
     life.coffeeDrunk(personId, model.people.get(personId)?.name ?? personId);
   const hud = new Hud(host, model, { kiosk });
   const celebration = new Celebration(host);
+  const officeVersion = () => __VERSION__ || model.version;
   const seenRelease = loadSeen();
   const notes = notesKey(CHANGELOG[0]);
   let celebrate = !demo && !nohud && shouldCelebrate(seenRelease, __BUILD__, notes);
-  hud.onWhatsNew = () =>
+  hud.onWhatsNew = () => {
+    const v = officeVersion();
     celebration.show({
       heading: "What's new",
-      version: model.version ? `v${model.version.replace(/^v/, "")}` : null,
+      version: v ? `v${v.replace(/^v/, "")}` : null,
       section: CHANGELOG[0],
     });
+  };
   // the top bar is 36 px (46 in kiosk) plus the notch inset in an installed app
   const hudTop = host.querySelector<HTMLElement>(".hud-top");
   const fallbackInset = kiosk ? 46 : 36;
@@ -276,7 +294,7 @@ async function boot() {
     const need = model.podCount();
     if (need <= scene.map.podRows * POD_COLS) return;
     scene.rebuild(buildOfficeMap(podRowsFor(need)));
-    cat.setMap(scene.map);
+    colony.setMap(scene.map);
     queen.setMap(scene.map);
     life.reattach();
     minimap.setTerrain(scene.terrainCanvas);
@@ -286,13 +304,37 @@ async function boot() {
 
   let snapshotSeen = false;
   let games: PartyPanel | null = null;
+  let messagesPanel: MessagesPanel | null = null;
+  let messagesClient: MessagesClient | null = null;
+  const messageModel = new MessageModel(storedMessageRead(), () => Date.now() + model.clockSkew);
   /** runs after every message (e.g. a ?focus= waiting for its person to show up) */
   let afterIngest = () => {};
   const ingest = (msg: ServerToViewer) => {
+    if (msg.type === "message.deleted") {
+      if (messagesPanel) {
+        if (messagesClient) messagesClient.removed(msg.data.messageId);
+        else messageModel.remove(msg.data.messageId);
+        messagesPanel.refresh();
+      }
+      return;
+    }
+    if (msg.type === "message.sent") {
+      // Kiosk/nohud never retain or render message content, including live socket events.
+      if (messagesPanel) {
+        const fresh = !messageModel.rows.some((m) => m.id === msg.data.message.id);
+        if (messagesClient) messagesClient.receive(msg.data.message);
+        else messageModel.receive(msg.data.message);
+        if (fresh) messagesPanel.announce(msg.data.message);
+        messagesPanel.refresh();
+      }
+      return;
+    }
     const changes = model.apply(msg);
     partyWorld.setState(model.party);
     games?.refresh();
+    messagesPanel?.refresh();
     ensureCapacity();
+    colony.sync(catCount(model.people.size));
     for (const ch of changes) {
       chars.handle(ch);
       if (ch.kind === "officeRenamed") hud.setOfficeName(ch.name);
@@ -300,14 +342,14 @@ async function boot() {
     }
     if (msg.type === "office.snapshot") {
       snapshotSeen = true;
-      hud.setVersion(model.version, __BUILD__);
+      hud.setVersion(officeVersion(), __BUILD__);
       if (!demo) {
-        const label = newVersionLabel(seenRelease, model.version);
+        const label = newVersionLabel(seenRelease, officeVersion());
         if (celebrate) {
           celebrate = false;
-          celebration.show({ heading: "New version!", version: label, section: CHANGELOG[0] });
+          celebration.show({ heading: "New version!", version: label });
         } else if (label && celebration.open) celebration.setVersion(label);
-        saveSeen({ build: __BUILD__, version: model.version ?? seenRelease?.version, notes });
+        saveSeen({ build: __BUILD__, version: officeVersion() ?? seenRelease?.version, notes });
       }
       chars.syncSlots();
     }
@@ -316,6 +358,73 @@ async function boot() {
     living.poke();
     afterIngest();
   };
+
+  if (!kiosk && !nohud) {
+    const emptyPage = {
+      messages: [] as MessageRecord[],
+      head: 0,
+      older: null,
+      next: 0,
+      hasMore: false,
+      gap: false,
+      retention: { maxAgeMs: MESSAGE_RETENTION_MS, maxRows: MESSAGE_MAX_ROWS, expiresAt: null },
+    };
+    if (demo) messageModel.page(emptyPage, "initial");
+    else
+      messagesClient = new MessagesClient(messageModel, {
+        key,
+        changed: () => messagesPanel?.refresh(),
+        authFailed: () => {
+          messagesPanel?.clear();
+          location.href = `/login?next=${encodeURIComponent(location.pathname + location.search)}`;
+        },
+      });
+    const demoSend = async (request: SendMessageRequest): Promise<SendMessageResponse> => {
+      const selected = request.audience.kind === "selected" ? request.audience.personIds : null;
+      const recipients = [...model.people.values()]
+        .filter((p) => !selected || selected.includes(p.personId))
+        .map(({ personId, name }) => ({ personId, name }));
+      const seq = (messageModel.rows.at(-1)?.seq ?? messageModel.cursor) + 1;
+      const message: MessageRecord = {
+        id: crypto.randomUUID(),
+        seq,
+        ts: Date.now(),
+        text: request.text,
+        ...(request.from ? { from: request.from } : {}),
+        audience: request.audience.kind,
+        recipients,
+        notifyDesktop: request.notifyDesktop,
+      };
+      messageModel.ownedIds.add(message.id);
+      messageModel.receive(message);
+      messageModel.page({ ...emptyPage, messages: [message], head: seq, next: seq }, "catchup");
+      messagesPanel?.refresh();
+      return { ok: true, message, queued: 0 };
+    };
+    messagesPanel = new MessagesPanel(host, model, messageModel, {
+      demo: !!demo,
+      send: messagesClient ? (request) => messagesClient!.send(request) : demoSend,
+      delete: messagesClient
+        ? (id) => messagesClient!.delete(id)
+        : async (id) => {
+            messageModel.remove(id);
+            messagesPanel?.refresh();
+          },
+      sync: () => messagesClient?.sync() ?? Promise.resolve(),
+      older: () => messagesClient?.older() ?? Promise.resolve(),
+      status: () => messagesClient?.status ?? "",
+    });
+    messagesPanel.onOpen = () => {
+      games?.close();
+      if (matchMedia("(max-width: 560px)").matches) hud.suspendPanel();
+    };
+    hud.onMessages = (personId) => messagesPanel?.compose(personId);
+    hud.onLogout = () => {
+      messagesClient?.clear();
+      messageModel.clear();
+      messagesPanel?.clear();
+    };
+  }
 
   chars.onMoment = (m) => {
     if (m.kind === "joined") camera.notify(m.x, m.y, { zoom: 3, hold: 10, rush: true });
@@ -340,12 +449,33 @@ async function boot() {
   };
   /** Play an interaction for everyone watching (it comes back from the server to all viewers). */
   function react(ch: Extract<ModelChange, { kind: "interaction" }>) {
+    const who = ch.from || "Someone";
+    const catName = colony.get(ch.catId)?.name ?? "the cat";
     if (ch.interaction === "pet") {
-      cat.meow();
+      colony.get(ch.catId)?.meow();
+      return;
+    }
+    if (ch.interaction === "feed" || ch.interaction === "yarn" || ch.interaction === "laser") {
+      if (!ch.spot) return;
+      if (ch.interaction === "feed") {
+        colony.feed(ch.catId, ch.spot);
+        hud.showBanner(`${who} fed ${catName}`, "nom nom nom");
+      } else if (ch.interaction === "yarn") {
+        colony.yarn(ch.catId, ch.spot);
+        hud.showBanner(`${who} tossed ${catName} a yarn ball`);
+      } else {
+        colony.laser(ch.catId, ch.spot);
+        hud.showBanner(`${who} got out the laser pointer`, "the cats are on it");
+      }
+      hud.refreshCat();
       return;
     }
     const targets = ch.personId ? chars.charactersOf(ch.personId) : [];
     const name = ch.personId ? (model.people.get(ch.personId)?.name ?? ch.personId) : "";
+    if (ch.interaction === "cat" && ch.personId) {
+      colony.visit(ch.catId, ch.personId);
+      hud.refreshCat();
+    }
     if (ch.interaction === "paper" || ch.interaction === "tomato") {
       const kind = ch.interaction;
       const c = targets[Math.floor(Math.random() * targets.length)];
@@ -372,7 +502,7 @@ async function boot() {
             });
         }
       }
-    } else {
+    } else if (ch.interaction !== "cat") {
       const text =
         ch.interaction === "message"
           ? fitText((ch.text ?? "").toUpperCase(), 110)
@@ -387,24 +517,49 @@ async function boot() {
         : ch.delivered > 0
           ? `popped up on ${ch.delivered} Mac${ch.delivered === 1 ? "" : "s"}`
           : "their Mac is not listening";
-    hud.showBanner(`${ch.from || "Someone"} ${VERB[ch.interaction]} ${name}`, macs);
+    const title =
+      ch.interaction === "cat"
+        ? `${who} sent ${catName} to ${name}`
+        : `${who} ${VERB[ch.interaction]} ${name}`;
+    hud.showBanner(title, macs);
   }
 
-  async function poke(req: PokeRequest | { kind: "pet" }): Promise<PokeResult> {
+  const DONE: Partial<Record<InteractRequest["kind"], string>> = {
+    tomato: "splat!",
+    paper: "bonk!",
+    pet: "purr!",
+    feed: "nom nom nom",
+    yarn: "boing!",
+    laser: "pew!",
+  };
+  /** One shared client cooldown for every cat request: spam would only earn 429s that still count. */
+  const CAT_COOLDOWN_MS = 2000;
+  let catPokeAt = -Infinity;
+  async function poke(input: InteractRequest): Promise<PokeResult> {
+    // which cat goes: picked here, so every viewer sends the same one
+    const req =
+      input.kind === "cat" && input.catId === undefined
+        ? { ...input, catId: colony.randomSlot() }
+        : input;
+    const officeOnly = isCatInteraction(req.kind) || req.kind === "paper" || req.kind === "tomato";
     if (demo) {
       ingest({
         v: 1,
         type: "interaction.happened",
         id: `demo-${Date.now()}`,
         ts: Date.now(),
-        data: {
-          ...req,
-          ...(req.kind !== "pet" && req.kind !== "paper" && req.kind !== "tomato"
-            ? { delivered: 0 }
-            : {}),
-        },
+        data: { ...req, ...(officeOnly ? {} : { delivered: 0 }) },
       });
-      return { ok: true, message: "sent (demo: no Macs here)" };
+      return {
+        ok: true,
+        message: officeOnly ? (DONE[req.kind] ?? "done") : "sent (demo: no Macs here)",
+      };
+    }
+    if (isCatInteraction(req.kind) || req.kind === "cat") {
+      const now = performance.now();
+      if (now - catPokeAt < CAT_COOLDOWN_MS)
+        return { ok: false, message: "the cats need a breather" };
+      catPokeAt = now;
     }
     try {
       const r = await fetch("/api/interact", {
@@ -415,13 +570,13 @@ async function boot() {
       const body = (await r.json().catch(() => ({}))) as { delivered?: number; error?: string };
       if (r.status === 401) void loginIfLoggedOut();
       if (!r.ok) return { ok: false, message: body.error ?? `failed (${r.status})` };
-      if (req.kind === "tomato") return { ok: true, message: "splat!" };
-      if (req.kind === "paper" || req.kind === "pet") return { ok: true, message: "bonk!" };
+      if (officeOnly) return { ok: true, message: DONE[req.kind] ?? "done" };
+      const sent = req.kind === "cat" ? "a cat is on its way" : "sent";
       return {
         ok: true,
         message: body.delivered
-          ? "sent, it popped up on their Mac"
-          : "sent (their Mac is not listening)",
+          ? `${sent}, it popped up on their Mac`
+          : `${sent} (their Mac is not listening)`,
       };
     } catch {
       return { ok: false, message: "could not reach the office" };
@@ -429,6 +584,40 @@ async function boot() {
   }
   if (!kiosk) hud.onPoke = poke;
 
+  // ---- the cat card --------------------------------------------------------------------------
+  /** Laser armed from a cat card: the next tap on the floor points it. */
+  let laserArmed: { slot: number; from: string | undefined } | null = null;
+  hud.catInfo = (slot) => {
+    const cat = colony.get(slot);
+    if (!cat) return null;
+    const frame = catTextures(cat.coat)[CAT.sit[0]]!;
+    const src = frame.source.resource as HTMLCanvasElement | undefined;
+    let portrait: HTMLCanvasElement | null = null;
+    if (src) {
+      portrait = document.createElement("canvas");
+      portrait.width = 72;
+      portrait.height = 56;
+      const ctx = portrait.getContext("2d")!;
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(src, frame.frame.x, frame.frame.y, 18, 14, 0, 0, 72, 56);
+    }
+    return { slot, name: cat.name, coat: cat.coat.label, status: cat.status(), portrait };
+  };
+  if (!kiosk)
+    hud.onCatAction = async (action: CatAction, slot, from) => {
+      laserArmed = null;
+      const sign = from ? { from } : {};
+      if (action === "laser") {
+        laserArmed = { slot, from };
+        return { ok: true, message: "now tap the floor to point it" };
+      }
+      if (action === "pet") {
+        colony.get(slot)?.meow();
+        return poke({ kind: "pet", catId: slot, ...sign });
+      }
+      const spot = colony.dropSpot(slot);
+      return poke({ kind: action, catId: slot, x: spot.x, y: spot.y, ...sign });
+    };
   /** Look editor: PUT the picked look (null = back to automatic). */
   async function editLook(personId: string, avatar: AvatarSpec | null) {
     if (demo) {
@@ -534,18 +723,65 @@ async function boot() {
     }
     return previews;
   };
-  hud.fetchLookCustom = async (personId) => {
+  hud.fetchLookInfo = async (personId) => {
     if (demo) return null;
     try {
       const r = await fetch(
         `/api/people/${encodeURIComponent(personId)}/avatar${key ? `?key=${encodeURIComponent(key)}` : ""}`,
       );
       if (!r.ok) return null;
-      return ((await r.json()) as AvatarEditResponse).custom;
+      const body = (await r.json()) as AvatarEditResponse;
+      return {
+        custom: body.custom,
+        ...(body.aiLooks !== undefined ? { aiLooks: body.aiLooks } : {}),
+        ...(body.description !== undefined ? { description: body.description } : {}),
+        ...(body.localLooks ? { localLooks: body.localLooks.map(toolName) } : {}),
+      };
     } catch {
       return null;
     }
   };
+  const toolName = (g: string) => (g === "claude" ? "Claude Code" : g);
+  /**
+   * Look studio: describe your look. Your own Mac draws it (Claude Code on your own
+   * subscription; the look arrives as avatar.updated), else the server's AI (waits for it).
+   */
+  async function describeLook(personId: string, description: string) {
+    if (demo) return { ok: false, message: "demo: no AI looks here" };
+    try {
+      const r = await fetch(
+        `/api/people/${encodeURIComponent(personId)}/look${key ? `?key=${encodeURIComponent(key)}` : ""}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ description }),
+        },
+      );
+      const body = (await r.json().catch(() => ({}))) as Partial<LookDescribeResponse> & {
+        error?: string;
+      };
+      if (r.status === 401) void loginIfLoggedOut();
+      if (!r.ok) return { ok: false, message: body.error ?? `failed (${r.status})` };
+      if (body.result === "pending")
+        return {
+          ok: true,
+          pending: true,
+          message: `your Mac is drawing you with ${toolName(body.generator ?? "its AI")} on your own subscription, about a minute...`,
+        };
+      const message =
+        body.result === "ai"
+          ? "new look, straight from your description!"
+          : body.result === "off"
+            ? "saved, but AI looks are off on this server: ask the office admin to set GENUI_PROVIDER (README, Deploy)"
+            : body.result === "superseded"
+              ? "your look changed while the AI was drawing (a newer Generate or a saved look), so that one stays"
+              : "the AI could not draw you this time (error or daily limit); your look stays. Try again later.";
+      return { ok: body.result === "ai", message, ...(body.avatar ? { avatar: body.avatar } : {}) };
+    } catch {
+      return { ok: false, message: "could not reach the office" };
+    }
+  }
+  if (!kiosk) hud.onDescribeLook = describeLook;
 
   /** Agent card + ease the camera to the character (clear of the side panel). */
   const openSession = (sessionId: string) => {
@@ -559,9 +795,13 @@ async function boot() {
     return true;
   };
   hud.onOpenSession = (id) => void openSession(id);
-  camera.holdWhile = () => hud.panelOpen || hud.lookEditorOpen;
+  camera.holdWhile = () =>
+    hud.panelOpen || hud.lookEditorOpen || (messagesPanel?.expanded ?? false);
   hud.onPanelChange = () => {
+    if (hud.panelOpen && matchMedia("(max-width: 560px)").matches && messagesPanel?.expanded)
+      messagesPanel.collapse(false);
     chars.selected = hud.openSessionId;
+    if (hud.openCatSlot === null) laserArmed = null;
   };
   hud.fetchDay = async (personId): Promise<PersonDayResponse | null> => {
     if (demo) return null;
@@ -575,9 +815,24 @@ async function boot() {
       location.href = key ? `./stats?key=${encodeURIComponent(key)}` : "./stats";
       return;
     }
-    if (cat.hit(wx, wy)) {
+    if (laserArmed) {
+      const armed = laserArmed;
+      if (!scene.map.isWalkable(Math.floor(wx / 16), Math.floor((wy - 2) / 16))) return;
+      laserArmed = null;
+      void poke({
+        kind: "laser",
+        catId: armed.slot,
+        x: Math.max(0, Math.round(wx)),
+        y: Math.max(0, Math.round(wy)),
+        ...(armed.from ? { from: armed.from } : {}),
+      }).then((r) => hud.laserDone(r));
+      return;
+    }
+    const cat = colony.hit(wx, wy);
+    if (cat) {
       cat.meow();
-      if (!demo) void poke({ kind: "pet" });
+      if (!demo) void poke({ kind: "pet", catId: cat.slot });
+      hud.openCat(cat.slot);
       return;
     }
     const c = chars.pick(wx, wy);
@@ -639,6 +894,22 @@ async function boot() {
       },
     );
     feed.start();
+    if (messagesPanel) {
+      const seed: MessageRecord = {
+        id: "demo-office-message",
+        seq: 1,
+        ts: Date.now(),
+        from: "Demo",
+        text: "Lunch in five! Everyone can read office messages here.",
+        audience: "everyone",
+        recipients: [],
+        notifyDesktop: false,
+      };
+      messageModel.receive(seed);
+      messageModel.cursor = 1;
+      messageModel.lastRead = 1;
+      messagesPanel.refresh();
+    }
   } else {
     let newBuild: string | null = null;
     let lastInput = performance.now();
@@ -654,7 +925,7 @@ async function boot() {
       const ok = mayAutoReload({
         kiosk,
         hidden: document.visibilityState === "hidden",
-        busy: hud.lookEditorOpen || !!typing(),
+        busy: hud.lookEditorOpen || (messagesPanel?.hasDraft ?? false) || !!typing(),
         idleMs: performance.now() - lastInput,
       });
       if (ok) reloadInto(newBuild);
@@ -670,7 +941,13 @@ async function boot() {
       onMessage: ingest,
       onStatus: (s) => {
         hud.setStatus(s);
-        if (s === "open") checkBuild();
+        if (s === "open") {
+          checkBuild();
+          void messagesClient?.sync(true);
+        } else if (messagesClient) {
+          messagesClient.status = "Reconnecting — saved messages remain readable.";
+          messagesPanel?.refresh();
+        }
       },
     });
   }
@@ -752,6 +1029,11 @@ async function boot() {
       });
     },
   });
+  games.onOpen = () => {
+    if (messagesPanel?.expanded) messagesPanel.collapse(false);
+    if (matchMedia("(max-width: 560px)").matches) hud.suspendPanel();
+  };
+  if (messagesPanel?.expanded) messagesPanel.onOpen();
   if (focusParam) {
     // with a live server the snapshot arrives later: focus as soon as the person exists
     const tryFocus = () => {
@@ -793,7 +1075,12 @@ async function boot() {
     scene.update(time, dt);
     chars.update(dt, time);
     partyWorld.update(dt, time);
-    cat.update(dt, time);
+    colony.update(dt, time);
+    // cats coming in or going home get the door opened too
+    if (!scene.doorWanted) {
+      const d = scene.map.door;
+      scene.doorWanted = colony.nearDoor({ x: (d.x + 1) * 16, y: (d.y + 1) * 16 });
+    }
     queen.update(dt, time);
     life.update(dt, time);
     effects.update(dt);
@@ -854,6 +1141,7 @@ async function boot() {
       });
     },
     characters: () => chars.chars.size,
+    cats: () => colony.cats().length,
     setSpeed: (k) => {
       speed = Math.max(0, k);
     },

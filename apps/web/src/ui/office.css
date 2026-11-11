@@ -775,6 +775,16 @@ body.kiosk .hud-reconnect {
 .hud-panel .poke-status.err {
   color: var(--pink);
 }
+
+/* cat card */
+.hud-panel .portrait.cat {
+  width: 72px;
+  height: 56px;
+}
+.hud-panel .poke-btns .pixel-btn.armed {
+  background: var(--red);
+  color: var(--white);
+}
 .hud-panel .now.offline .act-name {
   color: var(--grey);
 }
@@ -1134,28 +1144,19 @@ body.kiosk .hud-reconnect {
   }
 }
 
-/* ---- release celebration (full screen) ----------------------------------------------------- */
+/* ---- release celebration (wide strip across the office) ------------------------------------ */
 .celebration {
   position: fixed;
   inset: 0;
   z-index: 50;
   display: grid;
-  place-items: center;
-  padding: max(16px, var(--safe-t)) max(16px, var(--safe-r)) max(16px, var(--safe-b))
-    max(16px, var(--safe-l));
-  background: rgba(24, 20, 37, 0.78);
+  align-items: center;
+  pointer-events: none;
   overflow: hidden;
-  animation: celebration-in 0.3s ease-out;
-}
-@keyframes celebration-in {
-  from {
-    opacity: 0;
-  }
 }
 .celebration .confetti {
   position: absolute;
   inset: 0;
-  pointer-events: none;
 }
 .celebration .confetti i {
   position: absolute;
@@ -1171,49 +1172,52 @@ body.kiosk .hud-reconnect {
     transform: translate(var(--drift), 110vh) rotate(720deg);
   }
 }
-.celebration .card {
+.celebration .strip {
   position: relative;
-  width: min(560px, 100%);
   max-height: 100%;
   overflow: auto;
-  padding: 28px 28px 22px;
-  text-align: center;
+  padding: 18px max(16px, var(--safe-r)) 18px max(16px, var(--safe-l));
+  background: rgba(24, 20, 37, 0.9);
+  border-block: var(--px) solid var(--amber);
+  box-shadow: 0 0 0 var(--px) var(--night);
   color: var(--cream);
-  animation: celebration-pop 0.5s cubic-bezier(0.2, 1.6, 0.4, 1);
+  pointer-events: auto;
+  cursor: pointer;
+  animation: celebration-in 0.45s cubic-bezier(0.2, 1.6, 0.4, 1);
 }
-@keyframes celebration-pop {
+@keyframes celebration-in {
   from {
-    transform: scale(0.6);
+    transform: scaleY(0);
   }
+}
+.celebration .row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 28px;
 }
 .celebration .kicker {
   margin: 0;
   font-family: var(--font-pixel);
-  font-size: 20px;
+  font-size: clamp(18px, 3vw, 28px);
   color: var(--lemon);
 }
 .celebration .version {
-  margin: 6px 0 14px;
+  margin: 0;
   font-family: var(--font-pixel);
-  font-size: clamp(44px, 12vw, 88px);
+  font-size: clamp(40px, 8vw, 88px);
   line-height: 1;
   color: var(--amber);
   text-shadow:
     4px 4px 0 var(--wine),
     0 0 24px rgba(254, 174, 52, 0.5);
 }
-.celebration .since {
-  margin: 0 0 6px;
-  font-size: 12px;
-  color: var(--grey);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
 .celebration ul {
-  margin: 0 0 18px;
+  width: min(640px, 100%);
+  margin: 14px auto 0;
   padding: 0;
   list-style: none;
-  text-align: left;
   font-size: 15px;
   line-height: 1.45;
 }
@@ -1237,18 +1241,69 @@ body.kiosk .hud-reconnect {
 .celebration .go {
   padding: 10px 22px;
 }
-body.kiosk .celebration .card {
-  width: min(760px, 100%);
+body.kiosk .celebration .kicker {
+  font-size: 36px;
 }
-body.kiosk .celebration ul {
-  font-size: 22px;
+body.kiosk .celebration .version {
+  font-size: 120px;
 }
 @media (prefers-reduced-motion: reduce) {
-  .celebration,
-  .celebration .card {
+  .celebration .strip {
     animation: none;
   }
   .celebration .confetti {
     display: none;
+  }
+}
+
+/* look studio: describe your look, the server's AI draws it */
+.look-studio .look-describe {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.look-studio .describe-label {
+  font-family: var(--font-pixel);
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: var(--grey);
+  text-transform: uppercase;
+}
+.look-studio .look-describe textarea {
+  width: 100%;
+  min-height: 72px;
+  max-height: 30vh;
+  resize: vertical;
+  box-sizing: border-box;
+  font: inherit;
+  /* 16px: iOS Safari zooms the page into smaller fields */
+  font-size: 16px;
+  padding: 6px 8px;
+  background: var(--cream);
+  color: var(--night);
+  border: 2px solid var(--night);
+}
+.look-studio .describe-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.look-studio .describe-hint {
+  flex: 1;
+  font-size: 12px;
+  color: var(--grey);
+}
+.look-studio .describe-go {
+  flex: none;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.look-studio .describe-go:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+@media (max-width: 760px) {
+  .look-studio .look-describe textarea {
+    min-height: 56px;
   }
 }
