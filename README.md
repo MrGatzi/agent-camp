@@ -144,11 +144,10 @@ is painted by the same renderer at the same pixel size, so everyone stays in one
 
 Which agent a session runs (Claude, Codex, Pi) shows in its colour: if you don't name a
 jacket colour, your jacket takes the agent's colour as before; if you do, you keep your
-jacket and get an armband in the agent's colour instead. Every extra
+jacket and get a badge on the chest (and a patch across the shoulders from behind) in the
+agent's colour instead. Every extra
 session is a sibling of you with tiny variations, and your pod has one desk per running
 session (at least 2, up to 6).
-
-![A detailed look up close](screenshots/14-detailed-look-laptop.png)
 
 Want a say? Click your name plate. The first time, tap **It's me: send a code**: a 6-digit
 code pops up as a notification on your Mac (via the connector, so its notifications must be
