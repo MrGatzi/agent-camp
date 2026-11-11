@@ -19,6 +19,7 @@ import {
   parseToml,
   saveConfig,
   stringifyToml,
+  toConfig,
   tomlString,
 } from "../src/config.ts";
 import { detectGenerators, LookGenerators, type LookSpawn } from "../src/lookgen.ts";
@@ -92,6 +93,41 @@ describe("config.toml", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test("look_generator: claude / off kept; codex (no longer offered) or junk = the default", async () => {
+    const fallback = toConfig({}).look_generator;
+    expect(toConfig({ look_generator: "claude" }).look_generator).toBe("claude");
+    expect(toConfig({ look_generator: " OFF " }).look_generator).toBe("off");
+    expect(toConfig({ look_generator: "codex" }).look_generator).toBe(fallback);
+    expect(toConfig({ look_generator: "gpt" }).look_generator).toBe(fallback);
+    const dir = mkdtempSync(join(tmpdir(), "ao-cfg-"));
+    try {
+      writeFileSync(join(dir, "config.toml"), 'name = "Zoe"\nlook_generator = "codex"\n');
+      const main = join(import.meta.dir, "..", "src", "main.ts");
+      const env = { ...process.env, AGENT_OFFICE_CONFIG_DIR: dir };
+      const run = async (...args: string[]) => {
+        const p = Bun.spawn([process.execPath, main, ...args], {
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [out, err] = [
+          await new Response(p.stdout).text(),
+          await new Response(p.stderr).text(),
+        ];
+        return { code: await p.exited, out: out.trim(), err };
+      };
+      expect(await run("configure", "--get", "look_generator")).toMatchObject({
+        code: 0,
+        out: fallback,
+      });
+      const refused = await run("configure", "--look-generator", "codex");
+      expect(refused.code).toBe(2);
+      expect(refused.err).toContain("auto, claude or off");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("machine name", () => {
@@ -133,7 +169,7 @@ describe("look generator is opt-in", () => {
       expect(loadConfig(path).config.look_generator).toBe("off");
       writeFileSync(path, 'server = "https://office.example.com"\nname = "Zoe"\n');
       expect(loadConfig(path).config.look_generator).toBe("off");
-      for (const v of ["auto", "claude", "codex", "off"] as const) {
+      for (const v of ["auto", "claude", "off"] as const) {
         writeFileSync(path, `name = "Zoe"\nlook_generator = "${v}"\n`);
         expect(loadConfig(path).config.look_generator).toBe(v);
       }
@@ -174,7 +210,7 @@ describe("look generator is opt-in", () => {
       expect(answer.error).toBe("no local AI tool");
       expect(calls).toEqual([]);
       // opting in finds them
-      expect([...(await detectGenerators("auto", spy, home)).keys()]).toEqual(["claude", "codex"]);
+      expect([...(await detectGenerators("auto", spy, home)).keys()]).toEqual(["claude"]);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

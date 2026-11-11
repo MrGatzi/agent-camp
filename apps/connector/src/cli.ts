@@ -92,9 +92,9 @@ Commands:
       --machine-name LABEL  (default: short hostname; "" resets to it)
       --share-project-names true|false     --get KEY (print one value)
       --notifications true|false   show waves/messages from the office (default true)
-      --look-generator off|auto|claude|codex   opt-in: draw your look with your own Claude
-                           Code / Codex subscription when the office asks (default off;
-                           auto = Claude Code, else Codex; restart the service after changing)
+      --look-generator off|auto|claude   opt-in: draw your look with your own Claude Code
+                           subscription when the office asks (default off; restart the
+                           service after changing)
       --birthday MM-DD     opt-in: the office brings you a cake that day ("" removes it)
   status            connection state and live sessions
   logs              follow the daemon log
@@ -210,9 +210,9 @@ async function cmdRun(args: Args): Promise<number> {
     return 1;
   }
 
-  // Draw the look with Claude Code / Codex on this person's own subscription, only if they
-  // opted in (look_generator, default off). Test runs on a fixture home (--home /
-  // AGENT_OFFICE_HOME) never touch the real CLIs unless asked to.
+  // Draw the look with Claude Code on this person's own subscription, only if they opted in
+  // (look_generator, default off). Test runs on a fixture home (--home / AGENT_OFFICE_HOME)
+  // never touch the real CLIs unless asked to.
   const testHome = !!home || !!env.AGENT_OFFICE_HOME;
   const lookSetting =
     lookGeneratorSetting(env.AGENT_OFFICE_LOOK_GENERATOR) ??
@@ -349,7 +349,7 @@ async function cmdConfigure(args: Args): Promise<number> {
   if (lookGen !== undefined) {
     const v = lookGeneratorSetting(lookGen);
     if (!v) {
-      console.error("look-generator must be auto, claude, codex or off");
+      console.error("look-generator must be auto, claude or off");
       return 2;
     }
     next.look_generator = v;

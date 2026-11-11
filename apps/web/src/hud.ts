@@ -99,7 +99,7 @@ export type LookInfo = {
   custom: boolean;
   aiLooks?: boolean;
   description?: string;
-  /** local AI tools on this person's Macs ("Claude Code", "Codex") */
+  /** local AI tools on this person's Macs ("Claude Code") */
   localLooks?: string[];
 };
 /** How long the studio waits for a look drawn on the person's Mac. */

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   candidatePaths,
   detectGenerators,
+  LOOK_GENERATOR_SETTINGS,
   LookGenerators,
   type LookRequest,
   type LookSpawn,
@@ -31,7 +32,7 @@ function fakeSpawn(
 const quiet = () => {};
 
 describe("LookGenerators", () => {
-  test("claude: headless, no tools, no saved session, schema + system prompt, structured_output", async () => {
+  test("claude: headless, no tools, no MCP, no hooks, no saved session, structured_output", async () => {
     const calls: Parameters<typeof fakeSpawn>[1] = [];
     const gens = new LookGenerators({
       tools: new Map([["claude", "/x/bin/claude"]]),
@@ -45,35 +46,25 @@ describe("LookGenerators", () => {
     const a = await gens.generate(req);
     expect(a).toEqual({ requestId: "lr_1", generator: "claude", avatar: look });
     const { cmd, stdin, env } = calls[0]!;
-    expect(cmd[0]).toBe("/x/bin/claude");
-    expect(cmd).toContain("-p");
-    expect(cmd).toContain("--no-session-persistence");
-    expect(cmd[cmd.indexOf("--tools") + 1]).toBe("");
-    expect(JSON.parse(cmd[cmd.indexOf("--json-schema") + 1]!)).toEqual(req.schema);
-    expect(cmd[cmd.indexOf("--system-prompt") + 1]).toBe(req.system);
+    // the exact command: the description is text a teammate can set, so no tool may be offered
+    expect(cmd).toEqual([
+      "/x/bin/claude",
+      "-p",
+      "--no-session-persistence",
+      "--tools",
+      "",
+      "--strict-mcp-config",
+      "--settings",
+      JSON.stringify({ disableAllHooks: true }),
+      "--output-format",
+      "json",
+      "--json-schema",
+      JSON.stringify(req.schema),
+      "--system-prompt",
+      req.system,
+    ]);
     expect(stdin).toBe(req.prompt); // the description travels on stdin, not argv
     expect(env.PATH?.split(":")[0]).toBe("/x/bin");
-  });
-
-  test("codex: ephemeral, read-only, schema file, last message file", async () => {
-    const calls: Parameters<typeof fakeSpawn>[1] = [];
-    const gens = new LookGenerators({
-      tools: new Map([["codex", "/x/bin/codex"]]),
-      log: quiet,
-      spawn: fakeSpawn((cmd) => {
-        writeFileSync(cmd[cmd.indexOf("--output-last-message") + 1]!, JSON.stringify(look));
-        return {};
-      }, calls),
-    });
-    const a = await gens.generate(req);
-    expect(a).toEqual({ requestId: "lr_1", generator: "codex", avatar: look });
-    const { cmd } = calls[0]!;
-    expect(cmd.slice(0, 2)).toEqual(["/x/bin/codex", "exec"]);
-    for (const flag of ["--ephemeral", "--skip-git-repo-check", "--output-schema"])
-      expect(cmd).toContain(flag);
-    expect(cmd[cmd.indexOf("--sandbox") + 1]).toBe("read-only");
-    expect(cmd.at(-1)).toContain(req.system);
-    expect(cmd.at(-1)).toContain("Tracht");
   });
 
   test("failures become an error answer, never a throw", async () => {
@@ -128,7 +119,7 @@ describe("LookGenerators", () => {
 });
 
 describe("detectGenerators", () => {
-  test("finds the CLIs in the usual install folders, honours the setting", async () => {
+  test("finds claude in the usual install folders, honours the setting, never offers codex", async () => {
     const home = mkdtempSync(join(tmpdir(), "ao-look-"));
     try {
       const bin = join(home, ".local", "bin");
@@ -139,12 +130,10 @@ describe("detectGenerators", () => {
       }
       const noShell = fakeSpawn(() => ({ stdout: "" }));
       expect(candidatePaths("claude", home)[0]).toBe(join(bin, "claude"));
-      expect([...(await detectGenerators("auto", noShell, home)).keys()]).toEqual([
-        "claude",
-        "codex",
-      ]);
-      expect([...(await detectGenerators("codex", noShell, home)).keys()]).toEqual(["codex"]);
+      expect([...(await detectGenerators("auto", noShell, home)).keys()]).toEqual(["claude"]);
+      expect([...(await detectGenerators("claude", noShell, home)).keys()]).toEqual(["claude"]);
       expect((await detectGenerators("off", noShell, home)).size).toBe(0);
+      expect(LOOK_GENERATOR_SETTINGS).not.toContain("codex" as never);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

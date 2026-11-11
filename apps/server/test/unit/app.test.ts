@@ -824,7 +824,7 @@ describe("OfficeApp look editor", () => {
           clientId: `c-${name}-local`,
           connectorVersion: "1.0.0",
           ...(desc ? { selfDescription: desc } : {}),
-          lookGenerators: gens as ("claude" | "codex")[],
+          lookGenerators: gens as "claude"[],
         }),
       );
     const answer = (requestId: string, data: Record<string, unknown>) =>

@@ -136,19 +136,19 @@ shows up on the agent card so you can tell the sessions apart.
 ### How do I look?
 
 Your look is drawn by AI from your description. If you opt in, the AI is **your own**: the
-connector asks Claude Code (`claude -p`) or, without it, Codex (`codex exec`) on your Mac, on
-your own subscription, so the office needs no shared API key. This is **off by default**
-(it spends your subscription); turn it on with
+connector asks Claude Code (`claude -p`, with no tools, MCP servers or hooks) on your Mac, on
+your own subscription, so the office needs no shared API key. This is **off by default** (it
+spends your subscription); turn it on with
 
 ```bash
-agent-office configure --look-generator auto   # or claude / codex to pick one; off turns it off
+agent-office configure --look-generator auto   # or claude; off turns it off
 launchctl kickstart -k gui/$(id -u)/dev.agentoffice.connector
 ```
 
 Only your description goes to your AI and only the finished look goes to the office. With it
-off (or without either tool), the office's own AI draws your look if the admin set one up
+off (or without Claude Code), the office's own AI draws your look if the admin set one up
 (`GENUI_PROVIDER`), else it comes from a hash of your name. `agent-office status` shows
-whether your Mac draws looks and with which tool; updates and reconnects never turn it on.
+whether your Mac draws looks; updates and reconnects never turn it on.
 The description: a few words work, but a detailed one (up to ~8000 characters)
 gets you a detailed character: hair cut and colour, glasses and their frame, each layer of
 clothing with its collar, buttons, pockets, pattern and embroidery, socks, shoes, even an
@@ -199,8 +199,8 @@ session started, the connector version, the **machine name** you chose (`machine
 defaults to the short hostname, e.g. `martins-mbp`; set it to anything you like), and your
 **look description** (up to 8000 characters, if you set one). The server keeps the
 description to draw your avatar and never shows it to viewers; they only see the finished
-avatar. To draw it, the server sends the description back to your own Mac, whose Claude Code /
-Codex (your own account) turns it into the look, which the connector sends to the office.
+avatar. To draw it, the server sends the description back to your own Mac, whose Claude Code
+(your own account) turns it into the look, which the connector sends to the office.
 Only when no Mac of yours can do that does it go to the office's AI provider, if one is set.
 
 Optional: `agent-office configure --birthday MM-DD` and the office brings you a cake that day

@@ -22,8 +22,8 @@ export type Config = {
   /** opt-in "MM-DD": the office brings a cake that day */
   birthday?: string;
   /**
-   * draw the look with a local AI tool on your own subscription: off | auto | claude | codex.
-   * Opt-in: missing means off, so an update or reconnect never starts spending it.
+   * draw the look with Claude Code on your own subscription: off | auto | claude.
+   * Opt-in: missing (or unknown) means off, so an update or reconnect never starts spending it.
    */
   look_generator: LookGeneratorSetting;
   client_id: string;

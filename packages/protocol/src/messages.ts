@@ -102,9 +102,9 @@ function msg<const T extends string, D extends z.ZodType>(type: T, data: D) {
 // ---- connector -> server ------------------------------------------------------------------
 /**
  * Local AI command-line tools a connector can draw its person's look with, on that person's own
- * subscription (Claude Code `claude -p`, Codex `codex exec`). No shared API key involved.
+ * subscription (Claude Code `claude -p`, run without tools). No shared API key involved.
  */
-export const LOOK_GENERATORS = ["claude", "codex"] as const;
+export const LOOK_GENERATORS = ["claude"] as const;
 export const LookGenerator = z.enum(LOOK_GENERATORS);
 export type LookGenerator = z.infer<typeof LookGenerator>;
 

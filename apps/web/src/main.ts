@@ -553,9 +553,9 @@ async function boot() {
       return null;
     }
   };
-  const toolName = (g: string) => (g === "claude" ? "Claude Code" : g === "codex" ? "Codex" : g);
+  const toolName = (g: string) => (g === "claude" ? "Claude Code" : g);
   /**
-   * Look studio: describe your look. Your own Mac draws it (Claude Code / Codex on your own
+   * Look studio: describe your look. Your own Mac draws it (Claude Code on your own
    * subscription; the look arrives as avatar.updated), else the server's AI (waits for it).
    */
   async function describeLook(personId: string, description: string) {

@@ -288,7 +288,7 @@ export class OfficeApp {
 
   /**
    * Ask one of the person's live connectors to draw the look with its local AI tool (Claude
-   * Code / Codex on that person's own subscription). The request is remembered in the store
+   * Code on that person's own subscription). The request is remembered in the store
    * (one per person, the newest wins), so the answer is accepted only for a request this
    * server made, from a connector of that same person, even across a hibernation. Returns the
    * tool, or null when no connector of theirs can (then the server provider takes the job).
@@ -831,7 +831,7 @@ export class OfficeApp {
       const resetIn = Math.ceil((86_400_000 - (now % 86_400_000)) / 1000);
       return json(
         {
-          error: `you used today's ${this.maxGenerates} looks from the office's AI, more after midnight UTC (or connect a Mac with Claude Code or Codex: it draws them on your own subscription)`,
+          error: `you used today's ${this.maxGenerates} looks from the office's AI, more after midnight UTC (or connect a Mac with Claude Code: it draws them on your own subscription)`,
         },
         { status: 429, headers: { "retry-after": String(resetIn) } },
       );

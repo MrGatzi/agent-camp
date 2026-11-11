@@ -1,13 +1,15 @@
 /**
  * Draw the person's look on this Mac with a local AI tool, on the person's own subscription:
- * Claude Code (`claude -p` with a JSON schema) or Codex (`codex exec --output-schema`). The
- * office server sends the prompt and the schema (`connector.lookRequested`); only the
- * description goes to the person's own AI and only the finished look goes back to the server.
+ * Claude Code (`claude -p` with a JSON schema). The office server sends the prompt and the
+ * schema (`connector.lookRequested`); only the description goes to the person's own AI and
+ * only the finished look goes back to the server.
  *
- * Both run headless without tools, without saving a session (so the detector never sees a
- * phantom session) and in an empty scratch directory (no project files, no CLAUDE.md).
+ * It runs headless with no tools at all (the description is text a teammate can set), no MCP
+ * servers, no hooks, without saving a session (so the detector never sees a phantom session)
+ * and in an empty scratch directory (no project files, no CLAUDE.md). Codex is not offered:
+ * `codex exec` keeps a shell / apply_patch / MCP tools even with a read-only sandbox.
  */
-import { accessSync, constants, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, mkdirSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { LOOK_GENERATORS, type LookGenerator, type MessageData } from "@agent-office/protocol";
@@ -16,8 +18,8 @@ import type { Logger } from "./log.ts";
 export type LookRequest = MessageData<"connector.lookRequested">;
 export type LookAnswer = MessageData<"connector.lookGenerated">;
 
-/** `look_generator` in config.toml: auto = Claude Code, else Codex, else none. */
-export const LOOK_GENERATOR_SETTINGS = ["auto", "claude", "codex", "off"] as const;
+/** `look_generator` in config.toml: auto / claude = Claude Code when installed, off = none. */
+export const LOOK_GENERATOR_SETTINGS = ["auto", "claude", "off"] as const;
 export type LookGeneratorSetting = (typeof LOOK_GENERATOR_SETTINGS)[number];
 
 /** A local AI that is slower than this is stopped (the server then tries its own provider). */
@@ -33,7 +35,7 @@ export type LookSpawn = (
 export function candidatePaths(tool: LookGenerator, home = homedir()): string[] {
   const dirs = [
     join(home, ".local", "bin"),
-    ...(tool === "claude" ? [join(home, ".claude", "local")] : []),
+    join(home, ".claude", "local"),
     "/opt/homebrew/bin",
     "/usr/local/bin",
     join(home, ".bun", "bin"),
@@ -177,10 +179,7 @@ export class LookGenerators {
     this.opts.log(`look: drawing you with ${generator} (requested from the office)`);
     try {
       mkdirSync(scratch, { recursive: true });
-      const avatar =
-        generator === "claude"
-          ? await this.runClaude(path, req, scratch)
-          : await this.runCodex(path, req, scratch);
+      const avatar = await this.runClaude(path, req, scratch);
       this.opts.log(`look: ${generator} done in ${Math.round((Date.now() - started) / 1000)} s`);
       return { requestId: req.requestId, generator, avatar };
     } catch (e) {
@@ -241,38 +240,6 @@ export class LookGenerators {
     if (out.structured_output !== undefined) return out.structured_output;
     if (typeof out.result === "string") return JSON.parse(out.result);
     throw new Error("claude gave no look");
-  }
-
-  /** `codex exec`: the final message (schema-checked) is written to a file. */
-  private async runCodex(path: string, req: LookRequest, cwd: string): Promise<unknown> {
-    const schemaFile = join(cwd, "look.schema.json");
-    const outFile = join(cwd, "look.json");
-    writeFileSync(schemaFile, JSON.stringify(req.schema));
-    await this.run(
-      path,
-      [
-        "exec",
-        "--ephemeral",
-        "--skip-git-repo-check",
-        "--sandbox",
-        "read-only",
-        "--cd",
-        cwd,
-        "--output-schema",
-        schemaFile,
-        "--output-last-message",
-        outFile,
-        // codex has no system prompt flag: the instructions go first, the description after
-        `${req.system}\n\n${req.prompt}`,
-      ],
-      "",
-      cwd,
-    );
-    try {
-      return JSON.parse(readFileSync(outFile, "utf8"));
-    } catch {
-      throw new Error("codex gave no look");
-    }
   }
 }
 
