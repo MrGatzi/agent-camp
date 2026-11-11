@@ -370,8 +370,11 @@ Gateway); `GENUI_PROVIDER` is a plain *Text* variable. Everything works without 
 Deploys keep what you add there; only the variables listed in `apps/server/wrangler.toml` are
 reset to its values.
 With AI on, a described person costs one call per description change (default model
-`claude-opus-5-5`, roughly $0.10-0.15 and 30-90 s per call); `GENUI_MAX_CALLS_PER_DAY`
-(default 50) bounds the day. People without a description never cause a call.
+`claude-haiku-4-5`, roughly $0.02-0.04 per call); `GENUI_MAX_CALLS_PER_DAY` (default 50)
+bounds the day. People without a description never cause a call. For more faithful looks set
+the *Text* variable `GENUI_MODEL=claude-opus-5-5` (roughly $0.10-0.15 and 30-90 s per call at
+the default `GENUI_EFFORT=low`). A deploy that bumps the look revision regenerates every
+described person once, within the same daily cap.
 
 **Order when a change touches both sides:** release the connector before the server is
 deployed. The server serves `install.sh`, which downloads the newest released binary; if the

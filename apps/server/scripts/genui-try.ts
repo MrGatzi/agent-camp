@@ -5,7 +5,8 @@
  *   ANTHROPIC_API_KEY=... bun apps/server/scripts/genui-try.ts <description.md|-> [name]
  *   GENUI_PROVIDER=jev AI_GATEWAY_API_KEY=... bun apps/server/scripts/genui-try.ts desc.md
  *
- * GENUI_MODEL / GENUI_EFFORT override the defaults. Use `-` to read the description from stdin.
+ * Default model claude-haiku-4-5; GENUI_MODEL=claude-opus-5-5 tries the pricier model, and
+ * GENUI_EFFORT sets its effort (ignored on Haiku 4.5). Use `-` to read the description from stdin.
  */
 import { readFileSync } from "node:fs";
 import { MAX_SELF_DESCRIPTION, personIdFromName } from "@agent-office/protocol";

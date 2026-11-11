@@ -9,10 +9,12 @@ import {
 import {
   AI_AVATAR_SCHEMA,
   createAvatarService,
+  DEFAULT_ANTHROPIC_MODEL,
   DEFAULT_MAX_CALLS_PER_DAY,
   FALLBACK_BETA,
   type FetchLike,
   GENUI_MAX_TOKENS,
+  GENUI_MAX_TOKENS_NO_THINKING,
   MAX_CONCURRENT,
   SYSTEM_PROMPT,
   sanitizeSchema,
@@ -39,7 +41,7 @@ function mockFetch(respond: (call: Call) => Response | Promise<Response>) {
   return { f, calls };
 }
 
-/** Structured-outputs reply: (empty) thinking block, then the JSON as text. */
+/** Structured-outputs reply as Opus 5.5 sends it: (empty) thinking block, then the JSON as text. */
 const anthropicOk = (obj: unknown, extra: Record<string, unknown> = {}) =>
   Response.json({
     model: "claude-opus-5-5",
@@ -176,7 +178,7 @@ describe("genui: schema", () => {
 });
 
 describe("genui: anthropic", () => {
-  test("structured outputs request; the fixture comes back as the stored look", async () => {
+  test("structured outputs request on the default Haiku 4.5; the fixture is the stored look", async () => {
     const { f, calls } = mockFetch(() => anthropicOk(TRACHT));
     const lines: string[] = [];
     const store = new MemoryStore();
@@ -188,14 +190,15 @@ describe("genui: anthropic", () => {
     const headers = c.init.headers as Record<string, string>;
     expect(headers["x-api-key"]).toBe("sk-test");
     expect(headers["anthropic-version"]).toBe("2023-06-01");
-    expect(headers["anthropic-beta"]).toBe(FALLBACK_BETA);
+    // Haiku 4.5: no server-side fallbacks, no effort, no thinking -> a smaller max_tokens
+    expect(headers).not.toHaveProperty("anthropic-beta");
     expect(c.init.signal).toBeInstanceOf(AbortSignal);
-    expect(c.body.model).toBe("claude-opus-5-5");
-    expect(c.body.max_tokens).toBe(GENUI_MAX_TOKENS);
-    expect(c.body.fallbacks).toBe("default");
+    expect(DEFAULT_ANTHROPIC_MODEL).toBe("claude-haiku-4-5");
+    expect(c.body.model).toBe("claude-haiku-4-5");
+    expect(c.body.max_tokens).toBe(GENUI_MAX_TOKENS_NO_THINKING);
+    expect(c.body).not.toHaveProperty("fallbacks");
     expect(c.body.output_config).toEqual({
       format: { type: "json_schema", schema: JSON.parse(JSON.stringify(AI_AVATAR_SCHEMA)) },
-      effort: "low",
     });
     // the large, identical system prompt carries the cache breakpoint
     expect(c.body.system).toEqual([
@@ -213,10 +216,35 @@ describe("genui: anthropic", () => {
     expect(svc.callsToday()).toBe(1);
   });
 
+  test("GENUI_MODEL=claude-opus-5-5 is the explicit choice: effort, fallbacks, 16k", async () => {
+    const { f, calls } = mockFetch(() => anthropicOk(TRACHT));
+    const svc = createAvatarService(
+      anthropic({ GENUI_MODEL: "claude-opus-5-5" }),
+      new MemoryStore(),
+      {
+        fetch: f,
+      },
+    );
+    expect((await svc.resolve(job)).source).toBe("ai");
+    const c = calls[0]!;
+    expect((c.init.headers as Record<string, string>)["anthropic-beta"]).toBe(FALLBACK_BETA);
+    expect(c.body.model).toBe("claude-opus-5-5");
+    expect(c.body.max_tokens).toBe(GENUI_MAX_TOKENS);
+    expect(c.body.fallbacks).toBe("default");
+    expect(c.body.output_config).toEqual({
+      format: { type: "json_schema", schema: JSON.parse(JSON.stringify(AI_AVATAR_SCHEMA)) },
+      effort: "low",
+    });
+    for (const k of ["tool_choice", "tools", "thinking", "temperature"])
+      expect(c.body).not.toHaveProperty(k);
+  });
+
   test("GENUI_MODEL: older/smaller models get no fallbacks, pre-effort models no effort", async () => {
     for (const [model, effort, fallbacks] of [
       ["claude-haiku-5-5", true, false],
       ["claude-haiku-4-5", false, false],
+      ["claude-sonnet-4-5", false, false],
+      ["claude-opus-5-5", true, true],
       ["claude-sonnet-5-5", true, true],
       ["claude-fable-5-2", true, true],
     ] as const) {
@@ -228,6 +256,8 @@ describe("genui: anthropic", () => {
       const c = calls[0]!;
       expect(c.body.model).toBe(model);
       expect("effort" in (c.body.output_config as object)).toBe(effort);
+      // no effort = no thinking unless asked, so the JSON alone needs less room
+      expect(c.body.max_tokens).toBe(effort ? GENUI_MAX_TOKENS : GENUI_MAX_TOKENS_NO_THINKING);
       expect("fallbacks" in c.body).toBe(fallbacks);
       expect("anthropic-beta" in (c.init.headers as object)).toBe(fallbacks);
     }
@@ -319,10 +349,14 @@ describe("genui: anthropic", () => {
       }),
     );
     const lines: string[] = [];
-    const svc = createAvatarService(anthropic(), new MemoryStore(), {
-      fetch: f,
-      log: (l) => lines.push(l),
-    });
+    const svc = createAvatarService(
+      anthropic({ GENUI_MODEL: "claude-opus-5-5" }),
+      new MemoryStore(),
+      {
+        fetch: f,
+        log: (l) => lines.push(l),
+      },
+    );
     expect((await svc.resolve(job)).source).toBe("ai");
     expect(lines.some((l) => l.includes("served by claude-opus-4-8"))).toBe(true);
   });
@@ -417,14 +451,18 @@ describe("genui: service", () => {
     expect(on.cacheKey("anna", undefined)).toBe(on.cacheKey("anna", ""));
   });
 
-  test("GENUI_EFFORT and the call cap default", async () => {
+  test("GENUI_EFFORT (with an effort model) and the call cap default", async () => {
     const effortOf = async (env: Record<string, string>) => {
       const { f, calls } = mockFetch(() => anthropicOk(TRACHT));
       const lines: string[] = [];
-      const svc = createAvatarService(anthropic(env), new MemoryStore(), {
-        fetch: f,
-        log: (l) => lines.push(l),
-      });
+      const svc = createAvatarService(
+        anthropic({ GENUI_MODEL: "claude-opus-5-5", ...env }),
+        new MemoryStore(),
+        {
+          fetch: f,
+          log: (l) => lines.push(l),
+        },
+      );
       await svc.resolve(job);
       return { effort: (calls[0]!.body.output_config as { effort?: string }).effort, lines, svc };
     };

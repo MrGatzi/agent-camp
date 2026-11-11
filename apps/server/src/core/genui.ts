@@ -3,7 +3,9 @@
  *
  * Providers:
  *   off        avatarFromSeed (default; no network)
- *   anthropic  Messages API with structured outputs (output_config.format json_schema)
+ *   anthropic  Messages API with structured outputs (output_config.format json_schema);
+ *              claude-haiku-4-5 by default, GENUI_MODEL=claude-opus-5-5 (etc.) as an explicit,
+ *              pricier choice
  *   jev        Vercel AI Gateway, OpenAI-compatible chat completions with a strict JSON schema
  *
  * Rules: called only on join / description change (the Hub decides), never without a
@@ -68,7 +70,10 @@ export type GenuiEnv = {
   GENUI_PROVIDER?: string;
   GENUI_MODEL?: string;
   GENUI_MAX_CALLS_PER_DAY?: string;
-  /** anthropic only: low (default) | medium | high | xhigh | max */
+  /**
+   * anthropic only: low (default) | medium | high | xhigh | max; not sent to models without
+   * effort, such as the default claude-haiku-4-5 (it matters with e.g. claude-opus-5-5)
+   */
   GENUI_EFFORT?: string;
   ANTHROPIC_API_KEY?: string;
   AI_GATEWAY_API_KEY?: string;
@@ -80,10 +85,16 @@ export type GenuiEnv = {
  */
 export const LOOK_KEY_REVISION = "L1";
 
-export const DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5";
+/**
+ * Cheap default ($1 / $5 per MTok, no thinking, no effort). Opus 5.5 ($4 / $20, adaptive
+ * thinking) is opt-in via GENUI_MODEL: more faithful looks at several times the cost per call.
+ */
+export const DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5";
 export const DEFAULT_JEV_MODEL = "openai/gpt-4o-mini";
-/** Room for the full look JSON (~3-5k tokens) plus adaptive thinking. */
+/** Room for the full look JSON (~3-5k tokens) plus adaptive thinking (jev and thinking models). */
 export const GENUI_MAX_TOKENS = 16_000;
+/** Models that answer without thinking (NO_EFFORT, incl. the default) only need the JSON. */
+export const GENUI_MAX_TOKENS_NO_THINKING = 8_000;
 /** Per request, started when the request is sent (not while it waits for a slot). */
 export const GENUI_TIMEOUT_MS = 120_000;
 export const DEFAULT_MAX_CALLS_PER_DAY = 50;
@@ -104,8 +115,16 @@ const FALLBACK_MODELS = new Set([
   "claude-fable-5-1",
   "claude-fable-5-2",
 ]);
-/** `output_config.effort` errors on these older models (GENUI_MODEL may name one). */
+/**
+ * `output_config.effort` errors on these older models (the default Haiku 4.5 among them). They
+ * also only think with an explicit `budget_tokens`, which we never send, so the answer is the
+ * JSON alone and GENUI_MAX_TOKENS_NO_THINKING is enough.
+ */
 const NO_EFFORT = /^claude-(3|haiku-4|sonnet-4-5|sonnet-4-0|sonnet-4-2|opus-4-0|opus-4-1|opus-4-2)/;
+
+/** The anthropic request's `max_tokens` for `model`. */
+export const anthropicMaxTokens = (model: string): number =>
+  NO_EFFORT.test(model) ? GENUI_MAX_TOKENS_NO_THINKING : GENUI_MAX_TOKENS;
 
 // ---- output schema --------------------------------------------------------------------------
 
@@ -264,8 +283,9 @@ type AnthropicResponse = {
 };
 
 /**
- * Anthropic Messages API with structured outputs. No forced tool_choice (400 on Opus 5.5);
- * thinking is left at the model default (adaptive on current models), depth via effort.
+ * Anthropic Messages API with structured outputs (supported by Haiku 4.5 and the current
+ * models). No forced tool_choice (400 on Opus 5.5); thinking is left at the model default (off
+ * on Haiku 4.5, adaptive on current models), depth via effort where the model has it.
  */
 export function anthropicProvider(opts: {
   apiKey: string;
@@ -277,6 +297,7 @@ export function anthropicProvider(opts: {
   const model = opts.model || DEFAULT_ANTHROPIC_MODEL;
   const effort = opts.effort ?? DEFAULT_EFFORT;
   const fallbacks = FALLBACK_MODELS.has(model);
+  const hasEffort = !NO_EFFORT.test(model);
   return {
     id: "anthropic",
     async generate(req) {
@@ -292,13 +313,14 @@ export function anthropicProvider(opts: {
         headers,
         body: JSON.stringify({
           model,
-          max_tokens: GENUI_MAX_TOKENS,
-          // identical for every person: cached, so a burst of jobs pays for it once
+          max_tokens: anthropicMaxTokens(model),
+          // identical for every person: cached once the prefix reaches the model's minimum
+          // (4096 tokens on Haiku 4.5, 512 on Opus 5.5), so a burst of jobs pays for it once
           system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
           messages: [{ role: "user", content: userPrompt(req) }],
           output_config: {
             format: { type: "json_schema", schema: AI_AVATAR_SCHEMA },
-            ...(NO_EFFORT.test(model) ? {} : { effort }),
+            ...(hasEffort ? { effort } : {}),
           },
           ...(fallbacks ? { fallbacks: "default" } : {}),
         }),
