@@ -17,6 +17,7 @@ import {
   type PersonDayResponse,
   parseViewerMessage,
   type ServerToViewer,
+  type SetGifRequest,
 } from "@agent-office/protocol";
 import { Application, TextureStyle } from "pixi.js";
 import { trophyCanvas } from "./art/fun.ts";
@@ -246,6 +247,24 @@ async function boot() {
     const r = await fetch(`/api/people/${encodeURIComponent(personId)}${q}`);
     return r.ok ? ((await r.json()) as PersonDayResponse) : null;
   };
+  // Customize (person card): set / remove a head GIF. The card updates from the gif.updated
+  // broadcast, not from this response. No server in demo mode, so no Customize section.
+  hud.putGif = demo
+    ? null
+    : async (personId, link, password) => {
+        const q = key ? `?key=${encodeURIComponent(key)}` : "";
+        try {
+          const r = await fetch(`/api/people/${encodeURIComponent(personId)}/gif${q}`, {
+            method: "PUT",
+            headers: { authorization: `Bearer ${password}`, "content-type": "application/json" },
+            body: JSON.stringify({ link } satisfies SetGifRequest),
+          });
+          const body: unknown = await r.json().catch(() => null);
+          return { status: r.status, body };
+        } catch {
+          return { status: 0, body: null };
+        }
+      };
 
   camera.onTap = (wx, wy) => {
     if (cat.hit(wx, wy)) {

@@ -134,6 +134,13 @@ belongs to the person: the last machine that set one (or `off`) wins, and a mach
 never set one leaves it alone. Only the Giphy id is sent; viewers load the GIF straight from
 Giphy's CDN.
 
+You can also do it from the office page: click your nameplate, scroll to **Customize**, paste
+a Giphy link and press **Save** (you see a preview first). The first save asks for the office
+password (the same password the connector uses); it is remembered in this browser. **Remove**
+clears the GIF. A GIF set on the page sticks across connector restarts and reconnects, until
+you run `agent-office gif ...` again with a different value (or `off`). The wall/iPad
+kiosk (`?kiosk=1`) and the demo (`?demo=...`) have no Customize section.
+
 ### Privacy
 
 Sent: agent kind (Claude/Codex/Pi), a salted hash of the session id, the project **folder
