@@ -61,4 +61,25 @@ describe("wall of shame", () => {
     expect(again.snapshot(0).clears).toEqual({ anna: 1 });
     expect(new ShameTracker(store, () => "2026-11-12").snapshot(0).clears).toEqual({});
   });
+
+  test("a wait survives a restart of the tracker", () => {
+    const store = new MemoryStore();
+    const day = () => "2026-11-11";
+    new ShameTracker(store, day).record([act("bob", "b1", "waiting", "typing")], EMPTY, 0);
+    const restarted = new ShameTracker(store, day);
+    expect(restarted.snapshot(60_000).longestWaitMs).toEqual({ bob: 60_000 });
+    restarted.record([act("bob", "b1", "typing", "waiting")], EMPTY, 3_600_000);
+    expect(new ShameTracker(store, day).snapshot(4_000_000).longestWaitMs).toEqual({
+      bob: 3_600_000,
+    });
+  });
+
+  test("writes nothing when no number changed", () => {
+    const store = new MemoryStore();
+    const t = new ShameTracker(store, () => "2026-11-11");
+    t.record([ended("anna", "a1")], EMPTY, 1_000);
+    t.record([act("anna", "a2", "typing", "waiting")], EMPTY, 2_000);
+    expect(store.kvGet("shame.2026-11-11")).toBeNull();
+    expect(store.kvGet("shame.")).toBeNull();
+  });
 });
