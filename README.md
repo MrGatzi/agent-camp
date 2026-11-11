@@ -162,6 +162,14 @@ logging out) drops the claim. Outfits that are not in the agent colour carry a s
 badge on the tee and a band across the back, so you can still tell Claude from Codex at the
 desk.
 
+The studio also has a **Describe your look** box: write how you look (a few words or a whole
+paragraph) and press **Generate look**; the server's AI draws you from it within a minute,
+replacing a look picked in the studio. Pressing it again with the same text is a fresh try
+(one per person every 20 s, inside the daily AI cap). The text becomes your description, just
+like one set with `agent-office configure --description-file` (a connector that keeps sending
+its old, unchanged description does not undo it). If AI looks are off on the server, the box
+says so and the text is kept for when they are turned on (`GENUI_PROVIDER`, see Deploy).
+
 ![Look studio](screenshots/14-look-editor-laptop.png)
 
 ### Privacy

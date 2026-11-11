@@ -22,6 +22,7 @@ import {
   HELD_ITEMS,
   type InteractionKind,
   MAX_DESK_PROPS,
+  MAX_SELF_DESCRIPTION,
   OUTFITS,
   type PersonDayResponse,
   SKIN_TONES,
@@ -87,6 +88,8 @@ export type PokeRequest = {
 export type PokeResult = { ok: boolean; message: string };
 /** After saving in the look editor. */
 export type LookResult = { ok: boolean; message: string; avatar?: AvatarSpec };
+/** GET /api/people/:id/avatar, as far as the look studio cares. */
+export type LookInfo = { custom: boolean; aiLooks?: boolean; description?: string };
 
 type LookField = Exclude<keyof AvatarSpec, "deskProps" | "deskMess">;
 /** The look editor's catalog rows (arrow carousels), in order. */
@@ -253,8 +256,10 @@ export class Hud {
   onEditLook: ((personId: string, avatar: AvatarSpec | null) => Promise<LookResult>) | null = null;
   /** preview canvases (front, side, at the desk) of a look in a given agent's colors */
   previewLook: (avatar: AvatarSpec, agent: AgentKind) => HTMLCanvasElement[] = () => [];
-  /** whether a person's look is custom (GET /api/people/:id/avatar); null = unknown */
-  fetchLookCustom: (personId: string) => Promise<boolean | null> = async () => null;
+  /** custom look? AI looks on? own description? (GET /api/people/:id/avatar); null = unknown */
+  fetchLookInfo: (personId: string) => Promise<LookInfo | null> = async () => null;
+  /** look studio: a new look from a description (server GenUI); null hides the box */
+  onDescribeLook: ((personId: string, description: string) => Promise<LookResult>) | null = null;
   /** person this browser confirmed to be ("It's me" code); only their look is editable */
   me: string | null = null;
   /** demo feed: no server, every look is editable */
@@ -694,6 +699,8 @@ export class Hud {
     // catalog ids only: a saved custom look is drawn from them (a detailed GenUI look is not
     // kept), so the preview shows exactly what Save gives
     const draft: AvatarSpec = structuredClone(catalogAvatar(p.avatar));
+    /** a freshly generated look (detailed): previewed until a carousel is touched */
+    let generated: AvatarSpec | null = null;
     const agent = this.model.sessionsOf(p.personId)[0]?.agent ?? "claude";
 
     // desk props are three slots of their own; empty ones are dropped when saving
@@ -765,7 +772,18 @@ export class Hud {
         <div class="studio-body">
           <section class="studio-stage">
             <div class="look-preview" aria-label="preview"></div>
-            <div class="look-note dim">Only you can see this until you save. Saving pins the look; a new description no longer changes it.</div>
+            <div class="look-note dim">Only you can see this until you save. Saving pins the look; a new description no longer changes it.</div>${
+              this.onDescribeLook
+                ? `<form class="look-describe">
+              <label class="describe-label" for="look-describe-text">Describe your look</label>
+              <textarea id="look-describe-text" rows="4" maxlength="${MAX_SELF_DESCRIPTION}" placeholder="A few words or a whole paragraph: hair, glasses, clothes, shoes, colors..."></textarea>
+              <div class="describe-foot">
+                <span class="describe-hint dim">The AI draws you from this text (up to a minute). It replaces a look picked here.</span>
+                <button class="pixel-btn describe-go" type="submit">&#10024; Generate look</button>
+              </div>
+            </form>`
+                : ""
+            }
           </section>
           <section class="studio-rows">${groups
             .map(
@@ -786,7 +804,8 @@ export class Hud {
     const rowEls = new Map(
       [...box.querySelectorAll<HTMLElement>(".look-row")].map((e) => [e.dataset.field!, e]),
     );
-    const drawPreview = () => preview.replaceChildren(...this.previewLook(draft, agent));
+    const drawPreview = () =>
+      preview.replaceChildren(...this.previewLook(generated ?? draft, agent));
     const paintRow = (r: LookRow) => {
       const e = rowEls.get(r.id)!;
       const value = r.get();
@@ -804,11 +823,45 @@ export class Hud {
       status.textContent = msg;
       status.className = `poke-status look-status${ok === undefined ? "" : ok ? " ok" : " err"}`;
     };
-    void this.fetchLookCustom(p.personId).then((custom) => {
-      if (custom === false) autoBtn.title = "This look is already automatic";
-      if (custom) say("custom look (picked here)");
+    const describeForm = box.querySelector<HTMLFormElement>(".look-describe");
+    const describeText = describeForm?.querySelector("textarea") ?? null;
+    const describeGo = describeForm?.querySelector<HTMLButtonElement>(".describe-go") ?? null;
+    const describeHint = describeForm?.querySelector<HTMLElement>(".describe-hint") ?? null;
+    void this.fetchLookInfo(p.personId).then((info) => {
+      if (!info) return;
+      if (!info.custom) autoBtn.title = "This look is already automatic";
+      if (info.custom) say("custom look (picked here)");
+      if (describeText && info.description && !describeText.value)
+        describeText.value = info.description;
+      if (describeHint && info.aiLooks === false)
+        describeHint.textContent =
+          "AI looks are off on this office server: your text is saved and used as soon as the admin turns them on (GENUI_PROVIDER, see README).";
+    });
+    const showAvatar = (avatar: AvatarSpec) => {
+      Object.assign(draft, structuredClone(catalogAvatar(avatar)));
+      for (const i of slotIdx) slots[i] = draft.deskProps[i] ?? "none";
+      generated = avatar.look ? structuredClone(avatar) : null;
+      paintAll();
+    };
+    describeForm?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!this.onDescribeLook || !describeText || !describeGo) return;
+      const text = describeText.value.trim();
+      if (!text) {
+        say("write a few words about how you look first", false);
+        describeText.focus();
+        return;
+      }
+      describeGo.disabled = true;
+      say("the AI is drawing you, this can take a minute...");
+      const r = await this.onDescribeLook(p.personId, text);
+      describeGo.disabled = false;
+      say(r.message, r.ok);
+      if (r.ok && r.avatar) showAvatar(r.avatar);
     });
     const step = (r: LookRow, dir: -1 | 1) => {
+      // touching a carousel starts from the generated look's catalog ids (what Save keeps)
+      generated = null;
       r.set(cycleOption(r.options, r.get(), dir, r.skip?.()));
       paintRow(r);
       drawPreview();
@@ -826,9 +879,7 @@ export class Hud {
       say(r.message, r.ok);
       if (r.ok && r.avatar && !avatar) {
         // back to automatic: show the look the server picked
-        Object.assign(draft, structuredClone(catalogAvatar(r.avatar)));
-        for (const i of slotIdx) slots[i] = draft.deskProps[i] ?? "none";
-        paintAll();
+        showAvatar(r.avatar);
       }
     };
     box.querySelector(".save")!.addEventListener("click", () => void save(structuredClone(draft)));
@@ -848,7 +899,15 @@ export class Hud {
         return;
       }
       const keys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"];
-      if (!keys.includes(e.key)) {
+      const typing = (e.target as HTMLElement | null)?.closest?.("textarea, input");
+      if (typing && e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        describeForm?.requestSubmit();
+        return;
+      }
+      // in the description box arrows move the caret, they do not flip carousels
+      if (!keys.includes(e.key) || typing) {
         // typing shortcuts of the office must not fire behind the studio
         e.stopImmediatePropagation();
         return;

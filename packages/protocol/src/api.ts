@@ -6,9 +6,11 @@
  *   POST /api/history/backfill <- HistoryRow[]   (Bearer CONNECTOR_PASSWORD)
  *   POST /api/interact         <- InteractRequest -> InteractResponse
  *   PUT  /api/people/:personId/avatar <- AvatarEditRequest -> AvatarEditResponse
+ *   POST /api/people/:personId/look   <- LookDescribeRequest -> LookDescribeResponse
  */
 import { z } from "zod";
 import { AvatarSpec } from "./catalog.ts";
+import { MAX_SELF_DESCRIPTION } from "./constants.ts";
 import {
   Activity,
   AgentKind,
@@ -48,8 +50,34 @@ export const AvatarEditResponse = z.object({
   /** the look now shown (for a reset: the current one until the new automatic look lands) */
   avatar: AvatarSpec,
   custom: z.boolean(),
+  /** whether the server can turn a description into a look (GENUI_PROVIDER is set up) */
+  aiLooks: z.boolean().optional(),
+  /** the person's look description; only sent to that person's own browser */
+  description: z.string().optional(),
 });
 export type AvatarEditResponse = z.infer<typeof AvatarEditResponse>;
+
+/**
+ * The owner describes their look in the look studio (same text a connector sends as its look
+ * description). It becomes the person's description and the server's GenUI makes a new look.
+ */
+export const LookDescribeRequest = z.object({
+  description: z.string().trim().min(1).max(MAX_SELF_DESCRIPTION),
+});
+export type LookDescribeRequest = z.infer<typeof LookDescribeRequest>;
+
+export const LookDescribeResponse = z.object({
+  ok: z.boolean(),
+  /** the look now shown */
+  avatar: AvatarSpec,
+  /**
+   * ai = a new look from the description; off = this server has no AI looks (the description
+   * is saved and used once they are turned on); failed = error, refusal, unusable answer or
+   * daily cap (the previous look stays, the next join retries)
+   */
+  result: z.enum(["ai", "off", "failed"]),
+});
+export type LookDescribeResponse = z.infer<typeof LookDescribeResponse>;
 
 /** One stored history row (one per viewer event, except activity changes). No content. */
 export const HistoryRow = z.object({

@@ -373,6 +373,46 @@ export class Hub {
     return this.customAvatar(personId) !== null;
   }
 
+  /** The person-level look description ("" = none). Never part of the office state. */
+  descriptionOf(personId: string): string {
+    const p = this.people.get(personId);
+    return p?.selfDescription ?? this.storedAvatar(personId)?.selfDescription ?? "";
+  }
+
+  /**
+   * Look studio: the owner describes their look in the browser. The text becomes the
+   * person-level description, exactly as if a connector had sent a new one (a connector that
+   * keeps sending its old, unchanged description does not flip it back, see `ensurePerson`).
+   * Always returns an avatar job, even for the same text: "Generate" means "try again". A
+   * custom look stays pinned until the caller drops it (only once the AI made a new look, so
+   * a failed attempt never costs the person their look). Null when not in the office.
+   */
+  describeLook(personId: string, description: string): AvatarJob | null {
+    const p = this.people.get(personId);
+    if (!p) return null;
+    const stored = this.storedAvatar(personId);
+    p.selfDescription = description;
+    // keep the text with the automatic look right away, so it survives a restart even if
+    // the AI call fails (the `:fallback` key then retries it on the next join)
+    this.store.putAvatar(
+      personId,
+      stored?.avatar ?? avatarFromSeed(personId),
+      stored?.key ?? "",
+      description,
+    );
+    const keyFn = this.cfg.avatarKey ?? defaultAvatarKey;
+    const key = keyFn(personId, description);
+    p.lookKey = key;
+    this.log(`look ${personId} described in the look studio`);
+    return {
+      personId,
+      name: p.name,
+      key,
+      selfDescription: description,
+      ...(stored ? { previous: stored.avatar } : {}),
+    };
+  }
+
   state(): OfficeState {
     return this.current;
   }

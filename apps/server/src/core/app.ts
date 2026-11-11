@@ -10,6 +10,8 @@ import {
   HistoryRow,
   InteractRequest,
   type InteractResponse,
+  LookDescribeRequest,
+  type LookDescribeResponse,
   type MessageOf,
   PartyState,
   type ServerToConnector,
@@ -70,6 +72,8 @@ export const CLAIM_MAX_TRIES = 5;
 export const CLAIM_MAX_PER_DAY = 10;
 /** One look change per viewer (IP) this often. */
 export const LOOK_MIN_INTERVAL_MS = 1_000;
+/** One "generate my look from this description" per person this often (each is an AI call). */
+export const LOOK_DESCRIBE_MIN_INTERVAL_MS = 20_000;
 
 const POKE_TEXT = {
   wave: "waved at you 👋",
@@ -113,6 +117,7 @@ export class OfficeApp {
   private lastPoke = new Map<string, number>();
   readonly party: Party;
   private lastLook = new Map<string, number>();
+  private lastDescribe = new Map<string, number>();
   private lastClaim = new Map<string, number>();
 
   constructor(
@@ -316,10 +321,14 @@ export class OfficeApp {
       if (method === "GET") {
         const p = this.hub.state().people.find((x) => x.personId === personId);
         if (!p) return json({ error: "not in the office" }, { status: 404 });
+        // the description is the person's own words: only their own browser gets it back
+        const mine = (await meFromRequest(req, this.env, this.now())) === personId;
         return json({
           ok: true,
           avatar: p.avatar,
           custom: this.hub.isCustomLook(personId),
+          aiLooks: this.genui.providerId !== "off",
+          ...(mine ? { description: this.hub.descriptionOf(personId) } : {}),
         } satisfies AvatarEditResponse);
       }
       if (method === "PUT") {
@@ -351,6 +360,22 @@ export class OfficeApp {
         }),
         shame: { clears: top(sh.clears), waits: top(sh.longestWaitMs), fires: top(sh.fires) },
       });
+    }
+
+    const describe = /^\/api\/people\/([^/]{1,64})\/look$/.exec(path);
+    if (describe && method === "POST") {
+      let personId: string;
+      try {
+        personId = decodeURIComponent(describe[1]!);
+      } catch {
+        return json({ error: "bad person id" }, { status: 400 });
+      }
+      if ((await meFromRequest(req, this.env, this.now())) !== personId)
+        return json(
+          { error: "you can only change your own look (confirm it is you first)" },
+          { status: 403 },
+        );
+      return this.describeLook(req, personId);
     }
 
     const person = /^\/api\/people\/([^/]{1,64})$/.exec(path);
@@ -562,6 +587,48 @@ export class OfficeApp {
       avatar,
       custom: parsed.data.avatar !== null,
     } satisfies AvatarEditResponse);
+  }
+
+  /**
+   * Look studio: the owner describes their look, the server's GenUI turns it into one. Waits
+   * for the AI (up to its timeout) so the studio can show the result. The description is
+   * saved even when AI looks are off, so it is used as soon as they are turned on.
+   */
+  private async describeLook(req: Request, personId: string): Promise<Response> {
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return json({ error: "invalid JSON" }, { status: 400 });
+    }
+    const parsed = LookDescribeRequest.safeParse(body);
+    if (!parsed.success)
+      return json({ error: z.prettifyError(parsed.error).slice(0, 500) }, { status: 400 });
+    const now = this.now();
+    const retryIn = (this.lastDescribe.get(personId) ?? 0) + LOOK_DESCRIBE_MIN_INTERVAL_MS - now;
+    if (retryIn > 0)
+      return json(
+        { error: `one new look at a time, try again in ${Math.ceil(retryIn / 1000)} s` },
+        { status: 429, headers: { "retry-after": String(Math.ceil(retryIn / 1000)) } },
+      );
+    const job = this.hub.describeLook(personId, parsed.data.description);
+    if (!job) return json({ error: "not in the office" }, { status: 404 });
+    this.lastDescribe.set(personId, now);
+
+    const res = await this.genui.resolve(job);
+    this.publish(
+      this.hub.setAvatar(job.personId, res.avatar, res.key, this.now(), job.selfDescription),
+    );
+    // a new AI look replaces a look picked in the editor: that is what "Generate" asked for
+    if (res.source === "ai" && this.hub.isCustomLook(personId)) {
+      const back = this.hub.setCustomAvatar(personId, null, this.now());
+      if (back) this.publish(back.events);
+    }
+    this.transport.scheduleAlarm(this.hub.nextDeadline());
+    const avatar =
+      this.hub.state().people.find((p) => p.personId === personId)?.avatar ?? res.avatar;
+    const result = res.source === "ai" ? "ai" : this.genui.providerId === "off" ? "off" : "failed";
+    return json({ ok: result === "ai", avatar, result } satisfies LookDescribeResponse);
   }
 
   private async interact(req: Request): Promise<Response> {

@@ -540,6 +540,128 @@ describe("OfficeApp look editor", () => {
     expect(who.personId).toBe("anna");
   });
 
+  describe("describe your look in the studio", () => {
+    const traceFetch = (bodies: unknown[]) =>
+      (async (_url: unknown, init: RequestInit) => {
+        bodies.push(init.body);
+        return Response.json({
+          stop_reason: "end_turn",
+          content: [{ type: "text", text: JSON.stringify(LOOK_FIXTURES.tracht) }],
+        });
+      }) as unknown as typeof globalThis.fetch;
+    const aiEnv = {
+      CONNECTOR_PASSWORD: "pw",
+      GENUI_PROVIDER: "anthropic",
+      ANTHROPIC_API_KEY: "k",
+      LATEST_CONNECTOR_VERSION: "1.0.0",
+    };
+    const describeLook = (app: OfficeApp, personId: string, body: unknown, cookie = me) =>
+      app.handleHttp(
+        req(`/api/people/${personId}/look`, {
+          method: "POST",
+          headers: { "content-type": "application/json", cookie },
+          body: JSON.stringify(body),
+        }),
+      );
+    const getLook = async (app: OfficeApp, personId: string, cookie = "") =>
+      (await (await app.handleHttp(
+        req(`/api/people/${personId}/avatar`, { headers: { cookie } }),
+      ))!.json()) as { custom: boolean; aiLooks?: boolean; description?: string };
+
+    test("generates a detailed look, replaces a custom one and can try again", async () => {
+      const bodies: unknown[] = [];
+      const t = setup(aiEnv, traceFetch(bodies));
+      const { app, sent, pending, advance } = t;
+      app.connectorMessage("s1", hello("Tom", "red hoodie"));
+      await Promise.all(pending);
+      expect(bodies).toHaveLength(1);
+      me = await claim(t, "tom");
+      expect((await put(app, "tom", { avatar: tomLook }))!.status).toBe(200);
+      expect(app.hub.isCustomLook("tom")).toBe(true);
+
+      const desc = "Tracht: charcoal Janker, tan lederhosen, round tortoiseshell sunglasses";
+      const r = (await describeLook(app, "tom", { description: `  ${desc}  ` }))!;
+      expect(r.status).toBe(200);
+      const body = (await r.json()) as { ok: boolean; result: string; avatar: AvatarSpec };
+      expect(body).toMatchObject({ ok: true, result: "ai" });
+      expect(body.avatar.look).toEqual(LOOK_FIXTURES.tracht.look);
+      expect(bodies).toHaveLength(2);
+      expect(String(bodies[1])).toContain(desc);
+      // the AI look replaced the custom one, for everybody
+      expect(app.hub.isCustomLook("tom")).toBe(false);
+      expect(app.hub.state().people[0]!.avatar.look).toEqual(LOOK_FIXTURES.tracht.look);
+      const ev = parseViewerMessage(sent.at(-1)!);
+      expect(ev.ok && ev.msg.type === "avatar.updated" && ev.msg.data.avatar.look).toEqual(
+        LOOK_FIXTURES.tracht.look,
+      );
+      // the description is the person's own: only their browser gets it back
+      expect(await getLook(app, "tom", me)).toMatchObject({ aiLooks: true, description: desc });
+      expect((await getLook(app, "tom")).description).toBeUndefined();
+
+      // the connector reconnecting with its old, unchanged description changes nothing
+      app.connectorMessage("s2", hello("Tom", "red hoodie"));
+      await Promise.all(pending);
+      expect(bodies).toHaveLength(2);
+      expect(app.hub.descriptionOf("tom")).toBe(desc);
+
+      // "Generate" again with the same text: a new try, but not right away
+      expect((await describeLook(app, "tom", { description: desc }))!.status).toBe(429);
+      advance(20_000);
+      expect((await describeLook(app, "tom", { description: desc }))!.status).toBe(200);
+      expect(bodies).toHaveLength(3);
+    });
+
+    test("AI looks off: the description is saved for later and the look stays", async () => {
+      const t = setup();
+      const { app } = t;
+      app.connectorMessage("s1", hello("Tom"));
+      await Bun.sleep(1);
+      me = await claim(t, "tom");
+      const before = app.hub.state().people[0]!.avatar;
+      expect(await getLook(app, "tom", me)).toMatchObject({ aiLooks: false, description: "" });
+      const r = (await describeLook(app, "tom", { description: "blue mohawk" }))!;
+      expect(r.status).toBe(200);
+      expect(await r.json()).toMatchObject({ ok: false, result: "off", avatar: before });
+      expect(app.hub.descriptionOf("tom")).toBe("blue mohawk");
+      expect(app.store.getAvatar("tom")).toMatchObject({ selfDescription: "blue mohawk" });
+      expect(app.store.getAvatar("tom")?.key).toEndWith(":fallback");
+    });
+
+    test("a failed AI call keeps the look (custom included)", async () => {
+      const t = setup(
+        aiEnv,
+        (async () =>
+          new Response("overloaded", { status: 529 })) as unknown as typeof globalThis.fetch,
+      );
+      const { app } = t;
+      app.connectorMessage("s1", hello("Tom"));
+      await Promise.all(t.pending);
+      me = await claim(t, "tom");
+      expect((await put(app, "tom", { avatar: tomLook }))!.status).toBe(200);
+      const r = (await describeLook(app, "tom", { description: "blue mohawk" }))!;
+      expect(await r.json()).toMatchObject({ ok: false, result: "failed" });
+      expect(app.hub.isCustomLook("tom")).toBe(true);
+      expect(app.hub.state().people[0]!.avatar).toMatchObject(tomLook);
+    });
+
+    test("only your own look and a real description", async () => {
+      const t = setup();
+      const { app } = t;
+      app.connectorMessage("s1", hello("Tom"));
+      app.connectorMessage("s2", hello("Anna"));
+      expect((await describeLook(app, "tom", { description: "x" }, ""))!.status).toBe(403);
+      const anna = await claim(t, "anna");
+      expect((await describeLook(app, "tom", { description: "x" }, anna))!.status).toBe(403);
+      expect((await describeLook(app, "anna", { description: "   " }, anna))!.status).toBe(400);
+      expect(
+        (await describeLook(app, "anna", { description: "x".repeat(8001) }, anna))!.status,
+      ).toBe(400);
+      expect((await describeLook(app, "anna", { description: "curly hair" }, anna))!.status).toBe(
+        200,
+      );
+    });
+  });
+
   test("claim codes: sent only to that person's Macs, single use, limited tries", async () => {
     const t = setup();
     const { app, toConnector, advance } = t;

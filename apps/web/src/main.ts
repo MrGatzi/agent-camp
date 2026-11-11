@@ -23,6 +23,7 @@ import "./ui/office.css";
 import {
   type AvatarEditResponse,
   type AvatarSpec,
+  type LookDescribeResponse,
   type PartyEvent,
   type PersonDayResponse,
   parseViewerMessage,
@@ -534,18 +535,52 @@ async function boot() {
     }
     return previews;
   };
-  hud.fetchLookCustom = async (personId) => {
+  hud.fetchLookInfo = async (personId) => {
     if (demo) return null;
     try {
       const r = await fetch(
         `/api/people/${encodeURIComponent(personId)}/avatar${key ? `?key=${encodeURIComponent(key)}` : ""}`,
       );
       if (!r.ok) return null;
-      return ((await r.json()) as AvatarEditResponse).custom;
+      const body = (await r.json()) as AvatarEditResponse;
+      return {
+        custom: body.custom,
+        ...(body.aiLooks !== undefined ? { aiLooks: body.aiLooks } : {}),
+        ...(body.description !== undefined ? { description: body.description } : {}),
+      };
     } catch {
       return null;
     }
   };
+  /** Look studio: describe your look, the server's AI draws it (waits for the answer). */
+  async function describeLook(personId: string, description: string) {
+    if (demo) return { ok: false, message: "demo: no AI looks here" };
+    try {
+      const r = await fetch(
+        `/api/people/${encodeURIComponent(personId)}/look${key ? `?key=${encodeURIComponent(key)}` : ""}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ description }),
+        },
+      );
+      const body = (await r.json().catch(() => ({}))) as Partial<LookDescribeResponse> & {
+        error?: string;
+      };
+      if (r.status === 401) void loginIfLoggedOut();
+      if (!r.ok) return { ok: false, message: body.error ?? `failed (${r.status})` };
+      const message =
+        body.result === "ai"
+          ? "new look, straight from your description!"
+          : body.result === "off"
+            ? "saved, but AI looks are off on this server: ask the office admin to set GENUI_PROVIDER (README, Deploy)"
+            : "the AI could not draw you this time (error or daily limit); your look stays. Try again later.";
+      return { ok: body.result === "ai", message, ...(body.avatar ? { avatar: body.avatar } : {}) };
+    } catch {
+      return { ok: false, message: "could not reach the office" };
+    }
+  }
+  if (!kiosk) hud.onDescribeLook = describeLook;
 
   /** Agent card + ease the camera to the character (clear of the side panel). */
   const openSession = (sessionId: string) => {
