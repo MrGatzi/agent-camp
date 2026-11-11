@@ -111,8 +111,8 @@ export type HubResult = {
   avatarJob?: AvatarJob;
   /** new binding for this socket (persist it with the socket) */
   binding?: Binding;
-  /** a connector answered a look request (checked and applied by the app) */
-  lookGenerated?: MessageData<"connector.lookGenerated"> & { personId: string };
+  /** a connector answered a look request on `socketId` (checked and applied by the app) */
+  lookGenerated?: MessageData<"connector.lookGenerated"> & { personId: string; socketId: string };
 };
 
 type Persisted = { v: 1; connectors: ConnectorRec[]; people: PersonRec[] };
@@ -279,7 +279,7 @@ export class Hub {
         const b = this.sockets.get(socketId);
         if (!b) return this.reject("bad_message", CLOSE_BAD_MESSAGE, "send connector.hello first");
         // the person comes from the socket's own hello, never from the message
-        return { events: [], lookGenerated: { ...msg.data, personId: b.personId } };
+        return { events: [], lookGenerated: { ...msg.data, personId: b.personId, socketId } };
       }
       case "connector.bye": {
         const b = this.sockets.get(socketId);

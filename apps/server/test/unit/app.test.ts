@@ -1032,6 +1032,54 @@ describe("OfficeApp look editor", () => {
       expect(info.localLooks).toEqual([]);
     });
 
+    test("only the Mac asked may answer; a reconnected Mac's resent answer goes to the server", async () => {
+      const bodies: unknown[] = [];
+      const t = setup(aiEnv, aiFetch(bodies));
+      const { app, toConnector, pending, advance } = t;
+      app.connectorMessage("s1", helloLocal("Tom"));
+      advance(1_000);
+      app.connectorMessage("s2", impostor("Tom"));
+      await Promise.all(pending);
+      me = await claimOn(t, "tom", "s1");
+      const seeded = app.hub.state().people[0]!.avatar;
+      expect(await (await describeLook(app, "tom", "blue mohawk"))!.json()).toMatchObject({
+        result: "pending",
+      });
+      const ask = lookRequests(toConnector).at(-1)!;
+      expect(ask.socketId).toBe("s1");
+      // the right requestId from another socket of the same name: dropped, the Mac may still answer
+      app.connectorMessage("s2", answer(ask.msg.data.requestId, { avatar: LOOK_FIXTURES.tracht }));
+      await Promise.all(pending);
+      expect(app.hub.state().people[0]!.avatar).toEqual(seeded);
+      expect(bodies).toHaveLength(0);
+      app.connectorMessage("s1", answer(ask.msg.data.requestId, { avatar: LOOK_FIXTURES.tracht }));
+      await Promise.all(pending);
+      expect(app.hub.state().people[0]!.avatar.look).toEqual(LOOK_FIXTURES.tracht.look);
+      expect(bodies).toHaveLength(0);
+
+      // the Mac reconnects before it answers and resends on its new socket: not the Mac asked,
+      // so its look is dropped and the server's provider draws the Generate right away
+      advance(20_000);
+      app.connectorMessage("s1", beat);
+      expect(await (await describeLook(app, "tom", "green mohawk"))!.json()).toMatchObject({
+        result: "pending",
+      });
+      const again = lookRequests(toConnector).at(-1)!;
+      expect(again.socketId).toBe("s1");
+      app.connectorClosed("s1");
+      app.connectorMessage("s3", helloLocal("Tom"));
+      app.connectorMessage(
+        "s3",
+        answer(again.msg.data.requestId, { avatar: LOOK_FIXTURES.tracht }),
+      );
+      await Promise.all(pending);
+      expect(bodies).toHaveLength(1);
+      expect(String(bodies[0])).toContain("green mohawk");
+      // nothing left pending: the next Generate need not wait
+      advance(20_000);
+      expect((await describeLook(app, "tom", "red mohawk"))!.status).toBe(200);
+    });
+
     test("studio: Generate goes to the Mac, the answer replaces the custom look", async () => {
       const t = setup();
       const { app, toConnector, pending } = t;

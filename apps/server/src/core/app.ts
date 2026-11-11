@@ -307,8 +307,8 @@ export class OfficeApp {
    * person is just the name it says hello with (shared password), so an impostor would get the
    * owner's description, or push its text to the owner's Mac. The request is remembered in the
    * store (one per person, the newest wins), so the answer is accepted only for a request this
-   * server made, from a connector of that same person, even across a hibernation. Returns the
-   * tool, or null when that Mac cannot (then the server provider takes the job).
+   * server made, from that same socket, even across a hibernation (see onLookGenerated).
+   * Returns the tool, or null when that Mac cannot (then the server provider takes the job).
    */
   private requestLocalLook(
     job: AvatarJob,
@@ -354,10 +354,20 @@ export class OfficeApp {
       this.hub.log(`look ${g.personId}: ignored an answer to an unknown or older request`);
       return;
     }
+    // only the Mac it was asked of may answer; a reconnected Mac resending it is a new, unproven
+    // socket (and a request stored before Macs were proven has none): its look is dropped, and
+    // once the Mac asked is gone the server's provider draws it now
+    const fromMac = g.socketId === pending.mac;
+    if (!fromMac) {
+      this.hub.log(`look ${g.personId}: dropped an answer from another socket than the Mac asked`);
+      if (this.hub.lookGeneratorsOf(g.personId, pending.mac, this.now()).length > 0) return;
+    }
     this.store.kvPut(pendingLookKey(g.personId), "");
     const by = `local ${g.generator}`;
-    let res = g.avatar !== undefined ? this.genui.accept(g.avatar, pending.job, by) : null;
+    let res =
+      fromMac && g.avatar !== undefined ? this.genui.accept(g.avatar, pending.job, by) : null;
     if (res) this.hub.log(`genui ${by} ${g.personId} drew a new look`);
+    else if (!fromMac) res = await this.serverLook(pending.job, pending.studio);
     else {
       this.hub.log(
         `look ${g.personId}: their Mac could not draw it (${g.error ?? "unusable answer"}), trying the server`,
