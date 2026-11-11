@@ -63,11 +63,11 @@ export const DESIGN_SCRIPT = `tell application "System Events"
 		try
 			set isMain to (value of attribute "AXMain" of w) as boolean
 		end try
-		set title to ""
+		set winTitle to ""
 		try
-			set title to (name of w) as text
+			set winTitle to (name of w) as text
 		end try
-		set out to out & linefeed & (isMain as text) & tab & title
+		set out to out & linefeed & (isMain as text) & tab & winTitle
 	end repeat
 	return out
 end tell`;
