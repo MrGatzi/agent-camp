@@ -430,6 +430,9 @@ async function boot() {
     yarn: "boing!",
     laser: "pew!",
   };
+  /** One shared client cooldown for every cat request: spam would only earn 429s that still count. */
+  const CAT_COOLDOWN_MS = 2000;
+  let catPokeAt = -Infinity;
   async function poke(input: InteractRequest): Promise<PokeResult> {
     // which cat goes: picked here, so every viewer sends the same one
     const req =
@@ -449,6 +452,12 @@ async function boot() {
         ok: true,
         message: officeOnly ? (DONE[req.kind] ?? "done") : "sent (demo: no Macs here)",
       };
+    }
+    if (isCatInteraction(req.kind) || req.kind === "cat") {
+      const now = performance.now();
+      if (now - catPokeAt < CAT_COOLDOWN_MS)
+        return { ok: false, message: "the cats need a breather" };
+      catPokeAt = now;
     }
     try {
       const r = await fetch("/api/interact", {
