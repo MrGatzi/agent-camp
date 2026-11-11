@@ -274,8 +274,6 @@ export class CharacterManager {
   readonly chars = new Map<string, SessionCharacter>();
   private poiTaken = new Map<string, string>();
   private rand = seededRandom("characters");
-  /** desks per pod, kept at the high-water mark while the same person owns it */
-  private podDesks = new Map<number, { personId: string; n: number }>();
   onMoment: (m: Moment) => void = () => {};
   /** pending join celebrations (door opens, confetti, banner) */
   private joins: { personId: string; t: number; done: boolean }[] = [];
@@ -429,9 +427,8 @@ export class CharacterManager {
 
   /**
    * Bring the pod slots in line with the model: owned slots become pods with one desk per
-   * session (2..6, never shrinking while the same person owns it), a slot still holding
-   * characters of someone who left keeps its desks, the first free slot shows the
-   * "free desk" placeholder and every other slot is a cozy nook.
+   * session (2..6), a slot still holding characters of someone who left keeps its desks,
+   * the first free slot shows the "free desk" placeholder and every other slot is a nook.
    */
   syncSlots() {
     const owners = new Map<number, PersonState>();
@@ -452,9 +449,7 @@ export class CharacterManager {
         let need = deskNeed.get(pod) ?? 0;
         for (const s of this.model.sessionsOf(p.personId))
           if (s.desk < MAX_DESKS) need = Math.max(need, s.desk + 1);
-        const hw = this.podDesks.get(pod);
-        const n = clampDesks(Math.max(need, hw?.personId === p.personId ? hw.n : 0));
-        this.podDesks.set(pod, { personId: p.personId, n });
+        const n = clampDesks(need);
         did = this.scene.setSlot(pod, {
           kind: "pod",
           desks: n,
@@ -469,7 +464,6 @@ export class CharacterManager {
       } else if (lingering.has(pod)) {
         continue;
       } else {
-        this.podDesks.delete(pod);
         did = this.scene.setSlot(pod, { kind: freeShown ? "nook" : "free" });
         freeShown = true;
       }
@@ -785,7 +779,39 @@ export class CharacterManager {
     ])
       sp.destroy();
     this.chars.delete(c.sessionId);
+    const moved = this.fillDeskGaps(c.personId);
     this.syncSlots();
+    for (const m of moved) {
+      if (m.mode === "seated") this.sit(m);
+      else if (m.mode === "walking" && m.goal === "desk") this.goToDesk(m);
+    }
+  }
+
+  /** Move agents from the highest desks into freed ones, so the pod matches a fresh load. */
+  private fillDeskGaps(personId: string): SessionCharacter[] {
+    const moved: SessionCharacter[] = [];
+    const p = this.model.people.get(personId);
+    if (!p) return moved;
+    for (;;) {
+      const used = new Set(this.model.sessionsOf(personId).map((s) => s.desk));
+      for (const o of this.chars.values()) if (o.pod === p.pod) used.add(o.desk);
+      let gap = 0;
+      while (used.has(gap)) gap++;
+      if (gap >= MAX_DESKS) return moved;
+      let mover: SessionCharacter | undefined;
+      for (const o of this.chars.values()) {
+        if (o.personId !== personId || !o.hasDesk || o.desk <= gap) continue;
+        if (o.mode !== "seated" && o.mode !== "walking" && o.mode !== "poi") continue;
+        if (!this.model.sessions.has(o.sessionId)) continue;
+        if (!mover || o.desk > mover.desk) mover = o;
+      }
+      if (!mover) return moved;
+      this.setMonitorFor(mover, "off");
+      this.resetChair(mover);
+      this.model.moveDesk(mover.sessionId, gap);
+      mover.desk = gap;
+      moved.push(mover);
+    }
   }
 
   private otherAtDesk(c: SessionCharacter) {
