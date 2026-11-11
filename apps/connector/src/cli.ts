@@ -20,7 +20,8 @@ import {
   saveConfig,
   validBirthday,
 } from "./config.ts";
-import { Daemon, type StatusFile } from "./daemon.ts";
+import { Daemon, DESIGN_STATUS_TEXT, type StatusFile } from "./daemon.ts";
+import { DesignWatcher, systemDesignWindows } from "./desktop.ts";
 import { Detector } from "./detect/index.ts";
 import { log } from "./log.ts";
 import { Notifier } from "./notify.ts";
@@ -91,6 +92,8 @@ Commands:
       --share-project-names true|false     --get KEY (print one value)
       --notifications true|false   show waves/messages from the office (default true)
       --birthday MM-DD     opt-in: the office brings you a cake that day ("" removes it)
+      --design-window true|false   opt-in (macOS): show a desk while a Claude Design window of
+                           the Claude app is open; needs the Accessibility permission
   status            connection state and live sessions
   logs              follow the daemon log
   install-service   register the launchd agent (macOS) so it runs at login
@@ -105,7 +108,8 @@ then restart the service so the office redraws you:
 
 Only status metadata is sent: agent kind, hashed session id, project folder name
 (disable with share_project_names = false), activity, subagent count, context use %, start time,
-the machine label you chose (machine_name) and your look description.`;
+the machine label you chose (machine_name) and your look description. For Claude Design
+(--design-window) only "a Design window is open / in front" is sent.`;
 
 export async function main(argv: string[]): Promise<number> {
   const args = parseArgs(argv);
@@ -177,12 +181,14 @@ async function cmdRun(args: Args): Promise<number> {
   }
   const clientId = existed ? config.client_id : (env.AGENT_OFFICE_CLIENT_ID ?? newClientId());
 
+  const watchDesign = config.design_window && process.platform === "darwin";
   const detector = new Detector({
     dirs: agentDirs(env, home),
     clientId,
     shareProjectNames: config.share_project_names,
     processes: systemProcesses(),
     assumeProcesses,
+    ...(watchDesign ? { design: new DesignWatcher(systemDesignWindows()) } : {}),
   });
 
   if (flags.once) {
@@ -320,6 +326,8 @@ async function cmdConfigure(args: Args): Promise<number> {
   }
   const notify = flags.notifications;
   if (notify !== undefined) next.notifications = !(notify === "false" || notify === "0");
+  const design = flags["design-window"];
+  if (design !== undefined) next.design_window = !(design === "false" || design === "0");
   if (next.name && next.name.trim().length > 40) {
     console.error("name must be at most 40 characters");
     return 2;
@@ -340,8 +348,20 @@ async function cmdConfigure(args: Args): Promise<number> {
     `saved ${path} (server: ${next.server ?? "-"}, name: ${next.name ?? "-"}, ` +
       `password: ${next.password ? "set" : "not set"})`,
   );
+  if (design !== undefined && next.design_window) console.log(DESIGN_WINDOW_HELP);
   return 0;
 }
+
+const RESTART_HINT = `launchctl kickstart -k gui/$(id -u)/${LAUNCHD_LABEL}`;
+
+export const DESIGN_WINDOW_HELP = `Claude Design window watch is on (macOS only).
+  1. Restart the connector: ${RESTART_HINT}
+  2. Open a Design window in the Claude app. macOS then asks whether agent-office may control
+     "System Events": allow it.
+  3. Allow agent-office under System Settings > Privacy & Security > Accessibility.
+     (If you run the connector by hand, your terminal app needs these two permissions instead.)
+  4. Check with: agent-office status
+The office only learns that a Design window is open and whether it is in front.`;
 
 // ---- status -------------------------------------------------------------------------------
 function ago(ms: number): string {
@@ -387,7 +407,7 @@ async function launchdState(): Promise<string | null> {
 export function formatSessions(sessions: StatusFile["sessions"], now = Date.now()): string[] {
   return sessions.map((s) => {
     const sub = s.subagents ? `${s.subagents} subagent${s.subagents === 1 ? "" : "s"}` : "";
-    return `    ${s.agent.padEnd(7)}${(s.project ?? "(hidden)").padEnd(22)}${s.activity.padEnd(10)}${sub.padEnd(14)}started ${ago(now - s.startedAt)}`;
+    return `    ${s.agent.padEnd(7)}${(s.project ?? (s.agent === "design" ? "-" : "(hidden)")).padEnd(22)}${s.activity.padEnd(10)}${sub.padEnd(14)}started ${ago(now - s.startedAt)}`;
   });
 }
 
@@ -424,6 +444,18 @@ async function cmdStatus(): Promise<number> {
       lines.push(`  sessions  ${status.sessions.length} live`);
       lines.push(...formatSessions(status.sessions, now));
     }
+  }
+  if (config.design_window) {
+    const fresh = status && now - status.updatedAt < 10_000 && pidAlive(status.pid);
+    lines.push(
+      `  design    ${
+        process.platform !== "darwin"
+          ? "on, but only macOS is supported"
+          : fresh && status?.designWindow
+            ? DESIGN_STATUS_TEXT[status.designWindow]
+            : `on (restart the connector to apply: ${RESTART_HINT})`
+      }`,
+    );
   }
   const ld = await launchdState();
   if (ld) lines.push(`  launchd   ${ld}`);

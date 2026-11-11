@@ -20,6 +20,11 @@ export type Config = {
   notifications: boolean;
   /** opt-in "MM-DD": the office brings a cake that day */
   birthday?: string;
+  /**
+   * opt-in: show a desk while a Claude Design window of the Claude desktop app is open
+   * (macOS; needs the Accessibility permission)
+   */
+  design_window: boolean;
   client_id: string;
 };
 
@@ -32,6 +37,7 @@ export const CONFIG_KEYS = [
   "share_project_names",
   "notifications",
   "birthday",
+  "design_window",
   "client_id",
 ] as const;
 
@@ -144,6 +150,7 @@ export function toConfig(values: Record<string, TomlValue>): Config {
   const s = (k: string) => (typeof values[k] === "string" ? (values[k] as string) : undefined);
   const share = values.share_project_names;
   const notify = values.notifications;
+  const design = values.design_window;
   const clientId = s("client_id");
   return {
     server: s("server"),
@@ -154,6 +161,7 @@ export function toConfig(values: Record<string, TomlValue>): Config {
     share_project_names: !(share === false || share === "false"),
     notifications: !(notify === false || notify === "false"),
     birthday: validBirthday(s("birthday")),
+    design_window: design === true || design === "true",
     client_id: clientId && /^[A-Za-z0-9_-]{1,64}$/.test(clientId) ? clientId : newClientId(),
   };
 }
@@ -182,6 +190,7 @@ export function saveConfig(path: string, config: Config): void {
       share_project_names: config.share_project_names,
       notifications: config.notifications,
       birthday: config.birthday,
+      design_window: config.design_window,
       client_id: config.client_id,
     }),
     { mode: 0o600 },

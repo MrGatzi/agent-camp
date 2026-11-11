@@ -11,11 +11,16 @@ import {
   SNAPSHOT_DEBOUNCE_MS,
 } from "@agent-office/protocol";
 import { type ClientOptions, ConnectorClient, type Welcomed } from "./client.ts";
+import type { DesignWatchStatus } from "./desktop.ts";
 import { snapshotKey } from "./detect/index.ts";
 import type { Logger } from "./log.ts";
 import { isNewer, type Updater } from "./update.ts";
 
-export type Poller = { poll(): Promise<SessionInfo[]> };
+export type Poller = {
+  poll(): Promise<SessionInfo[]>;
+  /** state of the Claude Design window watch; undefined when it is off */
+  readonly designStatus?: DesignWatchStatus | undefined;
+};
 
 export type DaemonOptions = {
   server: string;
@@ -43,10 +48,22 @@ export type StatusFile = {
   personId?: string;
   lastError?: string;
   updatedAt: number;
+  /** Claude Design window watch (only when `design_window` is on) */
+  designWindow?: DesignWatchStatus;
   sessions: Omit<SessionInfo, "sessionKey">[];
 };
 
-const label = (s: SessionInfo) => `${s.agent} ${s.project ?? "(hidden)"}`;
+/** What the Design window watch states mean, for the log and `agent-office status`. */
+export const DESIGN_STATUS_TEXT: Record<DesignWatchStatus, string> = {
+  watching: "watching the Claude app for a Design window",
+  "needs-permission":
+    "needs permission: allow agent-office under System Settings > Privacy & Security > " +
+    "Accessibility, and let it control System Events",
+  error: "could not ask macOS for the Claude app's windows (will retry)",
+};
+
+const label = (s: SessionInfo) =>
+  s.agent === "design" ? "design window" : `${s.agent} ${s.project ?? "(hidden)"}`;
 
 /** Human-readable change lines between two snapshots. */
 export function describeChanges(prev: SessionInfo[], next: SessionInfo[]): string[] {
@@ -75,6 +92,7 @@ export class Daemon {
   private lastSentKey = "";
   private blocked = false;
   private stopped = false;
+  private designStatus: DesignWatchStatus | undefined;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -136,6 +154,11 @@ export class Daemon {
     } catch (e) {
       this.opts.log(`poll error: ${(e as Error).message}`);
     }
+    const design = this.opts.detector.designStatus;
+    if (design !== this.designStatus) {
+      this.designStatus = design;
+      if (design) this.opts.log(`design window: ${DESIGN_STATUS_TEXT[design]}`);
+    }
     this.writeStatus();
     if (!this.stopped) {
       this.pollTimer = setTimeout(() => void this.tick(), this.opts.pollMs ?? DETECT_POLL_MS);
@@ -191,6 +214,8 @@ export class Daemon {
       updatedAt: Date.now(),
       sessions: this.sessions.map(({ sessionKey: _k, ...rest }) => rest),
     };
+    const design = this.opts.detector.designStatus;
+    if (design) status.designWindow = design;
     try {
       mkdirSync(dirname(file), { recursive: true });
       const tmp = `${file}.tmp`;

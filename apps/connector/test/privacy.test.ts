@@ -3,16 +3,18 @@
  * sure nothing but status metadata leaves the machine.
  */
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseConnectorMessage } from "@agent-office/protocol";
 import { helloDescription } from "../src/cli.ts";
 import { Daemon } from "../src/daemon.ts";
+import { DesignWatcher, fakeDesignWindows } from "../src/desktop.ts";
 import { Detector } from "../src/detect/index.ts";
 import { silent } from "../src/log.ts";
 import { agentDirs } from "../src/paths.ts";
 import { fakeProcesses } from "../src/proc.ts";
 import { type FakeServer, fakeServer, waitFor } from "./fake-server.ts";
-import { type FakeHome, makeHome, RAW_IDS, SECRET } from "./helpers.ts";
+import { addCowork, COWORK_PRIVATE, type FakeHome, makeHome, RAW_IDS, SECRET } from "./helpers.ts";
 
 /** A detailed (>200 chars) look description, as typed by the user. */
 const LOOK =
@@ -33,6 +35,9 @@ function forbidden(home: string): string[] {
     SECRET,
     ...RAW_IDS,
     ...RAW_IDS.map((id) => id.split("-")[0]!),
+    ...COWORK_PRIVATE,
+    "pricing page", // Cowork prompt text
+    "outputs",
     "/Users/anna",
     "Users-anna",
     "anna",
@@ -54,6 +59,7 @@ function assertClean(texts: string[], home: string) {
 describe("privacy", () => {
   test("hello + snapshots over the wire contain only status metadata", async () => {
     h = makeHome();
+    addCowork(h, { lastTool: "ClaudeDesign" });
     srv = fakeServer();
     const detector = new Detector({
       dirs: agentDirs({}, h.home),
@@ -61,6 +67,7 @@ describe("privacy", () => {
       shareProjectNames: true,
       processes: fakeProcesses([]),
       assumeProcesses: true,
+      design: new DesignWatcher(fakeDesignWindows({ status: "ok", open: true, front: true })),
     });
     const d = new Daemon({
       server: srv.url,
@@ -76,6 +83,7 @@ describe("privacy", () => {
       detector,
       log: silent,
       version: "0.1.0",
+      statusFile: join(h.home, "cfg", "status.json"),
       pollMs: 30,
       debounceMs: 10,
       client: { rand: () => 0 },
@@ -84,6 +92,9 @@ describe("privacy", () => {
     await waitFor(() => srv.of("presence.snapshot").length >= 1, 3000, "snapshot");
     await d.stop(true);
     await waitFor(() => srv.of("connector.bye").length === 1, 2000, "bye");
+    // `agent-office status` reads the Design window watch state from the status file
+    const status = JSON.parse(readFileSync(join(h.home, "cfg", "status.json"), "utf8"));
+    expect(status.designWindow).toBe("watching");
 
     // hello carries only what the user typed in (name, description, machine label) + versions
     const helloMsg = srv.of("connector.hello")[0]!;
@@ -103,12 +114,20 @@ describe("privacy", () => {
     expect((helloMsg.data.selfDescription as string).length).toBe(200);
     expect(helloMsg.data.machine).toBe("devbox");
     const snap = srv.of("presence.snapshot")[0]!;
-    expect((snap.data.sessions as unknown[]).length).toBe(4);
+    // 4 from fixtures/home + the Cowork session + the Claude Design window
+    const sent = snap.data.sessions as Record<string, unknown>[];
+    expect(sent.length).toBe(6);
+    expect(sent.find((s) => s.project === "Cowork")).toMatchObject({ agent: "claude" });
+    const design = sent.find((s) => s.agent === "design")!;
+    expect(Object.keys(design).sort()).toEqual(
+      ["activity", "agent", "sessionKey", "startedAt", "subagents"].sort(),
+    );
     for (const raw of srv.received) expect(parseConnectorMessage(raw).ok).toBe(true);
     assertClean(srv.received, h.home);
     // the only per-session fields are the allowed ones (context: a 0..1 number, when known)
     const allowed = ["activity", "agent", "project", "sessionKey", "startedAt", "subagents"];
-    for (const s of snap.data.sessions as Record<string, unknown>[]) {
+    for (const s of sent) {
+      if (s.agent === "design") continue; // checked above: it has no project
       const keys = Object.keys(s).filter((k) => k !== "context");
       expect(keys.sort()).toEqual(allowed.sort());
       if ("context" in s) expect(typeof s.context).toBe("number");
@@ -117,6 +136,7 @@ describe("privacy", () => {
 
   test("`run --once` output is clean too", async () => {
     h = makeHome();
+    addCowork(h);
     const main = join(import.meta.dir, "..", "src", "main.ts");
     const p = Bun.spawn(
       [process.execPath, main, "run", "--once", "--home", h.home, "--assume-processes"],
@@ -131,7 +151,7 @@ describe("privacy", () => {
     const msg = parseConnectorMessage(out);
     expect(msg.ok).toBe(true);
     if (msg.ok && msg.msg.type === "presence.snapshot") {
-      expect(msg.msg.data.sessions).toHaveLength(4);
+      expect(msg.msg.data.sessions).toHaveLength(5);
     }
     assertClean([out], h.home);
   });

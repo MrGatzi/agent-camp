@@ -7,7 +7,13 @@
  *   2. it is the newest transcript whose folder/cwd matches a running agent process's cwd
  *      (stays live as `idle`), or
  *   3. its transcript was written < TRANSCRIPT_LIVE_MS ago and some process of that agent runs.
- * With `assumeProcesses` every agent counts as running and every pid in a pid file as alive.
+ *   4. it is a Cowork session of the Claude desktop app (`Candidate.desktop`), the app runs and
+ *      the transcript was written < COWORK_LIVE_MS ago (no process on this machine owns it).
+ * With `assumeProcesses` every agent counts as running, every pid in a pid file as alive, and
+ * the Claude desktop app as running.
+ *
+ * Claude Design is not a transcript at all: with `design` set, an open Design window of the
+ * Claude app adds one `design` session (presence only, see ../desktop.ts).
  *
  * An agent process running inside another agent (`ProcInfo.hostPid`, e.g. the Claude Agent SDK
  * binary that Pi's Claude bridge spawns as its model backend) is not a session of its own: it
@@ -25,11 +31,13 @@ import {
   type SessionInfo,
   TRANSCRIPT_LIVE_MS,
 } from "@agent-office/protocol";
+import type { DesignWatcher, DesignWatchStatus } from "../desktop.ts";
 import type { AgentDirs } from "../paths.ts";
 import type { ProcessSource, ProcInfo } from "../proc.ts";
 import { deriveActivity } from "./activity.ts";
 import { scanClaude } from "./claude.ts";
 import { scanCodex } from "./codex.ts";
+import { COWORK_LIVE_MS, CoworkScanner } from "./cowork.ts";
 import { scanPi } from "./pi.ts";
 import { TailReader } from "./tail.ts";
 import type { Candidate, MetaCache } from "./types.ts";
@@ -42,6 +50,8 @@ export type DetectorOptions = {
   processes: ProcessSource;
   /** treat every agent as running (fixtures / Linux CI) */
   assumeProcesses?: boolean;
+  /** watch the Claude app for a Design window (opt-in; needs a macOS permission) */
+  design?: DesignWatcher;
   now?: () => number;
 };
 
@@ -59,11 +69,15 @@ export function projectName(cwd: string | undefined): string | undefined {
 
 const MAX_SESSIONS = 200;
 
+/** Raw id of the one Claude Design session per machine (hashed like every session key). */
+export const DESIGN_RAW_ID = "design-window";
+
 /** Hosted processes keep a quiet desk busy for at most this much transcript silence. */
 export const HOSTED_BUSY_MAX_MS = 10 * 60_000;
 
 export class Detector {
   private tail = new TailReader();
+  private cowork = new CoworkScanner();
   private metaCache: MetaCache = new Map();
   /** `agent:rawId` of sessions owned by an agent hosted inside another agent */
   private hostedIds = new Set<string>();
@@ -85,10 +99,20 @@ export class Detector {
         procs = [];
       }
     }
+    let desktop = assumeProcesses === true;
+    if (!desktop) {
+      try {
+        desktop = (await this.opts.processes.claudeDesktop?.()) === true;
+      } catch {
+        desktop = false;
+      }
+    }
+    if (!desktop) this.cowork.reset();
     const scanned = [
       ...safe(() => scanClaude(dirs.claude, this.metaCache)),
       ...safe(() => scanCodex(dirs.codex, this.metaCache)),
       ...safe(() => scanPi(dirs.pi, this.metaCache)),
+      ...(desktop ? safe(() => this.cowork.scan(dirs.claudeDesktop, now, this.metaCache)) : []),
     ];
 
     // 0. agents hosted inside another agent: their sessions belong to the host's desk
@@ -153,7 +177,12 @@ export class Detector {
     }
     // 3. recently written transcripts
     for (const c of candidates) {
+      if (c.desktop) continue;
       if (c.transcript && now - c.mtimeMs < TRANSCRIPT_LIVE_MS && running(c.agent)) live.add(c);
+    }
+    // 4. Cowork sessions of the running Claude desktop app
+    for (const c of candidates) {
+      if (c.desktop && desktop && c.transcript && now - c.mtimeMs < COWORK_LIVE_MS) live.add(c);
     }
 
     // hosted processes -> helpers / busy flag of the session their top-level host owns
@@ -185,8 +214,34 @@ export class Detector {
     }
     this.tail.retain(keep);
     if (this.metaCache.size > 2000) this.metaCache.clear();
+    const design = await this.designSession(now, desktop);
+    if (design) sessions.push(design);
     sessions.sort((a, b) => a.startedAt - b.startedAt || a.sessionKey.localeCompare(b.sessionKey));
     return sessions.slice(0, MAX_SESSIONS);
+  }
+
+  /** The Design window's watch state for `agent-office status`; undefined when not watching. */
+  get designStatus(): DesignWatchStatus | undefined {
+    return this.opts.design?.status;
+  }
+
+  /** One `design` session while a Design window of the Claude app is open. */
+  private async designSession(now: number, desktop: boolean): Promise<SessionInfo | null> {
+    const watcher = this.opts.design;
+    if (!watcher) return null;
+    try {
+      const p = await watcher.poll(now, desktop);
+      if (!p) return null;
+      return {
+        sessionKey: sessionKeyFor(this.opts.clientId, "design", DESIGN_RAW_ID),
+        agent: "design",
+        activity: p.activity,
+        subagents: 0,
+        startedAt: Math.max(0, Math.min(now, Math.floor(p.startedAt))),
+      };
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -218,7 +273,7 @@ export class Detector {
     };
     if (context !== undefined) info.context = context;
     if (this.opts.shareProjectNames) {
-      const project = projectName(meta.cwd);
+      const project = c.project ?? projectName(meta.cwd);
       if (project) info.project = project;
     }
     return info;
