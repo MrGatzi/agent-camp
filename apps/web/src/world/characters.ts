@@ -1644,6 +1644,7 @@ export class CharacterManager {
         return;
       }
     }
+    if (c.removed) return;
     c.chatCooldown -= dt;
     if (c.iconT > 0) {
       c.iconT -= dt;
@@ -1694,7 +1695,7 @@ export class CharacterManager {
         c.marker.position.set(Math.round(c.x + 8), Math.round(headY + 1));
       }
     }
-    if (!c.removed) this.place(c);
+    this.place(c);
   }
 
   private seatedStep(c: SessionCharacter, activity: Activity, dt: number, time: number) {

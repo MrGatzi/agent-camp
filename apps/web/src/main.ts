@@ -638,9 +638,9 @@ async function boot() {
     render(...a);
     renMs += performance.now() - t0;
   };
-  app.ticker.add((ticker) => {
+  const frame = (deltaMS: number) => {
     const t0 = performance.now();
-    const dt = Math.min(0.1, ticker.deltaMS / 1000) * speed;
+    const dt = Math.min(0.1, deltaMS / 1000) * speed;
     time += dt;
     scene.update(time, dt);
     chars.update(dt, time);
@@ -662,6 +662,16 @@ async function boot() {
       renMs = 0;
       frames = 0;
       fpsWindowStart = now;
+    }
+  };
+  let frameFailed = false;
+  app.ticker.add((ticker) => {
+    // Pixi stops requesting frames when a ticker callback throws, which freezes a wall screen
+    try {
+      frame(ticker.deltaMS);
+    } catch (e) {
+      if (!frameFailed) console.error("[office] frame update failed", e);
+      frameFailed = true;
     }
   });
   window.addEventListener("resize", () => camera.resized());
