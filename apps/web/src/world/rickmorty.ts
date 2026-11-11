@@ -22,7 +22,15 @@ import {
 import type { Effects } from "./effects.ts";
 import { type Facing, type OfficeMap, type Point, TILE } from "./map.ts";
 import { findPath } from "./pathing.ts";
-import { type Dir, entranceFor, exitFor, freeAt, LINE_UP, PORTAL_GAP } from "./portalRules.ts";
+import {
+  type Dir,
+  entranceFor,
+  exitFor,
+  freeAt,
+  indoorTile,
+  LINE_UP,
+  PORTAL_GAP,
+} from "./portalRules.ts";
 
 const WALK = 26;
 const PORTAL_WALK = 32;
@@ -32,6 +40,8 @@ const FOLLOW = 15;
 const HALF = 8;
 /** gun muzzle relative to Rick's feet in the aim frame (facing left) */
 const MUZZLE = { x: -15, y: -20 };
+/** the auto-pilot camera looks at a portal at most this often, and not in the first minutes */
+const NOTIFY_EVERY_S = 180;
 
 const RICK_LINES = [
   "WUBBA LUBBA DUB DUB!",
@@ -302,12 +312,16 @@ export class PortalDuo {
   private portals: Portal[] = [];
   private shots: Shot[] = [];
   private talkCooldown = 0;
-  private lastNotify = -Infinity;
+  /** 0, not -Infinity: no camera visit in the first minutes after a (kiosk) reload */
+  private lastNotify = 0;
   private clock = 0;
   /** mean seconds between portal hops (shorter in the party demo) */
   hopEvery = 30;
-  /** the auto-pilot camera may come and look (rate-limited here) */
-  onPortal: (x: number, y: number) => void = () => {};
+  /**
+   * A portal opened at (x, y): the auto-pilot camera may come and look (rate-limited here; the
+   * camera itself lets real agent events win). Returns whether the camera came.
+   */
+  onPortal: (x: number, y: number) => boolean = () => false;
 
   constructor(
     private readonly objects: Container,
@@ -338,10 +352,10 @@ export class PortalDuo {
     this.effects.floater(textBubbleTexture(text, color), who.x, who.y - h, 2.8, 8);
   }
 
+  /** Offer the auto-pilot camera a look; it only counts when the camera came. */
   private notify(x: number, y: number) {
-    if (this.clock - this.lastNotify < 180) return;
-    this.lastNotify = this.clock;
-    this.onPortal(x, y);
+    if (this.clock - this.lastNotify < NOTIFY_EVERY_S) return;
+    if (this.onPortal(x, y)) this.lastNotify = this.clock;
   }
 
   // ---- arriving -----------------------------------------------------------------------------
@@ -410,7 +424,8 @@ export class PortalDuo {
     for (let tries = 0; tries < 20; tries++) {
       const tx = cx + Math.floor(this.rand() * 17) - 8;
       const ty = cy + Math.floor(this.rand() * 11) - 5;
-      if (!this.map.isWalkable(tx, ty) || (tx === cx && ty === cy)) continue;
+      // stay inside the office building (no garden, street or east block)
+      if (!indoorTile(this.map, tx, ty) || (tx === cx && ty === cy)) continue;
       const tiles = findPath(this.map, { x: cx, y: cy }, { x: tx, y: ty });
       if (!tiles || tiles.length > 24) continue;
       this.path = tiles.slice(1).map((t) => ({ x: t.x * TILE + 8, y: t.y * TILE + 12 }));

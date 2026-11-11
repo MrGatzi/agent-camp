@@ -1,10 +1,20 @@
 /**
  * Where Rick may open portals: pure geometry on the walk grid, so it is unit-tested.
- * Portals stand on the floor; Rick and Morty always walk through them horizontally.
+ * Portals stand on the indoor office floor (never the garden, the street, a doorway or the
+ * east street block); Rick and Morty always walk through them horizontally.
  */
-import { type OfficeMap, type Point, TILE } from "./map.ts";
+import { OFFICE_COLS, type OfficeMap, type Point, type Terrain, TILE } from "./map.ts";
 
-type Walk = Pick<OfficeMap, "isWalkable" | "width" | "height">;
+export type Walk = Pick<OfficeMap, "isWalkable" | "width" | "height" | "terrainAt">;
+
+/** Floors inside the office building. */
+const INDOOR: ReadonlySet<Terrain> = new Set(["wood", "kitchen", "carpet", "meeting", "game"]);
+
+/** A walkable tile inside the office building (west of the east street block). */
+export function indoorTile(map: Walk, tx: number, ty: number) {
+  const t = map.terrainAt(tx, ty);
+  return tx < OFFICE_COLS && !!t && INDOOR.has(t) && map.isWalkable(tx, ty);
+}
 export type Dir = 1 | -1;
 
 /** the entrance opens this far in front of Rick */
@@ -16,9 +26,9 @@ export const EXIT_RUN = 34;
 /** an exit is at least this far from the entrance */
 export const MIN_HOP = 10 * TILE;
 
-/** Same tile convention as the walkers: feet a little above the bottom of the tile. */
+/** Free indoor floor at a feet position (feet a little above the bottom of the tile). */
 export function freeAt(map: Walk, x: number, y: number) {
-  return map.isWalkable(Math.floor(x / TILE), Math.floor((y - 2) / TILE));
+  return indoorTile(map, Math.floor(x / TILE), Math.floor((y - 2) / TILE));
 }
 
 function runFree(map: Walk, x: number, y: number, dir: Dir, from: number, to: number) {
@@ -41,7 +51,7 @@ export function exitFor(
   minDist = MIN_HOP,
 ): Point | null {
   for (let tries = 0; tries < 120; tries++) {
-    const tx = Math.floor(rand() * map.width);
+    const tx = Math.floor(rand() * Math.min(map.width, OFFICE_COLS));
     const ty = Math.floor(rand() * map.height);
     const p = { x: tx * TILE + 8, y: ty * TILE + 12 };
     if (from && Math.hypot(p.x - from.x, p.y - from.y) < minDist) continue;

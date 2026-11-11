@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { seededRandom } from "@agent-office/protocol";
-import { buildOfficeMap, TILE } from "../src/world/map.ts";
+import { buildOfficeMap, OFFICE_COLS, TILE } from "../src/world/map.ts";
 import {
   EXIT_RUN,
   entranceFor,
   exitFor,
   freeAt,
+  indoorTile,
   LINE_UP,
   MIN_HOP,
   PORTAL_GAP,
@@ -17,6 +18,7 @@ function box(w: number, h: number, x0: number, y0: number, x1: number, y1: numbe
     width: w,
     height: h,
     isWalkable: (x: number, y: number) => x >= x0 && x <= x1 && y >= y0 && y <= y1,
+    terrainAt: () => "wood" as const,
   };
 }
 
@@ -53,7 +55,48 @@ describe("portal rules", () => {
   });
 
   test("no exit when nothing is walkable", () => {
-    const solid = { width: 10, height: 10, isWalkable: () => false };
+    const solid = {
+      width: 10,
+      height: 10,
+      isWalkable: () => false,
+      terrainAt: () => "wood" as const,
+    };
     expect(exitFor(solid, null, 1, seededRandom("x"))).toBeNull();
+  });
+
+  test("portals stay inside the office building: no garden, street, doorway or east block", () => {
+    const map = buildOfficeMap(4);
+    const rand = seededRandom("indoor");
+    for (const dir of [1, -1] as const) {
+      for (let i = 0; i < 200; i++) {
+        const b = exitFor(map, null, dir, rand);
+        expect(b).not.toBeNull();
+        if (!b) continue;
+        expect(b.x).toBeLessThan(OFFICE_COLS * TILE);
+        for (let d = -6; d <= EXIT_RUN; d += 2) {
+          const tx = Math.floor((b.x + dir * d) / TILE);
+          const ty = Math.floor((b.y - 2) / TILE);
+          expect(indoorTile(map, tx, ty)).toBe(true);
+          expect(["wood", "kitchen", "carpet", "meeting", "game"]).toContain(
+            map.terrainAt(tx, ty) ?? "none",
+          );
+        }
+      }
+    }
+    // walkable outdoor floor is never a portal spot
+    const garden = map.areas.find((a) => a.name === "garden")!;
+    let outdoor = 0;
+    for (let ty = garden.y; ty < garden.y + garden.h; ty++) {
+      for (let tx = garden.x; tx < garden.x + garden.w; tx++) {
+        if (!map.isWalkable(tx, ty)) continue;
+        outdoor++;
+        expect(indoorTile(map, tx, ty)).toBe(false);
+        expect(entranceFor(map, { x: tx * TILE + 8, y: ty * TILE + 12 }, 1)).toBeNull();
+      }
+    }
+    expect(outdoor).toBeGreaterThan(0);
+    for (let ty = 0; ty < map.height; ty++) {
+      for (let tx = OFFICE_COLS; tx < map.width; tx++) expect(indoorTile(map, tx, ty)).toBe(false);
+    }
   });
 });
