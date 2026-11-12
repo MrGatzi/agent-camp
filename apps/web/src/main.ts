@@ -93,6 +93,7 @@ import { OfficeScene } from "./world/office.ts";
 import { PartyWorld } from "./world/party.ts";
 import { PortalDuo } from "./world/portalCharacters.ts";
 import { OfficeQueen } from "./world/queen.ts";
+import { Richard } from "./world/richard.ts";
 import { SalesChef } from "./world/salesChef.ts";
 
 type OfficeApi = {
@@ -119,6 +120,8 @@ type OfficeApi = {
   cats(): number;
   /** where the lead stands and what the two portal characters are up to (null: away / off) */
   portalCharacters(): { x: number; y: number; mode: string } | null;
+  /** where Richard is and what he is up to (inside = in the server cabin) */
+  richard(): { x: number; y: number; mode: string; inside: boolean; burning: boolean };
   /** slow down / freeze the world clock (screenshots of short moments); 1 = normal */
   setSpeed(k: number): void;
 };
@@ -235,6 +238,12 @@ async function boot() {
   const living = new Living(scene, model, hourValue);
   colony.clock = () => living.hour;
   const chef = new SalesChef(scene.objects, scene.map, effects);
+  // Richard, the IT guy in the server cabin: puts out its fires and hands out RAM
+  const richard = new Richard(scene.objects, scene.map, effects, {
+    ramTargets: () =>
+      chars.pageable().map((t) => ({ ...t, context: model.sessions.get(t.id)?.context ?? 0 })),
+    devSays: (id, text) => chars.answerPage(id, text),
+  });
   const headDev = new HeadDev(
     scene.objects,
     scene.map,
@@ -259,6 +268,10 @@ async function boot() {
   if (party) {
     chef.clientEvery = 25;
     chef.clientIn = 6;
+    richard.fireEvery = 45;
+    richard.fireIn = 20;
+    richard.ramEvery = 15;
+    richard.ramIn = 8;
     headDev.nagEvery = 25;
   }
   const weatherParam = params.get("weather");
@@ -331,6 +344,7 @@ async function boot() {
   camera.attach(app.canvas);
   // ambient: a real agent event always wins the auto-pilot camera over a portal
   if (duo) duo.onPortal = (x, y) => camera.notify(x, y, { zoom: 3, hold: 8, ambient: true });
+  richard.onFire = (x, y) => camera.notify(x, y, { zoom: 3, hold: 8, ambient: true });
   // wall screens and the fit view frame the office (64 columns); the east street block joins
   // the frame only while someone is there, so tiles stay big on a 1080p wall
   camera.fitWidth = () =>
@@ -357,6 +371,7 @@ async function boot() {
     colony.setMap(scene.map);
     queen.setMap(scene.map);
     chef.setMap(scene.map);
+    richard.setMap(scene.map);
     headDev.setMap(scene.map);
     duo?.setMap(scene.map);
     life.reattach();
@@ -940,6 +955,10 @@ async function boot() {
       chef.poke();
       return;
     }
+    if (richard.hit(wx, wy) && (!c || richard.y > c.y)) {
+      richard.poke();
+      return;
+    }
     if (headDev.hit(wx, wy) && (!c || headDev.y > c.y)) {
       headDev.poke();
       return;
@@ -1201,6 +1220,7 @@ async function boot() {
     }
     queen.update(dt, time);
     chef.update(dt, time);
+    richard.update(dt, time);
     headDev.update(dt, time);
     duo?.update(dt, time);
     life.update(dt, time);
@@ -1265,6 +1285,7 @@ async function boot() {
     characters: () => chars.chars.size,
     cats: () => colony.cats().length,
     portalCharacters: () => duo?.where() ?? null,
+    richard: () => richard.where(),
     setSpeed: (k) => {
       speed = Math.max(0, k);
     },

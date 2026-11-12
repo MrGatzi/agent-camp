@@ -296,6 +296,12 @@ are robots by default; `agent-office configure --helpers cats` turns them into k
 (`--helpers robots` switches back). Restart the connector to apply it:
 `launchctl kickstart -k gui/$(id -u)/dev.agentoffice.connector`.
 
+Richard, the IT guy, lives in the wooden server cabin in the garden. Every few minutes the
+cabin catches fire and he runs out with the extinguisher. Every minute or so a developer
+shouts for more RAM (the one whose agent's context window is fullest goes first); Richard gets
+a stick from the cabin and slots it into the server rack on the desk floor. He is drawn in every browser
+and needs no data, so nothing about him is sent anywhere.
+
 Received: waves, short legacy messages, cat visits and office messages with
 **Also notify recipients’ Macs** enabled are queued to connected Macs (at most one
 notification every 5 s on the connector; macOS may list it under "Script Editor"). Turn
