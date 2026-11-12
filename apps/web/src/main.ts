@@ -19,6 +19,7 @@
  *   ?gallery=look[&look=…][&gscale=N]  detailed-look gallery (sets window.__galleryReady)
  *   ?toons=0|1    The portal characters off / on (default: on, off on the kiosk)   ?gifs=0  no head GIFs
  *   ?gallery=toons[&gscale=N]  every portal character frame and the portal
+ *   ?richard=0    No Richard on this screen (no cabin fires, no RAM runs; the cabin stays)
  */
 import "./ui/theme.css";
 import "./ui/office.css";
@@ -121,7 +122,7 @@ type OfficeApi = {
   /** where the lead stands and what the two portal characters are up to (null: away / off) */
   portalCharacters(): { x: number; y: number; mode: string } | null;
   /** where Richard is and what he is up to (inside = in the server cabin) */
-  richard(): { x: number; y: number; mode: string; inside: boolean; burning: boolean };
+  richard(): { x: number; y: number; mode: string; inside: boolean; burning: boolean } | null;
   /** slow down / freeze the world clock (screenshots of short moments); 1 = normal */
   setSpeed(k: number): void;
 };
@@ -140,6 +141,8 @@ const showGifs = !["0", "false", "off"].includes(params.get("gifs") ?? "");
 // client-only, nothing is sent and no toon textures are built while off
 const toonsParam = params.get("toons");
 const showToons = toonsParam === null ? !kiosk : !["0", "false", "off"].includes(toonsParam);
+// `?richard=0`: no Richard on this screen (e.g. the wall); default on everywhere, client-only
+const showRichard = !["0", "false", "off"].includes(params.get("richard") ?? "");
 const nohud = flag("nohud");
 const recorder = flag("recorder");
 const demo = parseDemoMode(params.get("demo"));
@@ -241,11 +244,13 @@ async function boot() {
   colony.clock = () => living.hour;
   const chef = new SalesChef(scene.objects, scene.map, effects);
   // Richard, the IT guy in the server cabin: puts out its fires and hands out RAM
-  const richard = new Richard(scene.objects, scene.map, effects, {
-    ramTargets: () =>
-      chars.pageable().map((t) => ({ ...t, context: model.sessions.get(t.id)?.context ?? 0 })),
-    devSays: (id, text) => chars.answerPage(id, text),
-  });
+  const richard = showRichard
+    ? new Richard(scene.objects, scene.map, effects, {
+        ramTargets: () =>
+          chars.pageable().map((t) => ({ ...t, context: model.sessions.get(t.id)?.context ?? 0 })),
+        devSays: (id, text) => chars.answerPage(id, text),
+      })
+    : null;
   const headDev = new HeadDev(
     scene.objects,
     scene.map,
@@ -270,10 +275,12 @@ async function boot() {
   if (party) {
     chef.clientEvery = 25;
     chef.clientIn = 6;
-    richard.fireEvery = 45;
-    richard.fireIn = 20;
-    richard.ramEvery = 15;
-    richard.ramIn = 8;
+    if (richard) {
+      richard.fireEvery = 45;
+      richard.fireIn = 20;
+      richard.ramEvery = 15;
+      richard.ramIn = 8;
+    }
     headDev.nagEvery = 25;
   }
   const weatherParam = params.get("weather");
@@ -346,7 +353,7 @@ async function boot() {
   camera.attach(app.canvas);
   // ambient: a real agent event always wins the auto-pilot camera over a portal
   if (duo) duo.onPortal = (x, y) => camera.notify(x, y, { zoom: 3, hold: 8, ambient: true });
-  richard.onFire = (x, y) => camera.notify(x, y, { zoom: 3, hold: 8, ambient: true });
+  if (richard) richard.onFire = (x, y) => camera.notify(x, y, { zoom: 3, hold: 8, ambient: true });
   // wall screens and the fit view frame the office (64 columns); the east street block joins
   // the frame only while someone is there, so tiles stay big on a 1080p wall
   camera.fitWidth = () =>
@@ -373,7 +380,7 @@ async function boot() {
     colony.setMap(scene.map);
     queen.setMap(scene.map);
     chef.setMap(scene.map);
-    richard.setMap(scene.map);
+    richard?.setMap(scene.map);
     headDev.setMap(scene.map);
     duo?.setMap(scene.map);
     life.reattach();
@@ -962,7 +969,7 @@ async function boot() {
       chef.poke();
       return;
     }
-    if (richard.hit(wx, wy) && (!c || richard.y > c.y)) {
+    if (richard?.hit(wx, wy) && (!c || richard.y > c.y)) {
       richard.poke();
       return;
     }
@@ -1227,7 +1234,7 @@ async function boot() {
     }
     queen.update(dt, time);
     chef.update(dt, time);
-    richard.update(dt, time);
+    richard?.update(dt, time);
     headDev.update(dt, time);
     duo?.update(dt, time);
     life.update(dt, time);
@@ -1292,7 +1299,7 @@ async function boot() {
     characters: () => chars.chars.size,
     cats: () => colony.cats().length,
     portalCharacters: () => duo?.where() ?? null,
-    richard: () => richard.where(),
+    richard: () => richard?.where() ?? null,
     setSpeed: (k) => {
       speed = Math.max(0, k);
     },
