@@ -126,6 +126,8 @@ function drawFaceFront(pc: PixelCanvas, L: CharacterLook, hy: number) {
   const s = L.skin;
   const ec = f.eyeColor;
   for (const ex of EYE_X) drawEye(pc, f.eyes, ec, ex, hy, false);
+  drawEyeshadow(pc, L, EYE_X[0], EYE_X[0] - 1, hy);
+  drawEyeshadow(pc, L, EYE_X[1], EYE_X[1] + 2, hy);
   // brows
   if (f.brows !== "none") {
     const c = L.hair.ramp.shadow;
@@ -187,13 +189,38 @@ export function drawEye(
 }
 
 const LIP = "#7a3040";
+
+/** Makeup colours (WD1), null when the look wears none. */
+const lipsOf = (L: CharacterLook): string | null => {
+  const c = L.face.makeup?.lips;
+  return c && c !== "none" ? c : null;
+};
+const shadowOf = (L: CharacterLook): string | null => {
+  const c = L.face.makeup?.eyeshadow;
+  return c && c !== "none" ? c : null;
+};
+
+/** Eyeshadow above an eye (front: eye at x ex..ex+1; side: x 10..11), with an outer wing. */
+function drawEyeshadow(pc: PixelCanvas, L: CharacterLook, ex: number, outer: number, hy: number) {
+  const c = shadowOf(L);
+  if (!c) return;
+  const y = (L.face.eyes === "round" ? 12 : 13) + hy;
+  pc.hline(ex, y, 2, c);
+  pc.set(outer, y, mix(c, NIGHT, 0.25));
+  pc.set(outer, y + 1, mix(c, L.skin.base, 0.5));
+}
+
 function drawMouthFront(pc: PixelCanvas, L: CharacterLook, hy: number) {
   const s = L.skin;
-  const dark = mix(s.shadow, LIP, 0.6);
+  const lips = lipsOf(L);
+  const dark = lips ? mix(lips, NIGHT, 0.15) : mix(s.shadow, LIP, 0.6);
   const y = 19 + hy;
   switch (L.face.expression) {
     case "neutral":
-      pc.hline(15, y + 1, 2, s.shadow);
+      if (lips) {
+        pc.hline(15, y + 1, 2, lips);
+        pc.hline(15, y + 2, 2, mix(lips, NIGHT, 0.3));
+      } else pc.hline(15, y + 1, 2, s.shadow);
       break;
     case "serious":
       pc.hline(14, y + 1, 4, dark);
@@ -284,6 +311,7 @@ function drawFaceSide(pc: PixelCanvas, L: CharacterLook, hy: number) {
   pc.rect(6, 16 + hy, 2, 2, s.base);
   pc.set(6, 17 + hy, s.shadow);
   drawEye(pc, f.eyes, f.eyeColor, 10, hy, true);
+  drawEyeshadow(pc, L, 10, 12, hy);
   if (f.brows !== "none") {
     pc.hline(9, 11 + hy, 3, L.hair.ramp.shadow);
     if (f.brows === "thick") pc.hline(9, 10 + hy, 3, L.hair.ramp.shadow);
@@ -294,7 +322,8 @@ function drawFaceSide(pc: PixelCanvas, L: CharacterLook, hy: number) {
     pc.set(12, cheekY, mix(s.shadow, NIGHT, 0.2));
     pc.set(14, cheekY + 1, mix(s.shadow, NIGHT, 0.2));
   }
-  const dark = mix(s.shadow, LIP, 0.6);
+  const lips = lipsOf(L);
+  const dark = lips ? mix(lips, NIGHT, 0.15) : mix(s.shadow, LIP, 0.6);
   const y = 19 + hy;
   switch (f.expression) {
     case "grin":
@@ -320,7 +349,10 @@ function drawFaceSide(pc: PixelCanvas, L: CharacterLook, hy: number) {
       pc.hline(8, y + 1, 3, dark);
       break;
     default:
-      pc.set(8, y + 1, s.shadow);
+      if (lips) {
+        pc.hline(8, y + 1, 2, lips);
+        pc.set(8, y + 2, mix(lips, NIGHT, 0.3));
+      } else pc.set(8, y + 1, s.shadow);
   }
   const fh = L.facialHair;
   const c = fh.color;
