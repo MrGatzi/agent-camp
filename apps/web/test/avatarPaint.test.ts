@@ -494,6 +494,33 @@ describe("period costume details", () => {
     expect(buttonColumns(coat())).toEqual([13, 18]);
   });
 
+  test("a closed pocketed coat without a layout is pixel-identical to before layout existed", () => {
+    // checksums of the whole sheet, taken with the renderer on main before `buttons.layout`
+    // (the coat's two rows paint before the pockets; the kangaroo pocket overlaps them)
+    const pinned = {
+      flap: "18220713474339190478",
+      patch: "13129392932855950928",
+      welt: "17037330845477448801",
+      kangaroo: "5311935334456398411",
+    } as const;
+    for (const [pockets, sum] of Object.entries(pinned)) {
+      const spec = coat();
+      spec.look = {
+        ...spec.look!,
+        outer: {
+          ...spec.look!.outer,
+          collar: cat.outer.collar,
+          pockets: pockets as never,
+          pocketPiping: BTN,
+          buttons: { count: 4, color: "#e8b53a", rim: "none", size: "small" },
+        },
+      };
+      const s = paintSheet(lookFor(spec, "claude", null));
+      const bytes = new Uint8Array(s.data.buffer, s.data.byteOffset, s.data.byteLength);
+      expect(`${pockets} ${Bun.hash(bytes)}`).toBe(`${pockets} ${sum}`);
+    }
+  });
+
   test("layout single puts one row of buttons down the centre", () => {
     expect(buttonColumns(coat("single"))).toEqual([15]);
   });
