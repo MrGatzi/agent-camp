@@ -6,8 +6,10 @@
 import { hashString } from "@agent-office/protocol";
 import { Texture } from "pixi.js";
 import type { Weather } from "../world/lifeRules.ts";
+import { LINZ_SURROUND, linzLayout, linzTreeAllowed } from "../world/linzLayout.ts";
 import { type OfficeMap, type Terrain, TILE } from "../world/map.ts";
 import { drawText } from "./font.ts";
+import { paintLinz } from "./linz.ts";
 import { C } from "./palette.ts";
 import { PixelCanvas } from "./pixel.ts";
 import { artSeason, foliage, lawn } from "./seasons.ts";
@@ -455,14 +457,14 @@ export function windowPane(
 }
 
 /** How far the outdoor surroundings reach past the map on every side (px). */
-export const SURROUND = 12 * TILE;
+export const SURROUND = LINZ_SURROUND;
 
 export type SurroundPiece = { texture: Texture; x: number; y: number };
 
 /**
- * The world outside the building: a darker lawn with round trees and a street below the
- * sidewalk, so zoom-to-fit letterboxes into scenery instead of a flat color. Four strips
- * around the map (no overdraw under the terrain sprite).
+ * Linz riverfront north of the office, wooded sides and the unchanged southern street.
+ * Four strips around the map (no overdraw under the terrain sprite). Existing floor
+ * destruction owns all four textures on rebuild; no extra scenery resources.
  */
 export function renderSurround(map: OfficeMap): SurroundPiece[] {
   const W = map.width * TILE;
@@ -470,12 +472,8 @@ export function renderSurround(map: OfficeMap): SurroundPiece[] {
   const M = SURROUND;
   const streetY = H + 10;
   const streetH = 44;
-  const strips = [
-    { x: -M, y: -M, w: W + 2 * M, h: M },
-    { x: -M, y: H, w: W + 2 * M, h: M },
-    { x: -M, y: 0, w: M, h: H },
-    { x: W, y: 0, w: M, h: H },
-  ];
+  const layout = linzLayout(W, H);
+  const strips = layout.strips;
   // trees on a jittered grid, kept off the street and away from the building
   const trees: { x: number; y: number; r: number; v: number }[] = [];
   for (let gy = -M; gy < H + M; gy += 56) {
@@ -485,7 +483,7 @@ export function renderSurround(map: OfficeMap): SurroundPiece[] {
       const r = 9 + Math.floor(rnd(gx, gy, 23) * 7);
       const near = x > -r - 6 && x < W + r + 6 && y > -r - 10 && y < H + r + 10;
       const street = y > streetY - 14 && y < streetY + streetH + r + 6;
-      if (near || street || rnd(gx, gy, 24) < 0.35) continue;
+      if (near || street || !linzTreeAllowed(layout, x, y, r) || rnd(gx, gy, 24) < 0.35) continue;
       trees.push({ x, y, r, v: Math.floor(rnd(gx, gy, 25) * 3) });
     }
   }
@@ -512,6 +510,7 @@ export function renderSurround(map: OfficeMap): SurroundPiece[] {
       }
     }
     pc.at(-st.x, -st.y);
+    if (st === layout.north) paintLinz(pc, layout);
     const winter = artSeason() === "winter";
     for (const t of trees) {
       pc.ellipse(t.x - t.r, t.y + t.r - 4, t.r * 2, 8, winter ? C.silver : C.pine);

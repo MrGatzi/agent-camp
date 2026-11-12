@@ -18,6 +18,7 @@ import {
 } from "../art/vehicles.ts";
 import type { Effects } from "./effects.ts";
 import { isFullMoon, type Season, type SkyNow, truckWindow, werewolfHour } from "./lifeRules.ts";
+import { type LinzLayout, linzLayout } from "./linzLayout.ts";
 import { TILE } from "./map.ts";
 import type { OfficeScene } from "./office.ts";
 
@@ -178,12 +179,15 @@ class Forest {
   private nextWolf = 40 + Math.random() * 80;
   private nextEyes = 3;
   private howled = "";
+  private readonly nightlife: LinzLayout["nightlife"];
 
   constructor(
     layers: Layers,
-    private readonly world: () => { w: number; h: number },
+    world: () => { w: number; h: number },
     private readonly effects: Effects,
   ) {
+    const { w, h } = world();
+    this.nightlife = linzLayout(w, h).nightlife;
     for (let i = 0; i < 4; i++) {
       const s = new Sprite(eyesTextures()[0]!);
       s.anchor.set(0.5);
@@ -203,7 +207,7 @@ class Forest {
   }
 
   update(dt: number, time: number, active: boolean, day: string) {
-    const { w } = this.world();
+    const { eyeVegetation, wolfPromenade } = this.nightlife;
     if (!active) {
       for (const e of this.eyes) e.sprite.visible = false;
       if (this.wolfMode !== "none") this.wolfMode = "none";
@@ -211,7 +215,7 @@ class Forest {
       this.wolfEye.visible = false;
       return;
     }
-    // eyes open somewhere in the forest above the office, blink, and are gone again
+    // Low riverfront vegetation keeps eyes visible at office fit, off water/buildings.
     this.nextEyes -= dt;
     if (this.nextEyes <= 0) {
       this.nextEyes = 4 + Math.random() * 9;
@@ -220,8 +224,8 @@ class Forest {
         e.t = 0;
         e.life = 4 + Math.random() * 5;
         e.sprite.position.set(
-          Math.round(-SURROUND_PX + 20 + Math.random() * (w + 2 * SURROUND_PX - 40)),
-          Math.round(-75 + Math.random() * 50),
+          Math.round(eyeVegetation.x + 7 + Math.random() * (eyeVegetation.w - 14)),
+          Math.round(eyeVegetation.y + 5 + Math.random() * (eyeVegetation.h - 10)),
         );
         e.sprite.visible = true;
       }
@@ -234,31 +238,34 @@ class Forest {
       e.sprite.texture = eyesTextures()[blink ? 2 : fading ? 1 : 0]!;
       if (e.t > e.life) e.sprite.visible = false;
     }
-    // now and then a werewolf trots along the forest edge; on full-moon nights it howls
+    // The 20×16 wolf uses an unobstructed promenade segment; full-moon howls are unchanged.
     if (this.wolfMode === "none") {
       this.nextWolf -= dt;
       if (this.nextWolf > 0) return;
       this.nextWolf = 90 + Math.random() * 150;
       this.wolfDir = Math.random() < 0.5 ? 1 : -1;
-      this.wolfX = this.wolfDir > 0 ? -SURROUND_PX : w + SURROUND_PX;
+      this.wolfX = this.wolfDir > 0 ? wolfPromenade.x + 10 : wolfPromenade.x + wolfPromenade.w - 10;
       this.wolfMode = "trot";
       this.wolfT = 0;
       this.wolf.visible = true;
       this.wolf.scale.x = this.wolfDir;
     }
-    const y = -18;
+    const y = wolfPromenade.y + wolfPromenade.h - 2;
     this.wolfT += dt;
     if (this.wolfMode === "trot") {
       this.wolfX += this.wolfDir * 34 * dt;
       this.wolf.texture = werewolfTextures()[Math.floor(time * 6) % 2]!;
-      const mid = Math.abs(this.wolfX - w / 2) < 20;
+      const mid = Math.abs(this.wolfX - (wolfPromenade.x + wolfPromenade.w / 2)) < 20;
       if (mid && this.howled !== day && isFullMoon(Date.now())) {
         this.howled = day;
         this.wolfMode = "howl";
         this.wolfT = 0;
         this.effects.floater(textBubbleTexture("AWOOOO!"), this.wolfX, y - 18, 3.5, 12);
       }
-      if (this.wolfX < -SURROUND_PX - 30 || this.wolfX > w + SURROUND_PX + 30) {
+      if (
+        this.wolfX < wolfPromenade.x + 10 ||
+        this.wolfX > wolfPromenade.x + wolfPromenade.w - 10
+      ) {
         this.wolfMode = "none";
         this.wolf.visible = false;
       }

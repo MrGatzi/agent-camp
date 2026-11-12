@@ -7,6 +7,7 @@ banner after a deploy.
 
 ## 2026-11-12
 
+- 🏙️ The office now overlooks Linz: the Danube, Pöstlingberg's twin towers, the Ars Electronica Center, Lentos and pastel old-town fronts sit quietly beyond the office walls; the night eyes and werewolf stay in view along the riverfront
 - Timelapse now lets you watch All frames or one day in your browser's local timezone, with matching counts and thumbnails, and warms only a few frames ahead instead of the whole recording
 - `agent-office status --json` now gives scripts a privacy-safe health snapshot, without config, project names or server credentials
 - 🚢 Schiffe versenken and Vier gewinnt: challenge a colleague from their nameplate and play a move whenever you get to it; your portrait in the top bar shows when it is your turn
