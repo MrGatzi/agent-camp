@@ -43,6 +43,13 @@ export const PATTERN_KINDS = [
   "heather",
   "worn",
   "camo",
+  // crazy wardrobe (WD12)
+  "leopard",
+  "zebra",
+  "flames",
+  "tie-dye",
+  "sequins",
+  "galaxy",
 ] as const;
 export const Pattern = z
   .object({
@@ -85,9 +92,18 @@ export type Buttons = z.infer<typeof Buttons>;
 /** torso width -1/0/+1 texel per side */
 export const BUILDS = ["slim", "average", "broad"] as const;
 export const FACE_SHAPES = ["round", "oval", "narrow", "square"] as const;
-export const EARS = ["hidden", "small", "visible"] as const;
+export const EARS = ["hidden", "small", "visible", "elf"] as const;
 /** happy = ^^ closed */
-export const EYES = ["dot", "round", "narrow", "happy"] as const;
+export const EYES = [
+  "dot",
+  "round",
+  "narrow",
+  "happy",
+  "star",
+  "heart",
+  "spiral",
+  "glowing",
+] as const;
 /** colour = hair.ramp.shadow */
 export const BROWS = ["none", "thin", "thick"] as const;
 /** grin = wide open smile showing upper teeth */
@@ -99,8 +115,11 @@ export const EXPRESSIONS = [
   "smirk",
   "serious",
   "surprised",
+  // crazy wardrobe (WD12)
+  "tongue-out",
+  "fangs",
 ] as const;
-export const CHEEKS = ["none", "blush", "freckles"] as const;
+export const CHEEKS = ["none", "blush", "freckles", "whiskers", "war-paint", "glitter"] as const;
 export const HAIR_CUTS = [
   "bald",
   "buzz",
@@ -125,9 +144,25 @@ export const HAIR_CUTS = [
   "dreadlocks",
   "space-buns",
   "long-wavy",
+  // crazy wardrobe (WD12)
+  "anime-spikes",
+  "beehive",
+  "pompadour",
+  "afro-puffs",
+  "snakes",
 ] as const;
 export const HAIR_CLIPS = ["none", "few", "many"] as const;
-export const FACIAL_HAIR_STYLES = ["none", "stubble", "mustache", "goatee", "beard"] as const;
+export const FACIAL_HAIR_STYLES = [
+  "none",
+  "stubble",
+  "mustache",
+  "goatee",
+  "beard",
+  "handlebar",
+  "mutton-chops",
+  "wizard-beard",
+  "viking-braids",
+] as const;
 export const EYEWEAR_STYLES = [
   "none",
   "round",
@@ -136,6 +171,12 @@ export const EYEWEAR_STYLES = [
   "rectangle",
   "aviator",
   "cat-eye",
+  // crazy wardrobe (WD12)
+  "heart",
+  "star",
+  "3d",
+  "monocle",
+  "cyber-visor",
 ] as const;
 /** tortoiseshell = speckles of frameAccent */
 export const FRAME_PATTERNS = ["solid", "tortoiseshell"] as const;
@@ -181,8 +222,17 @@ export const HEADWEAR_STYLES = [
   "tricorn",
   "captain-hat",
   "viking-helmet",
+  // crazy wardrobe (WD12)
+  "unicorn-horn",
+  "propeller-cap",
+  "traffic-cone",
+  "jester-hat",
+  "sombrero",
+  "shark-hat",
+  "rubber-duck",
+  "pharaoh",
 ] as const;
-export const EARRING_STYLES = ["none", "stud", "hoop"] as const;
+export const EARRING_STYLES = ["none", "stud", "hoop", "dangle", "feather"] as const;
 export const SHIRT_KINDS = [
   "tshirt",
   "longsleeve",
@@ -201,6 +251,12 @@ export const SHIRT_KINDS = [
   /** white, low round neckline, puff sleeves */
   "dirndl-blouse",
   "jersey",
+  // crazy wardrobe (WD12)
+  "hawaiian",
+  "ugly-sweater",
+  "mesh-top",
+  "tuxedo-tee",
+  "sequin-top",
 ] as const;
 export const COLLARS = [
   "none",
@@ -253,6 +309,12 @@ export const OUTER_KINDS = [
   "bathrobe",
   "cape",
   "poncho",
+  // crazy wardrobe (WD12)
+  "fur-coat",
+  "wizard-robe",
+  "hazmat",
+  "chainmail",
+  "astronaut-suit",
 ] as const;
 export const OUTER_LENGTHS = ["cropped", "waist", "hip", "thigh", "knee", "ankle"] as const;
 export const POCKETS = ["none", "flap", "patch", "welt", "kangaroo"] as const;
@@ -282,6 +344,12 @@ export const BOTTOM_KINDS = [
   "gown",
   "jumpsuit",
   "bike-shorts",
+  // crazy wardrobe (WD12)
+  "hula-skirt",
+  "bell-bottoms",
+  "mermaid-tail",
+  "harem-pants",
+  "hoop-skirt",
 ] as const;
 export const EMBROIDERY_MOTIFS = ["none", "vine", "oak-leaf", "edelweiss", "geometric"] as const;
 export const SUSPENDERS = ["none", "plain", "h-bridge"] as const;
@@ -299,6 +367,10 @@ export const LEGWEAR_KINDS = [
   "fishnets",
   "thigh-highs",
   "leg-warmers",
+  // crazy wardrobe (WD12)
+  "striped-stockings",
+  "ripped-tights",
+  "glitter-tights",
 ] as const;
 export const SHOE_KINDS = [
   "sneakers",
@@ -320,6 +392,13 @@ export const SHOE_KINDS = [
   "clogs",
   "crocs",
   "roller-skates",
+  // crazy wardrobe (WD12)
+  "clown-shoes",
+  "bunny-slippers",
+  "flippers",
+  "moon-boots",
+  "ice-skates",
+  "rocket-boots",
 ] as const;
 /** hand-in-pocket = viewer's-left arm (the character's right) */
 export const HAND_POSES = [
@@ -365,12 +444,90 @@ export const UNDERWEAR_BOTTOMS = [
 export const APRON_KINDS = ["none", "dirndl", "kitchen", "waist"] as const;
 /** where the apron ribbon is knotted (dirndl: left = single, right = taken) */
 export const APRON_BOWS = ["left", "right", "front", "back"] as const;
-export const MASKS = ["none", "eye-mask", "ninja", "clown-nose", "surgical"] as const;
-export const WINGS = ["none", "angel", "fairy", "bat", "butterfly"] as const;
-export const TAILS = ["none", "cat", "devil", "dino", "fox"] as const;
-export const GLOVES = ["none", "short", "long", "boxing"] as const;
-export const NECKLACES = ["none", "chain", "pearls", "medal", "lei"] as const;
-export const BAGS = ["none", "backpack", "tote", "crossbody"] as const;
+export const MASKS = [
+  "none",
+  "eye-mask",
+  "ninja",
+  "clown-nose",
+  "surgical",
+  "luchador",
+  "gas-mask",
+  "disguise",
+  "plague-doctor",
+] as const;
+export const WINGS = [
+  "none",
+  "angel",
+  "fairy",
+  "bat",
+  "butterfly",
+  "dragon",
+  "jetpack",
+  "phoenix",
+] as const;
+export const TAILS = [
+  "none",
+  "cat",
+  "devil",
+  "dino",
+  "fox",
+  "peacock",
+  "monkey",
+  "squirrel",
+  "robot",
+] as const;
+export const GLOVES = [
+  "none",
+  "short",
+  "long",
+  "boxing",
+  "cartoon",
+  "foam-finger",
+  "claws",
+  "oven-mitts",
+] as const;
+export const NECKLACES = [
+  "none",
+  "chain",
+  "pearls",
+  "medal",
+  "lei",
+  "bling",
+  "ruff",
+  "bell-collar",
+  "dog-tags",
+] as const;
+export const BAGS = [
+  "none",
+  "backpack",
+  "tote",
+  "crossbody",
+  "fanny-pack",
+  "guitar",
+  "turtle-shell",
+  "baguettes",
+] as const;
+// crazy wardrobe (WD12): optional in `accessories`, missing = none
+/** a small animal riding on the shoulder (viewer's right in the front view) */
+export const PETS = [
+  "none",
+  "parrot",
+  "cat",
+  "hamster",
+  "octopus",
+  "rubber-duck",
+  "dragon",
+] as const;
+/** an effect around the whole character */
+export const AURAS = [
+  "none",
+  "sparkles",
+  "fire",
+  "rain-cloud",
+  "hearts",
+  "bees",
+  "lightning",
+] as const;
 
 // ---- extras: things from the look editor catalog (same ids as catalog.ts) ------------------
 /** Something held in a hand (catalog `HELD_ITEMS`). */
@@ -391,6 +548,15 @@ export const HELD_KINDS = [
   "maracas",
   "umbrella",
   "skull",
+  // crazy wardrobe (WD12)
+  "rubber-chicken",
+  "trident",
+  "pizza",
+  "ice-cream",
+  "torch",
+  "boombox",
+  "plunger",
+  "megaphone",
 ] as const;
 /** Costume details drawn over the clothes (catalog outfits that are costumes). */
 export const COSTUME_KINDS = [
@@ -401,9 +567,24 @@ export const COSTUME_KINDS = [
   "pirate",
   "vampire",
   "disco",
+  // crazy wardrobe (WD12)
+  "banana",
+  "skeleton",
+  "mummy",
+  "knight",
+  "hotdog",
 ] as const;
 /** Bracelets (catalog `WRISTWEAR`). */
-export const WRIST_KINDS = ["none", "neon-cyan", "neon-pink", "neon-lime", "rainbow"] as const;
+export const WRIST_KINDS = [
+  "none",
+  "neon-cyan",
+  "neon-pink",
+  "neon-lime",
+  "rainbow",
+  "gold-cuffs",
+  "spiked",
+  "friendship",
+] as const;
 
 export const Extras = z
   .object({
@@ -482,6 +663,9 @@ export const Accessories = z
     gloves: Part(GLOVES, "gloves"),
     necklace: Part(NECKLACES, "necklace"),
     bag: Part(BAGS, "bag"),
+    // crazy wardrobe (WD12): missing in looks stored before it; a bad value drops only that part
+    pet: Part(PETS, "pet riding on the shoulder").optional().catch(undefined),
+    aura: Part(AURAS, "effect around the whole character").optional().catch(undefined),
   })
   .describe("costume and everyday accessories, each with its colour; none unless described");
 export type Accessories = z.infer<typeof Accessories>;

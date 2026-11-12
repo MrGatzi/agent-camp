@@ -255,11 +255,12 @@ export function apronOf(
   return { kind, ramp: rampFrom(color), pattern: plain(color), bow, ...o };
 }
 
-type PartSpec = { [K in keyof Accessories]?: [Accessories[K]["kind"], string] };
+type Parts = { [K in keyof Accessories]-?: NonNullable<Accessories[K]> };
+type PartSpec = { [K in keyof Parts]?: [Parts[K]["kind"], string] };
 export function accessoriesOf(parts: PartSpec = {}): Accessories {
-  const one = <K extends keyof Accessories>(k: K): Accessories[K] => {
+  const one = <K extends keyof Parts>(k: K): Parts[K] => {
     const p = parts[k];
-    return (p ? { kind: p[0], color: p[1] } : { kind: "none", color: "#3a4466" }) as Accessories[K];
+    return (p ? { kind: p[0], color: p[1] } : { kind: "none", color: "#3a4466" }) as Parts[K];
   };
   return {
     mask: one("mask"),
@@ -268,6 +269,9 @@ export function accessoriesOf(parts: PartSpec = {}): Accessories {
     gloves: one("gloves"),
     necklace: one("necklace"),
     bag: one("bag"),
+    // WD12: only written when given, so older presets stay byte-identical
+    ...(parts.pet ? { pet: one("pet") } : {}),
+    ...(parts.aura ? { aura: one("aura") } : {}),
   };
 }
 

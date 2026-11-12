@@ -145,6 +145,15 @@ export const HELD_ITEMS = [
   { id: "maracas", label: "maracas" },
   { id: "umbrella", label: "umbrella" },
   { id: "skull", label: "skull" },
+  // crazy wardrobe (WD12)
+  { id: "rubber-chicken", label: "rubber chicken" },
+  { id: "trident", label: "trident" },
+  { id: "pizza", label: "slice of pizza" },
+  { id: "ice-cream", label: "ice cream cone" },
+  { id: "torch", label: "burning torch" },
+  { id: "boombox", label: "boombox" },
+  { id: "plunger", label: "plunger" },
+  { id: "megaphone", label: "megaphone" },
 ] as const satisfies readonly Entry<string>[];
 export const HeldItem = z.enum(ids(HELD_ITEMS));
 export type HeldItem = z.infer<typeof HeldItem>;
@@ -156,6 +165,10 @@ export const WRISTWEAR = [
   { id: "neon-pink", label: "neon pink bracelets" },
   { id: "neon-lime", label: "neon lime bracelets" },
   { id: "rainbow", label: "rainbow bracelets" },
+  // crazy wardrobe (WD12)
+  { id: "gold-cuffs", label: "gold cuffs" },
+  { id: "spiked", label: "spiked wristbands" },
+  { id: "friendship", label: "friendship bracelets" },
 ] as const;
 export const Wristwear = z.enum(ids(WRISTWEAR));
 export type Wristwear = z.infer<typeof Wristwear>;

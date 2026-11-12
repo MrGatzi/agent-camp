@@ -229,7 +229,10 @@ describe("lookFromCatalog: look editor items (#11 and later)", () => {
   test("look id lists match the catalog", () => {
     expect([...HELD_KINDS]).toEqual(HELD_ITEMS.map((e) => e.id));
     expect([...WRIST_KINDS]).toEqual(WRISTWEAR.map((e) => e.id));
-    for (const c of COSTUME_KINDS) if (c !== "none") expect(Outfit.options).toContain(c);
+    // WD12 costumes are look-only (drawn on the HD doll), not catalog outfits
+    const lookOnly: readonly string[] = ["banana", "skeleton", "mummy", "knight", "hotdog"];
+    for (const c of COSTUME_KINDS)
+      if (c !== "none" && !lookOnly.includes(c)) expect(Outfit.options as string[]).toContain(c);
   });
 
   test("resolveLook fills missing extras from the catalog fields", () => {
@@ -434,7 +437,7 @@ describe("repairAvatar", () => {
     c.hairStyle = "slicked-back"; // not a catalog style
     c.deskProps = ["mug", "mug", "unicorn", "plant", "lamp", "books"];
     c.deskMess = 9;
-    (c.look as Record<string, unknown>).hair = { cut: "pompadour" };
+    (c.look as Record<string, unknown>).hair = { cut: "tentacle-mullet" }; // not a cut
     const seeded = avatarFromSeed("anna");
     const { avatar, repaired } = repairAvatar(c, "anna");
     expect(repaired).toBe(true);
