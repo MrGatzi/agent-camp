@@ -17,6 +17,7 @@ import { join, resolve } from "node:path";
 import { LOOK_FIXTURES } from "@agent-office/protocol/fixtures";
 import { generateWeek, postBackfill, runScenario, type SimHandle } from "@agent-office/sim";
 import type { Browser, BrowserContext, Page } from "playwright";
+import { checkChatOverlay } from "./chat-smoke.ts";
 import { encodeGif, type RgbaFrame } from "./gif.ts";
 import { terminalHtml } from "./terminal.ts";
 
@@ -50,6 +51,13 @@ const SHARD = (() => {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const log = (s: string) => console.log(`[shots] ${s}`);
+const pageErrors: string[] = [];
+const trackPageErrors = (page: Page) =>
+  page.on("pageerror", (error) => {
+    const detail = error.stack ?? error.message;
+    pageErrors.push(detail);
+    log(`  page error: ${detail}`);
+  });
 
 // ---- server ---------------------------------------------------------------------------------
 
@@ -143,7 +151,7 @@ async function context(vp: Viewport): Promise<BrowserContext> {
 
 async function openPage(vp: Viewport, url: string): Promise<Page> {
   const page = await (await context(vp)).newPage();
-  page.on("pageerror", (e) => log(`  page error (${vp}): ${e.message}`));
+  trackPageErrors(page);
   page.on("console", (m) => {
     if (m.type() === "error") log(`  console error (${vp}): ${m.text()}`);
   });
@@ -314,7 +322,7 @@ async function sceneAgentCard() {
   try {
     for (const vp of Object.keys(VIEWPORTS) as Viewport[]) {
       const page = await (await context(vp)).newPage();
-      page.on("pageerror", (e) => log(`  page error (${vp}): ${e.message}`));
+      trackPageErrors(page);
       await page.clock.install();
       await page.goto(`${o.http}/?hour=15`);
       await page.waitForFunction(() => window.__office?.ready === true, null, { timeout: 30_000 });
@@ -766,6 +774,10 @@ async function checkMessageReloadGuard(url: string) {
     extraHTTPHeaders: { authorization: `Bearer ${PASSWORD}` },
   });
   try {
+    await ctx.addInitScript(() => {
+      if (localStorage.getItem("agent-office.messages.expanded") === null)
+        localStorage.setItem("agent-office.messages.expanded", "false");
+    });
     const page = await ctx.newPage();
     await page.goto(url);
     await page.waitForFunction(() => window.__office?.ready);
@@ -856,6 +868,13 @@ async function sceneMessages() {
   };
   try {
     await post("Lunch in five! Everyone can read this shared office log.");
+    // Keep the shipped popup regression path; fresh-browser overlay has its own scene.
+    for (const vp of Object.keys(VIEWPORTS) as Viewport[]) {
+      await (await context(vp)).addInitScript(() => {
+        if (localStorage.getItem("agent-office.messages.expanded") === null)
+          localStorage.setItem("agent-office.messages.expanded", "false");
+      });
+    }
     for (const vp of Object.keys(VIEWPORTS) as Viewport[]) {
       const page = await openOffice(vp, `${o.http}/?hour=15`, BUSY.people, BUSY.sessions, 500);
       const errors: string[] = [];
@@ -1013,10 +1032,17 @@ async function sceneMessages() {
       assert.equal(await page.locator(".messages-panel").isVisible(), false);
       await launcher.click();
       const deleteButton = page
-        .getByRole("button", { name: "Delete your message", exact: true })
+        .getByRole("button", { name: "Delete your message", exact: true, includeHidden: true })
         .last();
+      const row = page
+        .locator(".messages-log article")
+        .filter({ has: page.locator("details") })
+        .last();
+      await row.locator("summary").click();
       await deleteButton.waitFor();
-      const deletedId = await deleteButton.locator("..").getAttribute("data-message-id");
+      const deletedId = await deleteButton.evaluate(
+        (el) => el.closest("article")?.dataset.messageId,
+      );
       assert.ok(deletedId);
       page.once("dialog", (dialog) => void dialog.accept());
       await deleteButton.click();
@@ -1037,6 +1063,10 @@ async function sceneMessages() {
       extraHTTPHeaders: { authorization: `Bearer ${PASSWORD}` },
     });
     try {
+      await mobile.addInitScript(() => {
+        if (localStorage.getItem("agent-office.messages.expanded") === null)
+          localStorage.setItem("agent-office.messages.expanded", "false");
+      });
       const page = await mobile.newPage();
       await page.goto(o.http);
       await page.waitForFunction(() => window.__office?.ready);
@@ -1097,6 +1127,16 @@ async function sceneMessages() {
   }
 }
 
+async function sceneChatOverlay() {
+  if (!want("18-chat-overlay")) return;
+  const o = await office("busy");
+  try {
+    await checkChatOverlay(browser, o.http, PASSWORD, shoot);
+  } finally {
+    o.stop();
+  }
+}
+
 // ---- main -------------------------------------------------------------------------------------
 
 /** [seconds a scene took in CI, scene]: `--shard` balances by these */
@@ -1120,6 +1160,7 @@ const SCENES: readonly [number, () => Promise<void>][] = [
   [26, sceneSidePanel],
   [52, sceneAgentCard],
   [110, sceneMessages],
+  [60, sceneChatOverlay],
   [25, sceneOfficeLife],
   [18, sceneCleared],
   [162, sceneBarAndShop],
@@ -1174,6 +1215,7 @@ async function main() {
   });
   try {
     for (const [, run] of SCENES.filter((_, i) => inShard(i))) await run();
+    assert.deepEqual(pageErrors, [], "screenshot scenes must not hide browser exceptions");
   } finally {
     await browser.close();
     cleanup();
