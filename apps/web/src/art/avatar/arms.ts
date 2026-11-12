@@ -4,9 +4,10 @@
  */
 import { type Ramp, rampFrom } from "@agent-office/protocol";
 import { C } from "../palette.ts";
+import { luma, mix, NIGHT, WHITE } from "./color.ts";
 import type { Ctx } from "./ctx.ts";
 import { heldFront } from "./extras.ts";
-import type { Arms } from "./geometry.ts";
+import { type Arms, BODY_ROWS } from "./geometry.ts";
 import { agentMark, type TorsoBox, trimColor } from "./torso.ts";
 
 /** Rightmost texel column a part may use so the 2-texel outline still fits in the frame. */
@@ -62,11 +63,161 @@ function poseSleeve(c: Ctx): Ramp {
 /** Colours of the hands: gloves (WD6) or skin. */
 function handRamp(c: Ctx): Ramp {
   const g = c.L.accessories.gloves;
+  // crazy wardrobe (WD12): cartoon gloves are white, the foam finger sits on one bare hand
+  if (g.kind === "cartoon") return CARTOON;
+  if (g.kind === "foam-finger") return c.L.skin;
   return g.kind === "none" ? c.L.skin : rampFrom(g.color);
+}
+
+// ---- crazy gloves (WD12) --------------------------------------------------------------------
+
+const CARTOON: Ramp = { base: "#f4f4f2", shadow: "#c0cbdc", light: WHITE };
+const BLADE = { light: WHITE, base: "#c0cbdc" };
+
+/** Giant foam hand, the "1" finger pointing down (hanging arm) or up (raised arm). */
+const FOAM_DOWN = [
+  ".LLL.",
+  "LhWhH",
+  "hWWhH",
+  "hhWhH",
+  "hhWhH",
+  "hWWWH",
+  "hhhhH",
+  ".hhH.",
+  "..hH.",
+  "..hH.",
+  "..HH.",
+];
+const FOAM_UP = [
+  "..LH.",
+  "..hH.",
+  "..hH.",
+  ".hhhH",
+  "LhWhH",
+  "hWWhH",
+  "hhWhH",
+  "hhWhH",
+  "hWWWH",
+  "hhhhH",
+  ".HHH.",
+];
+
+/** The hanging foam hand from row `top`, its finger cut short where the frame ends. */
+const foamDown = (top: number) => FOAM_DOWN.slice(0, Math.max(0, LAST_ROW + 1 - top));
+
+function foamColors(c: Ctx): Record<string, string> {
+  const r = rampFrom(c.L.accessories.gloves.color);
+  return { h: r.base, H: r.shadow, L: r.light, W: luma(r.base) > 0.7 ? NIGHT : WHITE };
+}
+
+/** Is this the hand with the foam finger? The person's left: viewer's right from the front. */
+const foamHand = (c: Ctx, out: -1 | 1) =>
+  c.L.accessories.gloves.kind === "foam-finger" && (c.view === "up" ? out < 0 : out > 0);
+
+/** Last body row a hand may paint on (the frame ends there). */
+const LAST_ROW = BODY_ROWS - 1;
+
+/** Three talons fanning out from (x, y) in direction dy, painted over the outline. */
+function claws(c: Ctx, x: number, y: number, dy: 1 | -1) {
+  const pc = c.pc;
+  c.after.push(() => {
+    for (const [x0, x1] of [
+      [x, x - 1],
+      [x + 1, x + 1],
+      [x + 2, x + 3],
+    ] as const)
+      for (let k = 0; k < 5; k++) {
+        if (y + dy * k > LAST_ROW) break;
+        const xx = k < 2 ? x0 : x1;
+        pc.set(xx, y + dy * k, k === 4 ? BLADE.light : BLADE.base);
+      }
+  });
+}
+
+/** A ribbed cartoon cuff (three lines in the glove colour), `w` wide. */
+function cartoonCuff(c: Ctx, x: number, y: number, w: number) {
+  const line = mix(rampFrom(c.L.accessories.gloves.color).base, CARTOON.shadow, 0.3);
+  for (let i = 0; i < w; i++) c.pc.set(x + i, y, i % 2 ? CARTOON.light : line);
+}
+
+/** Quilting over an oven mitt. */
+function quilt(c: Ctx, x: number, y: number, w: number, h: number, r: Ramp) {
+  for (let j = 0; j < h; j++)
+    for (let i = 0; i < w; i++) if ((i + j) % 3 === 0) c.pc.set(x + i, y + j, r.shadow);
+}
+
+/** Hanging hand for the crazy gloves; false = paint the usual hand. */
+function drawCrazyHand(c: Ctx, x: number, y: number, out: -1 | 1): boolean {
+  const g = c.L.accessories.gloves;
+  const pc = c.pc;
+  switch (g.kind) {
+    case "foam-finger":
+      if (!foamHand(c, out)) return false;
+      pc.rect(x, y, 2, 2, c.L.skin.base);
+      pc.sprite(out < 0 ? x - 2 : x - 1, y - 1, foamDown(y - 1), foamColors(c));
+      return true;
+    case "cartoon": {
+      // puffy white hand under a flared, ribbed cuff
+      const mx = out < 0 ? x - 2 : x;
+      cartoonCuff(c, out < 0 ? mx : mx - 1, y - 1, 5);
+      pc.rect(mx, y, 4, 3, CARTOON.base);
+      pc.set(mx, y, CARTOON.light);
+      pc.vline(mx + 3, y + 1, 2, CARTOON.shadow);
+      pc.hline(mx + 1, y + 2, 3, CARTOON.shadow);
+      pc.set(out < 0 ? mx + 4 : mx - 1, y + 1, CARTOON.base); // thumb
+      return true;
+    }
+    case "claws": {
+      const h = rampFrom(g.color);
+      pc.rect(x, y, 2, 2, h.base);
+      pc.set(x + 1, y + 1, h.shadow);
+      claws(c, out < 0 ? x - 1 : x - 1, y + 2, 1);
+      return true;
+    }
+    case "oven-mitts": {
+      const h = rampFrom(g.color);
+      const mx = out < 0 ? x - 2 : x;
+      pc.rect(mx, y - 1, 4, 5, h.base);
+      quilt(c, mx, y, 4, 4, h);
+      pc.hline(mx, y - 1, 4, h.light); // cuff
+      pc.vline(mx + 3, y, 4, h.shadow);
+      pc.rect(out < 0 ? mx + 4 : mx - 1, y + 1, 1, 2, h.base); // thumb
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+/** Extra glove detail on a big hand (raised / waving), its rect x, y, w, h, fingers up. */
+function decorateBigHand(c: Ctx, x: number, y: number, w: number, h: number) {
+  const g = c.L.accessories.gloves;
+  switch (g.kind) {
+    case "foam-finger":
+      // only the foam hand waves and raises (viewer's right)
+      c.pc.sprite(x - 1 + Math.floor((w - 4) / 2), y + h - FOAM_UP.length, FOAM_UP, foamColors(c));
+      return;
+    case "cartoon":
+      cartoonCuff(c, x - 1, y + h, w + 1);
+      return;
+    case "claws":
+      claws(c, x, y - 1, -1);
+      return;
+    case "oven-mitts": {
+      const r = rampFrom(g.color);
+      const mx = Math.min(x - 1, MAX_X - (w + 1)); // keep the mitt (and outline) in the frame
+      c.pc.rect(mx, y - 1, w + 2, h + 1, r.base);
+      quilt(c, mx, y - 1, w + 2, h + 1, r);
+      c.pc.hline(mx, y + h, w + 2, r.light);
+      return;
+    }
+    default:
+  }
 }
 
 /** A 2x2 hand at (x, y) (a 3x3 mitt in boxing gloves), `out` = the side away from the body. */
 function drawHand(c: Ctx, x: number, y: number, out: -1 | 1) {
+  if (drawCrazyHand(c, x, y, out)) return;
   const h = handRamp(c);
   if (c.L.accessories.gloves.kind === "boxing") {
     const mx = out < 0 ? x - 1 : x;
@@ -221,6 +372,7 @@ export function drawArmsFront(c: Ctx, b: TorsoBox, arms: Arms, phase: number) {
       c.pc.rect(rx + 1, T - 18, 4, 5, sk.base);
       c.pc.set(rx, T - 16, sk.base);
       c.pc.vline(rx + 4, T - 17, 4, sk.shadow);
+      decorateBigHand(c, rx + 1, T - 18, 4, 5);
     } else {
       // hand swung outward; keep it (and its 2-texel outline) inside the frame
       const hx = rx - Math.max(0, rx + 7 - MAX_X);
@@ -230,6 +382,7 @@ export function drawArmsFront(c: Ctx, b: TorsoBox, arms: Arms, phase: number) {
       c.pc.rect(hx + 4, T - 17, 4, 5, sk.base);
       c.pc.set(hx + 3, T - 15, sk.base);
       c.pc.vline(hx + 7, T - 16, 4, sk.shadow);
+      decorateBigHand(c, hx + 4, T - 17, 4, 5);
     }
     return;
   }
@@ -254,6 +407,7 @@ export function drawRaisedHand(c: Ctx, b: TorsoBox, arms: Arms) {
   c.pc.rect(x, T - 20 + lift, 4, 6, sk.base);
   c.pc.vline(x + 3, T - 19 + lift, 5, sk.shadow);
   c.pc.rect(x - 2, T - 18 + lift, 2, 2, sk.base); // thumb
+  decorateBigHand(c, x, T - 20 + lift, 4, 6);
 }
 
 export function drawArmsBack(c: Ctx, b: TorsoBox, arms: Arms, phase: number) {
@@ -332,6 +486,7 @@ export function drawArmSide(c: Ctx, b: TorsoBox, phase: number) {
     c.pc.hline(x + ax * 4, T + 12, 4, h.shadow);
     c.pc.set(x + ax * 4 + 1, T + 10, h.light);
   }
+  if (!hidden) drawCrazySideHand(c, x + ax * 4, T + 10);
   if (agentMark(c) && !hidden) {
     const a = c.r.agentRamp;
     c.pc.hline(x, T + 4, 4, a.base);
@@ -346,4 +501,35 @@ export function drawMug(c: Ctx, x: number, y: number) {
   c.pc.vline(x + 3, y + 1, 5, C.silver);
   c.pc.vline(x + 4, y + 2, 2, C.white);
   c.pc.hline(x + 1, y + 1, 2, C.cocoa);
+}
+
+/** Side view (WD12): the near hand is the left one, so it wears the foam finger. */
+function drawCrazySideHand(c: Ctx, x: number, y: number) {
+  const g = c.L.accessories.gloves;
+  const pc = c.pc;
+  switch (g.kind) {
+    case "foam-finger":
+      pc.sprite(x - 1, y - 1, foamDown(y - 1), foamColors(c));
+      return;
+    case "cartoon":
+      cartoonCuff(c, x - 1, y - 1, 5);
+      pc.rect(x, y, 4, 3, CARTOON.base);
+      pc.set(x, y, CARTOON.light);
+      pc.vline(x + 3, y + 1, 2, CARTOON.shadow);
+      pc.hline(x, y + 2, 3, CARTOON.shadow);
+      return;
+    case "claws":
+      claws(c, x, y + 2, 1);
+      return;
+    case "oven-mitts": {
+      const r = rampFrom(g.color);
+      pc.rect(x - 1, y - 1, 5, 5, r.base);
+      quilt(c, x - 1, y, 5, 4, r);
+      pc.hline(x - 1, y - 1, 5, r.light);
+      pc.vline(x + 3, y, 4, r.shadow);
+      pc.rect(x - 2, y + 1, 1, 2, r.base); // thumb
+      return;
+    }
+    default:
+  }
 }
