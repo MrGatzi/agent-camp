@@ -19,7 +19,7 @@
  *   ?gallery=look[&look=…][&gscale=N]  detailed-look gallery (sets window.__galleryReady)
  *   ?toons=0|1    The portal characters off / on (default: on, off on the kiosk)   ?gifs=0  no head GIFs
  *   ?gallery=toons[&gscale=N]  every portal character frame and the portal
- *   ?richard=0    No Richard on this screen (no cabin fires, no RAM runs; the cabin stays)
+ *   ?itguy=0      No IT guy on this screen (no cabin fires, no RAM runs; the cabin stays)
  */
 import "./ui/theme.css";
 import "./ui/office.css";
@@ -55,6 +55,7 @@ import { CrispView } from "./crisp.ts";
 import { DemoFeed, parseDemoMode, parseLookParam } from "./demo/demoFeed.ts";
 import { type CatAction, Hud, type PokeResult } from "./hud.ts";
 import { keepAwake, reloadInto, watchForNewBuild } from "./kiosk.ts";
+import { GamesClient } from "./net/games.ts";
 import { MessagesClient } from "./net/messages.ts";
 import { connectViewer, loginIfLoggedOut } from "./net/viewer.ts";
 import { PartyPanel } from "./partyPanel.ts";
@@ -68,17 +69,20 @@ import {
   saveSeen,
   shouldCelebrate,
 } from "./release.ts";
+import { GAME_NAME, resultLine } from "./state/gameText.ts";
 import { MessageModel } from "./state/messageModel.ts";
 import { type ModelChange, OfficeModel } from "./state/officeModel.ts";
 import { Celebration } from "./ui/celebration.ts";
+import { GamesUi } from "./ui/gamesUi.ts";
 import { MessagesPanel, storedMessageRead } from "./ui/messages.ts";
 import { Minimap } from "./ui/minimap.ts";
+import { Cfo } from "./world/cfo.ts";
 import { CharacterManager } from "./world/characters.ts";
 import { CatColony } from "./world/colony.ts";
 import { Effects } from "./world/effects.ts";
 import { HeadGifs } from "./world/gifs.ts";
 import { HeadDev } from "./world/headDev.ts";
-import { Kurt } from "./world/kurt.ts";
+import { ItGuy } from "./world/itGuy.ts";
 import { OfficeLife } from "./world/life.ts";
 import { catCount, SEASONS, type Season, seasonFor } from "./world/lifeRules.ts";
 import { Living } from "./world/living.ts";
@@ -96,7 +100,6 @@ import { OfficeScene } from "./world/office.ts";
 import { PartyWorld } from "./world/party.ts";
 import { PortalDuo } from "./world/portalCharacters.ts";
 import { OfficeQueen } from "./world/queen.ts";
-import { Richard } from "./world/richard.ts";
 import { SalesChef } from "./world/salesChef.ts";
 
 type OfficeApi = {
@@ -123,8 +126,8 @@ type OfficeApi = {
   cats(): number;
   /** where the lead stands and what the two portal characters are up to (null: away / off) */
   portalCharacters(): { x: number; y: number; mode: string } | null;
-  /** where Richard is and what he is up to (inside = in the server cabin) */
-  richard(): { x: number; y: number; mode: string; inside: boolean; burning: boolean } | null;
+  /** where the IT guy is and what he is up to (inside = in the server cabin) */
+  itGuy(): { x: number; y: number; mode: string; inside: boolean; burning: boolean } | null;
   /** slow down / freeze the world clock (screenshots of short moments); 1 = normal */
   setSpeed(k: number): void;
 };
@@ -143,8 +146,11 @@ const showGifs = !["0", "false", "off"].includes(params.get("gifs") ?? "");
 // client-only, nothing is sent and no toon textures are built while off
 const toonsParam = params.get("toons");
 const showToons = toonsParam === null ? !kiosk : !["0", "false", "off"].includes(toonsParam);
-// `?richard=0`: no Richard on this screen (e.g. the wall); default on everywhere, client-only
-const showRichard = !["0", "false", "off"].includes(params.get("richard") ?? "");
+// `?itguy=0`: no IT guy on this screen (e.g. the wall); default on everywhere, client-only.
+// `?richard=0` stays as an alias so screens bookmarked with the old switch keep working.
+const showItGuy = !["itguy", "richard"].some((k) =>
+  ["0", "false", "off"].includes(params.get(k) ?? ""),
+);
 const nohud = flag("nohud");
 const recorder = flag("recorder");
 const demo = parseDemoMode(params.get("demo"));
@@ -245,9 +251,9 @@ async function boot() {
   const living = new Living(scene, model, hourValue);
   colony.clock = () => living.hour;
   const chef = new SalesChef(scene.objects, scene.map, effects);
-  // Richard, the IT guy in the server cabin: puts out its fires and hands out RAM
-  const richard = showRichard
-    ? new Richard(scene.objects, scene.map, effects, {
+  // The IT guy in the server cabin: puts out its fires and hands out RAM
+  const itGuy = showItGuy
+    ? new ItGuy(scene.objects, scene.map, effects, {
         ramTargets: () =>
           chars.pageable().map((t) => ({ ...t, context: model.sessions.get(t.id)?.context ?? 0 })),
         devSays: (id, text) => chars.answerPage(id, text),
@@ -272,27 +278,29 @@ async function boot() {
   chars.snackOpen = () => chef.cooking;
   chars.onSnack = (x, y) => chef.served(x, y);
   chars.onPunch = (x, y) => headDev.punched(x, y);
-  const kurt = new Kurt(scene.objects, scene.map, effects, {
-    visitorSays: (id, text) => chars.sayAtKurt(id, text),
+  const cfo = new Cfo(scene.objects, scene.map, effects, {
+    visitorSays: (id, text) => chars.sayAtCfo(id, text),
     seated: () => chars.devs(),
     answer: (id, text) => chars.answerPage(id, text),
   });
-  chars.onAskKurt = (id) => kurt.asked(id);
+  chars.onAskCfo = (id) => cfo.asked(id);
   const bowParam = params.get("bow");
   if (bowParam && !["0", "false", "off"].includes(bowParam)) headDev.bowEvery = 60;
   if (party) {
     chef.clientEvery = 25;
     chef.clientIn = 6;
-    if (richard) {
-      richard.fireEvery = 45;
-      richard.fireIn = 20;
-      richard.ramEvery = 15;
-      richard.ramIn = 8;
+    if (itGuy) {
+      itGuy.fireEvery = 45;
+      itGuy.fireIn = 20;
+      itGuy.ramEvery = 15;
+      itGuy.ramIn = 8;
     }
     headDev.nagEvery = 25;
-    chars.kurtChance = 0.25;
-    kurt.wifiEvery = 20;
-    kurt.wifiIn = 8;
+    chars.cfoChance = 0.25;
+    cfo.outingEvery = 20;
+    cfo.outingIn = 8;
+    cfo.callEvery = 25;
+    cfo.callIn = 14;
   }
   const weatherParam = params.get("weather");
   const life = new OfficeLife(
@@ -364,7 +372,7 @@ async function boot() {
   camera.attach(app.canvas);
   // ambient: a real agent event always wins the auto-pilot camera over a portal
   if (duo) duo.onPortal = (x, y) => camera.notify(x, y, { zoom: 3, hold: 8, ambient: true });
-  if (richard) richard.onFire = (x, y) => camera.notify(x, y, { zoom: 3, hold: 8, ambient: true });
+  if (itGuy) itGuy.onFire = (x, y) => camera.notify(x, y, { zoom: 3, hold: 8, ambient: true });
   // wall screens and the fit view frame the office (64 columns); the east street block joins
   // the frame only while someone is there, so tiles stay big on a 1080p wall
   camera.fitWidth = () =>
@@ -391,9 +399,9 @@ async function boot() {
     colony.setMap(scene.map);
     queen.setMap(scene.map);
     chef.setMap(scene.map);
-    richard?.setMap(scene.map);
+    itGuy?.setMap(scene.map);
     headDev.setMap(scene.map);
-    kurt.setMap(scene.map);
+    cfo.setMap(scene.map);
     duo?.setMap(scene.map);
     life.reattach();
     minimap.setTerrain(scene.terrainCanvas);
@@ -403,6 +411,14 @@ async function boot() {
 
   let snapshotSeen = false;
   let games: PartyPanel | null = null;
+  let gamesUi: GamesUi | null = null;
+  /** `?game=next` (a bookmark, an app shortcut): open the game that waits for me, once */
+  let nextGame = params.get("game") === "next";
+  const openNextGame = () => {
+    if (!nextGame || !snapshotSeen || !hud.me || !gamesUi) return;
+    nextGame = false;
+    gamesUi.openNext();
+  };
   let messagesPanel: MessagesPanel | null = null;
   let messagesClient: MessagesClient | null = null;
   const messageModel = new MessageModel(storedMessageRead(), () => Date.now() + model.clockSkew);
@@ -448,9 +464,29 @@ async function boot() {
       chars.handle(ch);
       if (ch.kind === "officeRenamed") hud.setOfficeName(ch.name);
       if (ch.kind === "interaction") react(ch);
+      if (ch.kind === "gameChanged") {
+        if (gamesUi) {
+          gamesUi.onChange(ch);
+          // the open nameplate's challenge box follows ("… : open")
+          hud.refresh();
+        } else if (
+          kiosk &&
+          ch.game.status === "over" &&
+          ch.before &&
+          ch.before.status !== "over" &&
+          ch.game.winner !== undefined
+        )
+          // the wall screen shows results only
+          hud.showBanner(
+            `${ch.game.names[ch.game.winner]} wins!`,
+            `${resultLine(ch.game)} · ${GAME_NAME[ch.game.kind]}`,
+          );
+      }
     }
     if (msg.type === "office.snapshot") {
       snapshotSeen = true;
+      gamesUi?.onSnapshot();
+      openNextGame();
       hud.setVersion(officeVersion(), __BUILD__);
       if (!demo) {
         const label = newVersionLabel(seenRelease, officeVersion());
@@ -795,7 +831,11 @@ async function boot() {
     }
   };
   // one "me" everywhere: the games drawer plays as the person this browser is confirmed to be
-  hud.onMeChange = (me) => games?.setMe(me);
+  hud.onMeChange = (me) => {
+    games?.setMe(me);
+    gamesUi?.setMe(me);
+    openNextGame();
+  };
   // ?key= viewers have no session cookie: without the key the server would not say who I am
   const keyQuery = key ? `?key=${encodeURIComponent(key)}` : "";
   if (demo) hud.editAnyLook = true;
@@ -942,7 +982,10 @@ async function boot() {
   };
   hud.onOpenSession = (id) => void openSession(id);
   camera.holdWhile = () =>
-    hud.panelOpen || hud.lookEditorOpen || (messagesPanel?.expanded ?? false);
+    hud.panelOpen ||
+    hud.lookEditorOpen ||
+    (gamesUi?.boardOpen ?? false) ||
+    (messagesPanel?.expanded ?? false);
   hud.onPanelChange = () => {
     if (hud.panelOpen && matchMedia("(max-width: 560px)").matches && messagesPanel?.expanded)
       messagesPanel.collapse(false);
@@ -1015,16 +1058,16 @@ async function boot() {
       chef.poke();
       return;
     }
-    if (richard?.hit(wx, wy) && (!c || richard.y > c.y)) {
-      richard.poke();
+    if (itGuy?.hit(wx, wy) && (!c || itGuy.y > c.y)) {
+      itGuy.poke();
       return;
     }
     if (headDev.hit(wx, wy) && (!c || headDev.y > c.y)) {
       headDev.poke();
       return;
     }
-    if (kurt.hit(wx, wy) && (!c || kurt.y > c.y)) {
-      kurt.poke();
+    if (cfo.hit(wx, wy) && (!c || cfo.y > c.y)) {
+      cfo.poke();
       return;
     }
     if (c) {
@@ -1183,7 +1226,22 @@ async function boot() {
     hud.openPanel(id);
     void focusPerson(id);
   };
+  // turn-based games need the server (who I am, whose turn): not in the demo, not on the kiosk
+  if (!demo && !kiosk) {
+    gamesUi = new GamesUi(host, model, new GamesClient({ key }), {
+      claim: (why, after) => hud.openMeMenu({ why, after }),
+      banner: (title, sub) => hud.showBanner(title, sub),
+      // the board is fullscreen: the drawer steps aside
+      onBoard: (open) => {
+        if (open) games?.close();
+      },
+    });
+    gamesUi.onWaitingChange = () => hud.refreshMe();
+    gamesUi.setMe(hud.me);
+    hud.games = gamesUi;
+  }
   games = new PartyPanel(host, model, {
+    ...(gamesUi ? { games: gamesUi.list } : {}),
     demo: !!demo,
     key,
     focus: (id) => void focusPerson(id, 4),
@@ -1286,9 +1344,9 @@ async function boot() {
     }
     queen.update(dt, time);
     chef.update(dt, time);
-    richard?.update(dt, time);
+    itGuy?.update(dt, time);
     headDev.update(dt, time);
-    kurt.update(dt, time);
+    cfo.update(dt, time);
     duo?.update(dt, time);
     life.update(dt, time);
     effects.update(dt);
@@ -1352,7 +1410,7 @@ async function boot() {
     characters: () => chars.chars.size,
     cats: () => colony.cats().length,
     portalCharacters: () => duo?.where() ?? null,
-    richard: () => richard?.where() ?? null,
+    itGuy: () => itGuy?.where() ?? null,
     setSpeed: (k) => {
       speed = Math.max(0, k);
     },

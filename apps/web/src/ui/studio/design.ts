@@ -27,6 +27,7 @@ import {
   FIGURES,
   type FullLook,
   GLOVES,
+  HAIR_CLIPS,
   HAIR_CUTS,
   HAND_POSES,
   HEADWEAR_STYLES,
@@ -48,6 +49,7 @@ import {
   rampFrom,
   resolveLook,
   SHIRT_KINDS,
+  SHIRT_LENGTHS,
   SHOE_KINDS,
   SLEEVES,
   SUSPENDERS,
@@ -454,6 +456,16 @@ export const DESIGN_SECTIONS: readonly DesignSection[] = [
         },
       ),
       kindRow(
+        "clips",
+        "Hair clips",
+        HAIR_CLIPS,
+        (l) => l.hair.clips ?? "none",
+        (l, v) => {
+          l.hair = { ...l.hair, clips: v as NonNullable<L["hair"]["clips"]> };
+        },
+        { shown: (d) => d.look.hair.cut !== "bald" },
+      ),
+      kindRow(
         "beard",
         "Beard",
         FACIAL_HAIR_STYLES,
@@ -675,6 +687,18 @@ export const DESIGN_SECTIONS: readonly DesignSection[] = [
         (l) => l.shirt.sleeves,
         (l, v) => {
           l.shirt = { ...l.shirt, sleeves: v as L["shirt"]["sleeves"] };
+        },
+        { shown: (d) => d.look.shirt.kind !== "none" },
+      ),
+      kindRow(
+        "shirt-length",
+        "Shirt length",
+        ["auto", ...SHIRT_LENGTHS],
+        (l) => l.shirt.length ?? "auto",
+        (l, v) => {
+          const { length: _old, ...shirt } = l.shirt;
+          l.shirt =
+            v === "auto" ? shirt : { ...shirt, length: v as NonNullable<L["shirt"]["length"]> };
         },
         { shown: (d) => d.look.shirt.kind !== "none" },
       ),

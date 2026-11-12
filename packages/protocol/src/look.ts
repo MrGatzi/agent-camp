@@ -126,6 +126,7 @@ export const HAIR_CUTS = [
   "space-buns",
   "long-wavy",
 ] as const;
+export const HAIR_CLIPS = ["none", "few", "many"] as const;
 export const FACIAL_HAIR_STYLES = ["none", "stubble", "mustache", "goatee", "beard"] as const;
 export const EYEWEAR_STYLES = [
   "none",
@@ -148,6 +149,8 @@ export const HEADWEAR_STYLES = [
   "bucket-hat",
   "felt-hat",
   "headband",
+  /** thin curved band over the crown, ends behind the ears (Alice band); hidden from behind */
+  "hairband",
   "bow",
   "headphones",
   // novelty headwear (catalog accessories of the same name, look editor / party)
@@ -211,6 +214,7 @@ export const COLLARS = [
   "lapel",
   "shawl",
 ] as const;
+export const SHIRT_LENGTHS = ["tucked", "untucked", "long"] as const;
 export const NECKWEAR = ["none", "tie", "bow-tie", "scarf", "bandana"] as const;
 export const SLEEVES = ["short", "long", "rolled", "none", "puff"] as const;
 export const VEST_KINDS = [
@@ -514,6 +518,12 @@ export const CharacterLook = z.object({
     sheen: z.boolean().describe("small light highlight streak in the hair"),
     /** wardrobe (WD1): missing in stored looks */
     tips: OptHex.optional().catch(undefined).describe('#rrggbb dyed ends / highlights, or "none"'),
+    /** added later: missing in stored looks (= none); a bad value is dropped */
+    clips: z
+      .enum(HAIR_CLIPS)
+      .optional()
+      .catch(undefined)
+      .describe("colourful snap clips in the hair: none, a few (3) or many (8)"),
   }),
   facialHair: z.object({ style: z.enum(FACIAL_HAIR_STYLES), color: Hex }),
   eyewear: z.object({
@@ -555,6 +565,17 @@ export const CharacterLook = z.object({
     peeksAtWaist: z
       .boolean()
       .describe("a strip of the shirt shows below the vest/jacket at the waist"),
+    /**
+     * Added later: missing in stored looks (then the kind decides: sweaters, hoodies, tees
+     * hang over the waistband, the rest is tucked in). A bad value is dropped.
+     */
+    length: z
+      .enum(SHIRT_LENGTHS)
+      .optional()
+      .catch(undefined)
+      .describe(
+        "tucked = tucked into the waistband; untucked = just over the waistband; long = oversized, down over the hips",
+      ),
   }),
   vest: z.object({
     kind: z.enum(VEST_KINDS),

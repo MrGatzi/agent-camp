@@ -25,7 +25,8 @@
       "cut": "slicked-back",
       "ramp": { "base": "#5a3e2b", "shadow": "#3b2819", "light": "#7a5a40" },
       "sheen": true,
-      "tips": "none"
+      "tips": "none",
+      "clips": "none"
     },
     "facialHair": { "style": "none", "color": "#5a3e2b" },
     "eyewear": {
@@ -59,7 +60,8 @@
         "size": "small",
         "layout": "single"
       },
-      "peeksAtWaist": true
+      "peeksAtWaist": true,
+      "length": "tucked"
     },
     "vest": {
       "kind": "trachten-vest",

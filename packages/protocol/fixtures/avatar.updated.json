@@ -43,7 +43,8 @@
             "light": "#7a5a40"
           },
           "sheen": true,
-          "tips": "none"
+          "tips": "none",
+          "clips": "none"
         },
         "facialHair": {
           "style": "none",
@@ -95,7 +96,8 @@
             "size": "small",
             "layout": "single"
           },
-          "peeksAtWaist": true
+          "peeksAtWaist": true,
+          "length": "tucked"
         },
         "vest": {
           "kind": "trachten-vest",

@@ -59,10 +59,20 @@ const UNTUCKED = new Set(["hoodie", "sweater", "tshirt", "longsleeve", "polo", "
 
 export function shirtEnd(c: Ctx, b: TorsoBox): number {
   const kind = c.L.shirt.kind;
+  // cropped tops end where they end, whatever the length says
   if (kind === "dirndl-blouse") return b.T + 4; // cropped under the bust
   if (kind === "crop-top") return b.W - 3; // the midriff stays bare
   if (c.L.bottoms.kind === "dress" || c.L.bottoms.kind === "gown") return b.W - 1;
-  return UNTUCKED.has(kind) ? b.W + 1 : b.W - 1;
+  switch (c.L.shirt.length) {
+    case "tucked":
+      return b.W - 1;
+    case "untucked":
+      return b.W + 1;
+    case "long":
+      return b.end;
+    default:
+      return UNTUCKED.has(kind) ? b.W + 1 : b.W - 1;
+  }
 }
 
 /** Torso columns of row `y`, following the body's figure (WD4; neutral = c.tl..c.tr). */
