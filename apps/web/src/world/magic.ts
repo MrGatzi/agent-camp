@@ -42,7 +42,8 @@ export class MagicWorld {
   private walked = new Map<string, { x: number; y: number; carry: number; n: number }>();
   private pals = new Map<string, Pal>();
   private textures = new Map<string, Texture>();
-  private readonly floor = new Graphics();
+  /** drops on the floor; `scene.rebuild()` destroys `decals` when the office grows */
+  private floor = new Graphics();
   private readonly air = new Graphics();
   private reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -51,10 +52,17 @@ export class MagicWorld {
     private chars: CharacterManager,
     private model: OfficeModel,
   ) {
-    this.floor.eventMode = "none";
     this.air.eventMode = "none";
-    scene.decals.addChild(this.floor);
     scene.fx.addChild(this.air);
+    this.attachFloor();
+  }
+
+  /** (Re-)attach the floor layer, like `PartyWorld.attachFloor()`, after a rebuild. */
+  private attachFloor(): void {
+    if (this.floor.destroyed) this.floor = new Graphics();
+    if (this.floor.parent) return;
+    this.floor.eventMode = "none";
+    this.scene.decals.addChild(this.floor);
   }
 
   private avatar(personId: string): AvatarSpec {
@@ -80,6 +88,7 @@ export class MagicWorld {
   }
 
   update(dt: number, time: number): void {
+    this.attachFloor();
     this.trails(dt);
     this.companions(dt, time);
     this.draw(time, dt);
@@ -137,11 +146,17 @@ export class MagicWorld {
         if (!host) continue;
         live.add(key);
         let pal = this.pals.get(key);
+        if (pal?.sprite.destroyed) {
+          // destroyed under us anyway: start over instead of touching a dead sprite every frame
+          this.pals.delete(key);
+          pal = undefined;
+        }
         if (!pal) {
           const sprite = new Sprite(this.texture(kind, 0));
           sprite.anchor.set(0.5, 1);
           sprite.eventMode = "none";
-          sprite.label = `companion:${kind}`;
+          // "actor": `scene.rebuild()` keeps these in `objects` when the office grows
+          sprite.label = "actor";
           (kind === "eye" ? this.scene.fx : this.scene.objects).addChild(sprite);
           pal = { clock: new CompanionClock(key), sprite, x: host.x, y: host.y, fade: 0, step: 0 };
           this.pals.set(key, pal);
