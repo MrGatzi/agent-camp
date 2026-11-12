@@ -7,6 +7,7 @@ banner after a deploy.
 
 ## 2026-11-12
 
+- 🗂️ Kurt moved in: he has his own office next to the game corner. Now and then someone walks in to ask for their Klima ticket or contract; it's hard, he's doing this and that, and it will take time
 - 🍳 The head of sales moved in: he cooks Eierspeis in the kitchen (grab a plate while he's at the stove) and runs out to his stand in the garden whenever a client shows up, to talk the price up
 - ⏱️ The head of development got her own head desk with a time clock: people punch their hours there, and she walks over to anyone who hasn't
 - 🙇 Every full hour all agents jump up, run to the head desk, line up and bow to her one by one
