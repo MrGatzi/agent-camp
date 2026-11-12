@@ -2,16 +2,24 @@
  * Claude Code detector.
  *   <claudeDir>/projects/<encoded-cwd>/<session-id>.jsonl                 transcript
  *   <claudeDir>/projects/<encoded-cwd>/<session-id>/subagents/**\/agent-*.jsonl  subagents
- *   <claudeDir>/sessions/<pid>.json                                       { pid, sessionId, cwd, startedAt }
+ *   <claudeDir>/sessions/<pid>.json                                       { pid, sessionId, cwd, startedAt,
+ *                                                                           status, statusUpdatedAt }
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { SUBAGENT_LIVE_MS } from "@agent-office/protocol";
 import { arr, isObj, str, type TurnEvent } from "./activity.ts";
 import { readHead } from "./tail.ts";
-import type { Candidate, CandidateMeta, MetaCache } from "./types.ts";
+import type { Candidate, CandidateMeta, MetaCache, PidStatus } from "./types.ts";
 
-type PidFile = { pid: number; sessionId: string; cwd?: string; startedAt?: number };
+type PidFile = {
+  pid: number;
+  sessionId: string;
+  cwd?: string;
+  startedAt?: number;
+  status?: string;
+  statusSince?: number;
+};
 
 /** Claude Code's folder encoding: every non-alphanumeric char becomes "-". */
 export function encodeClaudeCwd(cwd: string): string {
@@ -45,6 +53,26 @@ export function decodeClaudeFolder(
   return path || undefined;
 }
 
+/*
+ * Pid file "status" (undocumented; Claude Code 2.1.319 - 2.1.322, CLI and desktop app).
+ * Evidence from one Mac, 11 pid files of live processes compared with their transcripts and
+ * subagents/agent-*.meta.json:
+ *   - Values seen: "busy" (2), "idle" (8), "shell" (1). `statusUpdatedAt` (= `updatedAt`)
+ *     moves only when the status changes, so it is no heartbeat: one session had been "busy"
+ *     for 50 min while its background subagents wrote every few seconds.
+ *   - Both "busy" sessions were really working, yet their main transcript ended with an
+ *     `end_turn` a minute earlier: one waited on background subagents, one on a workflow of
+ *     subagents. The transcript alone says "waiting", then "idle" after 2 min.
+ *   - Every "idle" session had a finished last turn (end_turn or a local slash command) and no
+ *     unfinished subagent; when a turn ended, the status flipped to "idle" the same minute.
+ *   - "shell" sat on a turn that ended 45 h earlier with nothing visibly running: unknown
+ *     meaning, treated as "not busy".
+ *   - Earlier, a CLI session stayed "busy" ~40 min after its last turn while a background
+ *     shell script it had started kept running: "busy" can outlive any visible work.
+ * Trust rules (applied in Detector/deriveActivity): honour "busy" only from a pid file whose
+ * process is alive; any other value means "reports a status, not busy"; never let "busy"
+ * alone hold a session off idle past BUSY_HOLD_MS of transcript + subagent silence.
+ */
 function readPidFiles(claudeDir: string): PidFile[] {
   const dir = join(claudeDir, "sessions");
   let names: string[];
@@ -62,11 +90,14 @@ function readPidFiles(claudeDir: string): PidFile[] {
       const pid = typeof raw.pid === "number" ? raw.pid : Number.parseInt(name, 10);
       const sessionId = str(raw.sessionId);
       if (!Number.isFinite(pid) || !sessionId) continue;
+      const since = raw.statusUpdatedAt ?? raw.updatedAt;
       out.push({
         pid,
         sessionId,
         cwd: str(raw.cwd),
         startedAt: typeof raw.startedAt === "number" ? raw.startedAt : undefined,
+        status: str(raw.status),
+        statusSince: typeof since === "number" && Number.isFinite(since) ? since : undefined,
       });
     } catch {
       // half-written or unknown format: skip
@@ -166,6 +197,36 @@ export function countSubagents(subagentsDir: string, now: number): number {
   };
   walk(subagentsDir, 0);
   return count;
+}
+
+/**
+ * Newest mtime of any subagent transcript (same layout as `countSubagents`), 0 if none.
+ * Only consulted once a quiet session's busy hold is about to expire, so the walk is rare.
+ */
+export function latestSubagentWrite(subagentsDir: string): number {
+  let newest = 0;
+  const walk = (dir: string, depth: number) => {
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) {
+        if (depth < 2) walk(p, depth + 1);
+      } else if (e.name.startsWith("agent-") && e.name.endsWith(".jsonl")) {
+        try {
+          newest = Math.max(newest, statSync(p).mtimeMs);
+        } catch {
+          // vanished
+        }
+      }
+    }
+  };
+  walk(subagentsDir, 0);
+  return newest;
 }
 
 /** Find Claude session candidates. Never throws. */
@@ -290,5 +351,9 @@ function makeCandidate(
     normalize: normalizeClaude,
     context: claudeContext,
     subagents: (now) => countSubagents(join(o.folderPath, o.rawId, "subagents"), now),
+    pidStatus: o.pidFiles.flatMap((p): PidStatus[] =>
+      p.status ? [{ pid: p.pid, status: p.status, sinceMs: p.statusSince }] : [],
+    ),
+    lastSubagentWriteMs: () => latestSubagentWrite(join(o.folderPath, o.rawId, "subagents")),
   };
 }

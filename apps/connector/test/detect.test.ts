@@ -2,8 +2,19 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SessionInfo } from "@agent-office/protocol";
-import { deriveActivity, TEXT_SETTLE_MS, toolActivity } from "../src/detect/activity.ts";
-import { decodeClaudeFolder, encodeClaudeCwd, normalizeClaude } from "../src/detect/claude.ts";
+import {
+  type ActivityHold,
+  BUSY_HOLD_MS,
+  deriveActivity,
+  TEXT_SETTLE_MS,
+  toolActivity,
+} from "../src/detect/activity.ts";
+import {
+  decodeClaudeFolder,
+  encodeClaudeCwd,
+  latestSubagentWrite,
+  normalizeClaude,
+} from "../src/detect/claude.ts";
 import { normalizeCodex } from "../src/detect/codex.ts";
 import { Detector, projectName, sessionKeyFor } from "../src/detect/index.ts";
 import { encodePiCwd, normalizePi } from "../src/detect/pi.ts";
@@ -47,6 +58,12 @@ function detector(opts: {
 
 const byProject = (sessions: SessionInfo[]) =>
   Object.fromEntries(sessions.map((s) => [s.project ?? "?", s]));
+
+const jsonl = (o: object) => `${JSON.stringify(o)}\n`;
+const ASSISTANT_DONE = {
+  type: "assistant",
+  message: { content: [{ type: "text", text: "done" }], stop_reason: "end_turn" },
+};
 
 describe("detectors on fixtures/home", () => {
   test("all fresh + assumed processes: kinds, activities, subagents, projects", async () => {
@@ -92,6 +109,8 @@ describe("detectors on fixtures/home", () => {
 
   test("idle after 2+ min while the process is alive; dead pid -> gone", async () => {
     h = makeHome();
+    // finish the pending Edit first: a pending tool call would hold the session (see below)
+    appendFileSync(h.path(P.claudeActive), jsonl(ASSISTANT_DONE));
     h.age(P.claudeActive, 3 * 60_000);
     h.age(P.claudeWaiting, 3 * 60_000);
     h.age(P.sub1, 3 * 60_000);
@@ -103,16 +122,26 @@ describe("detectors on fixtures/home", () => {
 
   test("process cwd keeps the newest matching transcript live (idle)", async () => {
     h = makeHome();
+    const poll = () =>
+      detector({
+        procs: [
+          { pid: 777, agent: "codex" },
+          { pid: 778, agent: "pi" },
+        ],
+        cwds: { 777: "/Users/anna/code/codex-thing", 778: "/Users/anna/code/pi-proj" },
+      })
+        .poll()
+        .then(byProject);
+    // both end on a pending tool call and report no status: held off idle for a while ...
     h.age(P.codex, 5 * 60_000);
     h.age(P.pi, 5 * 60_000);
-    const sessions = await detector({
-      procs: [
-        { pid: 777, agent: "codex" },
-        { pid: 778, agent: "pi" },
-      ],
-      cwds: { 777: "/Users/anna/code/codex-thing", 778: "/Users/anna/code/pi-proj" },
-    }).poll();
-    const s = byProject(sessions);
+    let s = await poll();
+    expect(s["codex-thing"]).toMatchObject({ agent: "codex", activity: "running" });
+    expect(s["pi-proj"]).toMatchObject({ agent: "pi", activity: "typing" });
+    // ... but not past the hold
+    h.age(P.codex, BUSY_HOLD_MS + 60_000);
+    h.age(P.pi, BUSY_HOLD_MS + 60_000);
+    s = await poll();
     expect(s["codex-thing"]).toMatchObject({ agent: "codex", activity: "idle" });
     expect(s["pi-proj"]).toMatchObject({ agent: "pi", activity: "idle" });
     // a process in another folder doesn't keep them
@@ -189,7 +218,16 @@ describe("detectors on fixtures/home", () => {
     // only the backend runs: busy, no robots
     const turn = await detector({ procs: [host, { pid: 801, ...sdk, hostPid: 778 }], cwds }).poll();
     expect(turn[0]).toMatchObject({ activity: "typing", subagents: 0 });
-    // nothing hosted: the quiet transcript is idle again
+    // nothing hosted and the turn over: the quiet transcript is idle again (a still pending
+    // tool call alone would hold it, see "busy sessions are not idle")
+    appendFileSync(
+      h.path(P.pi),
+      jsonl({
+        type: "message",
+        message: { role: "assistant", content: [], stopReason: "aborted" },
+      }),
+    );
+    h.age(P.pi, 5 * 60_000);
     const idle = await detector({ procs: [host], cwds }).poll();
     expect(idle[0]).toMatchObject({ activity: "idle", subagents: 0 });
     // a long-lived hosted process (e.g. `claude mcp serve`) keeps it busy for 10 min at most
@@ -296,6 +334,139 @@ describe("detectors on fixtures/home", () => {
   });
 });
 
+describe("busy sessions are not idle", () => {
+  const WEBSITE_ID = RAW_IDS[1]!;
+  const websiteSub = (name: string) =>
+    `.claude/projects/-Users-anna-code-website/${WEBSITE_ID}/subagents/${name}`;
+  /** (Re)write a Claude pid file like Claude Code 2.1.32x does, with an optional status. */
+  const pidFile = (pid: number, sessionId: string, status?: string) =>
+    writeFileSync(
+      h.path(`.claude/sessions/${pid}.json`),
+      JSON.stringify({
+        pid,
+        sessionId,
+        cwd: "/Users/anna/code/website",
+        startedAt: 1793177400000,
+        ...(status ? { status, statusUpdatedAt: 1793177500000, updatedAt: 1793177500000 } : {}),
+      }),
+    );
+  const website = (procs: ProcInfo[]) =>
+    detector({ procs })
+      .poll()
+      .then((s) => byProject(s).website);
+
+  test("pid file says busy: a finished-looking, quiet turn is thinking, subagents count", async () => {
+    h = makeHome();
+    pidFile(12346, WEBSITE_ID, "busy");
+    h.age(P.claudeWaiting, 10 * 60_000); // ends with end_turn, 10 min quiet
+    mkdirSync(h.path(websiteSub("")), { recursive: true });
+    writeFileSync(h.path(websiteSub("agent-bg.jsonl")), jsonl({ type: "user" }));
+    expect(await website([{ pid: 12346, agent: "claude" }])).toMatchObject({
+      activity: "thinking",
+      subagents: 1,
+    });
+    // the same session reporting "idle" falls back to the transcript: idle, no subagents
+    pidFile(12346, WEBSITE_ID, "idle");
+    expect(await website([{ pid: 12346, agent: "claude" }])).toMatchObject({
+      activity: "idle",
+      subagents: 0,
+    });
+  });
+
+  test("busy + pending tool -> that tool's activity, however long it runs", async () => {
+    h = makeHome();
+    pidFile(12346, WEBSITE_ID, "busy");
+    appendFileSync(
+      h.path(P.claudeWaiting),
+      jsonl({
+        type: "assistant",
+        message: { content: [{ type: "tool_use", name: "Bash", input: {} }], stop_reason: null },
+      }),
+    );
+    h.age(P.claudeWaiting, 8 * 60_000);
+    expect((await website([{ pid: 12346, agent: "claude" }]))?.activity).toBe("running");
+  });
+
+  test("busy holds only until the transcript and its subagents are silent too long", async () => {
+    h = makeHome();
+    pidFile(12346, WEBSITE_ID, "busy");
+    h.age(P.claudeWaiting, BUSY_HOLD_MS + 60_000);
+    // a stale "busy" (e.g. a forgotten background dev server) no longer pins the desk
+    expect((await website([{ pid: 12346, agent: "claude" }]))?.activity).toBe("idle");
+    // a subagent that wrote recently (but > SUBAGENT_LIVE_MS ago) proves work goes on
+    mkdirSync(h.path(websiteSub("workflows/w1")), { recursive: true });
+    writeFileSync(h.path(websiteSub("workflows/w1/agent-x.jsonl")), jsonl({ type: "user" }));
+    h.age(websiteSub("workflows/w1/agent-x.jsonl"), 5 * 60_000);
+    expect(await website([{ pid: 12346, agent: "claude" }])).toMatchObject({
+      activity: "thinking",
+      subagents: 0,
+    });
+  });
+
+  test("busy from a dead process's pid file is ignored", async () => {
+    h = makeHome();
+    pidFile(12346, WEBSITE_ID); // the live process, no status
+    pidFile(55555, WEBSITE_ID, "busy"); // left behind by a process that is gone
+    h.age(P.claudeWaiting, 10 * 60_000);
+    expect((await website([{ pid: 12346, agent: "claude" }]))?.activity).toBe("idle");
+  });
+
+  test("an open question to the human is waiting, then idle, even when busy", async () => {
+    h = makeHome();
+    pidFile(12346, WEBSITE_ID, "busy");
+    appendFileSync(
+      h.path(P.claudeWaiting),
+      jsonl({
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", name: "AskUserQuestion", input: {} }],
+          stop_reason: "tool_use",
+        },
+      }),
+    );
+    expect((await website([{ pid: 12346, agent: "claude" }]))?.activity).toBe("waiting");
+    h.age(P.claudeWaiting, 3 * 60_000);
+    expect((await website([{ pid: 12346, agent: "claude" }]))?.activity).toBe("idle");
+  });
+
+  test("no status field: a pending tool call holds, a non-busy status does not", async () => {
+    h = makeHome();
+    // agent-office ends on a pending Edit; its fixture pid file has no status
+    h.age(P.claudeActive, 10 * 60_000);
+    h.age(P.sub1, 10 * 60_000);
+    h.age(P.sub2, 10 * 60_000);
+    const office = () =>
+      detector({ procs: [{ pid: 12345, agent: "claude" }] })
+        .poll()
+        .then((s) => byProject(s)["agent-office"]);
+    expect(await office()).toMatchObject({ activity: "typing", subagents: 0 });
+    // a reported "idle" outranks the pending tool (e.g. it sits at a permission prompt)
+    writeFileSync(
+      h.path(".claude/sessions/12345.json"),
+      JSON.stringify({ pid: 12345, sessionId: RAW_IDS[0], status: "idle" }),
+    );
+    expect((await office())?.activity).toBe("idle");
+    // without a status the hold still ends after BUSY_HOLD_MS of silence
+    writeFileSync(
+      h.path(".claude/sessions/12345.json"),
+      JSON.stringify({ pid: 12345, sessionId: RAW_IDS[0] }),
+    );
+    h.age(P.claudeActive, BUSY_HOLD_MS + 1);
+    expect((await office())?.activity).toBe("typing"); // its subagents wrote 10 min ago
+    h.age(P.sub1, BUSY_HOLD_MS + 1);
+    h.age(P.sub2, BUSY_HOLD_MS + 1);
+    expect((await office())?.activity).toBe("idle");
+  });
+
+  test("the status never leaves the machine", async () => {
+    h = makeHome();
+    pidFile(12346, WEBSITE_ID, "busy");
+    const json = JSON.stringify(await detector({ assume: true }).poll());
+    expect(json).not.toContain("busy");
+    expect(json).not.toContain("1793177500000");
+  });
+});
+
 describe("activity mapping", () => {
   test("tools", () => {
     for (const t of [
@@ -360,6 +531,59 @@ describe("activity mapping", () => {
     expect(deriveActivity([], now, now)).toBe("waiting");
   });
 
+  test("questions to the human are waiting", () => {
+    for (const t of ["AskUserQuestion", "ExitPlanMode", "request_user_input"]) {
+      expect(toolActivity(t)).toBe("waiting");
+    }
+    const now = 10_000_000;
+    expect(deriveActivity([{ kind: "tool", name: "AskUserQuestion" }], now - 1000, now)).toBe(
+      "waiting",
+    );
+  });
+
+  test("holds: busy status, pending tool fallback, cap", () => {
+    const now = 100_000_000;
+    const quiet = now - 10 * 60_000; // well past IDLE_AFTER_MS, inside the hold
+    const stale = now - BUSY_HOLD_MS - 1;
+    let walked = 0;
+    const hold = (busy: boolean | undefined, lastWrite?: number): ActivityHold => ({
+      busy,
+      lastWriteMs: () => {
+        walked++;
+        return lastWrite ?? 0;
+      },
+    });
+    const done = { kind: "assistant", final: true } as const;
+    const bash = { kind: "tool", name: "Bash" } as const;
+    const ask = { kind: "tool", name: "AskUserQuestion" } as const;
+
+    // busy: last event decides, age ignored; not-a-tool -> thinking
+    expect(deriveActivity([bash], quiet, now, hold(true))).toBe("running");
+    expect(deriveActivity([done], quiet, now, hold(true))).toBe("thinking");
+    expect(deriveActivity([{ kind: "turnEnd" }], now - 1000, now, hold(true))).toBe("thinking");
+    expect(deriveActivity([{ kind: "user" }], quiet, now, hold(true))).toBe("thinking");
+    expect(deriveActivity([], quiet, now, hold(true))).toBe("thinking");
+    // a pending question is never held
+    expect(deriveActivity([ask], quiet, now, hold(true))).toBe("idle");
+    expect(deriveActivity([ask], quiet, now, hold(undefined))).toBe("idle");
+    // no status: only a pending tool holds
+    expect(deriveActivity([bash], quiet, now, hold(undefined))).toBe("running");
+    expect(deriveActivity([{ kind: "toolResult" }], quiet, now, hold(undefined))).toBe("idle");
+    expect(deriveActivity([done], quiet, now, hold(undefined))).toBe("idle");
+    // a reported non-busy status: the old rules
+    expect(deriveActivity([bash], quiet, now, hold(false))).toBe("idle");
+    expect(deriveActivity([bash], now - 1000, now, hold(false))).toBe("running");
+    expect(deriveActivity([done], now - 1000, now, hold(false))).toBe("waiting");
+    // subagent folders are only walked once the transcript alone is past the cap
+    expect(walked).toBe(0);
+    // cap: transcript and subagents silent too long -> idle; a recent subagent write extends it
+    expect(deriveActivity([bash], stale, now, hold(true))).toBe("idle");
+    expect(deriveActivity([bash], stale, now, hold(undefined))).toBe("idle");
+    expect(deriveActivity([done], stale, now, hold(true, now - 60_000))).toBe("thinking");
+    expect(deriveActivity([bash], stale, now, hold(undefined, now - 60_000))).toBe("running");
+    expect(walked).toBe(4);
+  });
+
   test("normalizers", () => {
     expect(normalizeClaude({ type: "summary" })).toBeNull();
     expect(
@@ -397,6 +621,16 @@ describe("helpers", () => {
     expect(entries.length).toBe(5); // 6 lines, one invalid
     expect(t.read("/nonexistent/file.jsonl")).toEqual([]);
     expect(readHead(h.path(P.codex), 1)[0]?.type).toBe("session_meta");
+  });
+
+  test("latest subagent write: newest agent-*.jsonl up to 3 levels deep, 0 if none", () => {
+    h = makeHome();
+    const now = Date.now();
+    h.age(P.sub1, 7 * 60_000, now);
+    h.age(P.sub2, 3 * 60_000, now);
+    const dir = h.path(P.sub1.slice(0, -"/agent-abc.jsonl".length));
+    expect(Math.round(latestSubagentWrite(dir))).toBe(Math.round(now - 3 * 60_000));
+    expect(latestSubagentWrite(h.path("nope"))).toBe(0);
   });
 
   test("tail only reads the last 32 KB of big files", () => {
@@ -657,6 +891,11 @@ describe("macOS app processes", () => {
 
   test("agents hosted below the daemon are nobody's helpers and keep nobody busy", async () => {
     h = makeHome();
+    // a finished turn, so only a (wrong) hosted-busy flag could keep it off idle
+    appendFileSync(
+      h.path(P.codex),
+      jsonl({ type: "event_msg", payload: { type: "task_complete" } }),
+    );
     h.age(P.codex, 5 * 60_000);
     const cwd = "/Users/anna/code/codex-thing";
     const sessions = await detector({

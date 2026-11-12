@@ -30,6 +30,10 @@
  * session by rule 1 or 2: in the cwd it was started in it would otherwise keep the newest
  * transcript there on a desk forever ("idle, started 9d ago"). It owns nothing, so agents hosted
  * below it are helpers of no session and keep none busy.
+ *
+ * A live session turns `idle` after IDLE_AFTER_MS without transcript writes, unless its live
+ * Claude process says "busy" or (reporting no status) a tool call is still pending; that hold
+ * lasts until BUSY_HOLD_MS of transcript + subagent silence (see `Detector.hold`).
  */
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
@@ -42,7 +46,7 @@ import {
 import type { DesignWatcher, DesignWatchStatus } from "../desktop.ts";
 import type { AgentDirs } from "../paths.ts";
 import type { ProcessSource, ProcInfo } from "../proc.ts";
-import { deriveActivity } from "./activity.ts";
+import { type ActivityHold, deriveActivity } from "./activity.ts";
 import { scanClaude } from "./claude.ts";
 import { scanCodex } from "./codex.ts";
 import { COWORK_LIVE_MS, CoworkScanner } from "./cowork.ts";
@@ -91,6 +95,8 @@ export class Detector {
   private metaCache: MetaCache = new Map();
   /** `agent:rawId` of sessions owned by an agent hosted inside another agent */
   private hostedIds = new Set<string>();
+  /** pids from pid files whose process is alive in the current poll (rule 1) */
+  private alivePids: ReadonlySet<number> = new Set();
   private readonly now: () => number;
 
   constructor(private readonly opts: DetectorOptions) {
@@ -163,6 +169,7 @@ export class Detector {
         }
       }
     }
+    this.alivePids = tiedPids;
     // 2. process cwd -> newest matching transcript
     const untied = procs.filter((p) => !tiedPids.has(p.pid) && !p.daemon);
     if (untied.length > 0) {
@@ -268,7 +275,8 @@ export class Detector {
     if (c.transcript) {
       const entries = this.tail.read(c.transcript);
       const events = entries.map((e) => safe(() => c.normalize(e), null));
-      activity = deriveActivity(events, busy ? now : c.mtimeMs, now);
+      // a live hosted process counts as a write just now (capped by HOSTED_BUSY_MAX_MS)
+      activity = deriveActivity(events, busy ? now : c.mtimeMs, now, this.hold(c));
       context = roundContext(safe(() => c.context?.(entries), undefined));
     } else {
       // pid file but nothing typed yet
@@ -289,6 +297,23 @@ export class Detector {
       if (project) info.project = project;
     }
     return info;
+  }
+
+  /**
+   * What keeps a quiet live session off "idle" (see `ActivityHold`): the agent's own status,
+   * read only from pid files whose process is alive (a dead process's last word is stale).
+   * Without such a status, a pending tool call is the fallback evidence.
+   */
+  private hold(c: Candidate): ActivityHold {
+    const reported = (c.pidStatus ?? []).filter((s) => this.alivePids.has(s.pid));
+    return {
+      busy: reported.length > 0 ? reported.some((s) => s.status === "busy") : undefined,
+      lastWriteMs: () =>
+        Math.max(
+          c.mtimeMs,
+          safe(() => c.lastSubagentWriteMs?.() ?? 0, 0),
+        ),
+    };
   }
 }
 
