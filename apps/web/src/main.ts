@@ -29,6 +29,7 @@ import {
   type InteractRequest,
   isCatInteraction,
   type LookDescribeResponse,
+  type LookMacState,
   MESSAGE_MAX_ROWS,
   MESSAGE_RETENTION_MS,
   type MessageRecord,
@@ -77,6 +78,7 @@ import { CatColony } from "./world/colony.ts";
 import { Effects } from "./world/effects.ts";
 import { HeadGifs } from "./world/gifs.ts";
 import { HeadDev } from "./world/headDev.ts";
+import { Kurt } from "./world/kurt.ts";
 import { OfficeLife } from "./world/life.ts";
 import { catCount, SEASONS, type Season, seasonFor } from "./world/lifeRules.ts";
 import { Living } from "./world/living.ts";
@@ -272,6 +274,12 @@ async function boot() {
   chars.snackOpen = () => chef.cooking;
   chars.onSnack = (x, y) => chef.served(x, y);
   chars.onPunch = (x, y) => headDev.punched(x, y);
+  const kurt = new Kurt(scene.objects, scene.map, effects, {
+    visitorSays: (id, text) => chars.sayAtKurt(id, text),
+    seated: () => chars.devs(),
+    answer: (id, text) => chars.answerPage(id, text),
+  });
+  chars.onAskKurt = (id) => kurt.asked(id);
   const bowParam = params.get("bow");
   if (bowParam && !["0", "false", "off"].includes(bowParam)) headDev.bowEvery = 60;
   if (party) {
@@ -284,6 +292,9 @@ async function boot() {
       richard.ramIn = 8;
     }
     headDev.nagEvery = 25;
+    chars.kurtChance = 0.25;
+    kurt.wifiEvery = 20;
+    kurt.wifiIn = 8;
   }
   const weatherParam = params.get("weather");
   const life = new OfficeLife(
@@ -384,6 +395,7 @@ async function boot() {
     chef.setMap(scene.map);
     richard?.setMap(scene.map);
     headDev.setMap(scene.map);
+    kurt.setMap(scene.map);
     duo?.setMap(scene.map);
     life.reattach();
     minimap.setTerrain(scene.terrainCanvas);
@@ -417,6 +429,10 @@ async function boot() {
         if (fresh) messagesPanel.announce(msg.data.message);
         messagesPanel.refresh();
       }
+      return;
+    }
+    if (msg.type === "look.generated") {
+      hud.lookGenerated(msg.data.personId);
       return;
     }
     const changes = model.apply(msg);
@@ -752,7 +768,7 @@ async function boot() {
       if (!r.ok) return { ok: false, message: body.error ?? `failed (${r.status})` };
       return {
         ok: true,
-        message: avatar ? "saved, looking sharp!" : "back to the automatic look",
+        message: avatar ? "saved, looking sharp!" : "back to the look from your description",
         ...(body.avatar ? { avatar: body.avatar } : {}),
       };
     } catch {
@@ -835,9 +851,13 @@ async function boot() {
       const body = (await r.json()) as AvatarEditResponse;
       return {
         custom: body.custom,
+        avatar: body.avatar,
         ...(body.aiLooks !== undefined ? { aiLooks: body.aiLooks } : {}),
+        ...(body.serverLooks !== undefined ? { serverLooks: body.serverLooks } : {}),
         ...(body.description !== undefined ? { description: body.description } : {}),
         ...(body.localLooks ? { localLooks: body.localLooks.map(toolName) } : {}),
+        ...(body.mac ? { mac: body.mac } : {}),
+        ...(body.lastGenerate ? { lastGenerate: body.lastGenerate } : {}),
       };
     } catch {
       return null;
@@ -874,15 +894,32 @@ async function boot() {
         body.result === "ai"
           ? "new look, straight from your description!"
           : body.result === "off"
-            ? "saved, but AI looks are off on this server: ask the office admin to set GENUI_PROVIDER (README, Deploy)"
+            ? offMessage(body.mac)
             : body.result === "superseded"
-              ? "your look changed while the AI was drawing (a newer Generate or a saved look), so that one stays"
+              ? "your look changed while the AI was drawing (a newer Generate or saved parts), so that one stays"
               : "the AI could not draw you this time (error or daily limit); your look stays. Try again later.";
-      return { ok: body.result === "ai", message, ...(body.avatar ? { avatar: body.avatar } : {}) };
+      return {
+        ok: body.result === "ai",
+        message,
+        ...(body.avatar ? { avatar: body.avatar } : {}),
+        ...(body.mac ? { mac: body.mac } : {}),
+      };
     } catch {
       return { ok: false, message: "could not reach the office" };
     }
   }
+  /**
+   * No look drawn: the office has no AI of its own and the Mac did not take it. Say why the
+   * Mac did not (the fix is on the user's side), not "ask the admin", which is rarely the fix.
+   */
+  const offMessage = (mac: LookMacState | undefined) =>
+    mac === "reconfirm"
+      ? "Text saved, but your Mac reconnected since you confirmed it's you: confirm again with a new code (above), then Generate."
+      : mac === "enable"
+        ? "Text saved, but your Mac cannot draw looks yet: see above how to turn it on, then Generate."
+        : mac === "offline"
+          ? "Text saved, but your Mac is not connected to the office: start the connector there, then Generate."
+          : "Text saved, but AI looks are off on this office server: it is used as soon as they are turned on.";
   if (!kiosk) hud.onDescribeLook = describeLook;
 
   /** Agent card + ease the camera to the character (clear of the side panel). */
@@ -977,6 +1014,10 @@ async function boot() {
     }
     if (headDev.hit(wx, wy) && (!c || headDev.y > c.y)) {
       headDev.poke();
+      return;
+    }
+    if (kurt.hit(wx, wy) && (!c || kurt.y > c.y)) {
+      kurt.poke();
       return;
     }
     if (c) {
@@ -1239,6 +1280,7 @@ async function boot() {
     chef.update(dt, time);
     richard?.update(dt, time);
     headDev.update(dt, time);
+    kurt.update(dt, time);
     duo?.update(dt, time);
     life.update(dt, time);
     effects.update(dt);
