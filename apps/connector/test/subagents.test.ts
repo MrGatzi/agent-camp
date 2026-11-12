@@ -17,7 +17,7 @@ import {
 import { Detector } from "../src/detect/index.ts";
 import { agentDirs } from "../src/paths.ts";
 import { fakeProcesses } from "../src/proc.ts";
-import { type FakeHome, makeHome, P } from "./helpers.ts";
+import { addCowork, type FakeHome, makeHome, P } from "./helpers.ts";
 
 const NOW = Date.now();
 const MIN = 60_000;
@@ -268,5 +268,65 @@ describe("detector", () => {
     const sessions = await detector(h).poll();
     const s = sessions.find((x) => x.project === "agent-office");
     expect(s).toMatchObject({ activity: "typing", subagents: 2 });
+  });
+  /** The parent's Agent call that spawned a foreground subagent, and its answer. */
+  const parentCall = (id: string) => ({
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{ type: "tool_use", id, name: "Agent", input: {} }],
+      stop_reason: "tool_use",
+    },
+  });
+  const parentResult = (id: string) => ({
+    type: "user",
+    message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] },
+  });
+
+  test("foreground: the detector passes the parent's tail, so its tool_use/tool_result decide", async () => {
+    home = makeHome(NOW);
+    const h = home;
+    appendFileSync(h.path(P.claudeActive), line(parentCall("toolu_fg")));
+    h.age(P.claudeActive, 3 * MIN);
+    h.age(P.sub2, 3 * MIN); // no meta: stale after 60 s
+    // a quiet subagent whose own tail shows no call in flight: only the parent keeps it live
+    writeFileSync(h.path(P.sub1), [toolUse("toolu_x"), toolResult("toolu_x")].map(line).join(""));
+    h.age(P.sub1, 5 * MIN);
+    writeFileSync(h.path(sub("agent-abc.meta.json")), JSON.stringify(fg("toolu_fg")));
+    h.age(sub("agent-abc.meta.json"), 5 * MIN);
+    const office = async () => (await detector(h).poll()).find((s) => s.project === "agent-office");
+    expect(await office()).toMatchObject({ activity: "thinking", subagents: 1 });
+
+    // the parent got the agent's answer: done, even though its file was written just now
+    appendFileSync(h.path(P.claudeActive), line(parentResult("toolu_fg")));
+    h.age(P.claudeActive, 2_000);
+    h.age(P.sub1, 1_000);
+    expect(await office()).toMatchObject({ subagents: 0 });
+  });
+
+  test("foreground in a Cowork session: the parent's tail decides there too", async () => {
+    home = makeHome(NOW);
+    const h = home;
+    const rel = addCowork(h, { lastTool: "Agent", agoMs: 3 * MIN }); // tool_use toolu_cw1
+    const dir = h.path(join(rel.slice(0, -".jsonl".length), "subagents"));
+    mkdirSync(dir, { recursive: true });
+    agent(dir, "cw", 5 * MIN, fg("toolu_cw1"), [toolUse("toolu_y"), toolResult("toolu_y")]);
+    const cowork = async () => {
+      const d = new Detector({
+        dirs: agentDirs({}, h.home),
+        clientId: "c_test",
+        shareProjectNames: true,
+        processes: fakeProcesses([]),
+        assumeProcesses: true,
+        cowork: true,
+        now: () => NOW,
+      });
+      return (await d.poll()).find((s) => s.project === "Cowork");
+    };
+    expect(await cowork()).toMatchObject({ subagents: 1 });
+    appendFileSync(h.path(rel), line(parentResult("toolu_cw1")));
+    h.age(rel, 2_000, NOW);
+    setAge(join(dir, "agent-cw.jsonl"), 1_000);
+    expect(await cowork()).toMatchObject({ subagents: 0 });
   });
 });

@@ -11,14 +11,21 @@
  *   waiting  turn finished (end_turn / task_complete / interrupted), or a question to the human
  *            is open (AskUserQuestion, plan approval, Codex request_user_input,
  *            purrness_ask_question)
- *   idle     no transcript writes for IDLE_AFTER_MS while the process is alive, unless an
+ *   idle     no conversation for IDLE_AFTER_MS while the process is alive, unless an
  *            `ActivityHold` says the session is still working (see BUSY_HOLD_MS)
+ * "No conversation" is measured from the time the caller passes, which should be when the last
+ * normalized event appeared, not the raw file mtime: agents append bookkeeping lines long after a
+ * turn ended (see `Detector.conversationAt`).
  */
 import { type Activity, IDLE_AFTER_MS } from "@agent-office/protocol";
 
 export type TurnEvent =
-  /** the model called a tool (and we have not seen its result yet) */
-  | { kind: "tool"; name: string }
+  /**
+   * the model called a tool (and we have not seen its result yet); `approval`: the call asks the
+   * human to approve it before it runs (Codex escalated sandbox permissions), so while pending it
+   * may wait on them, not work
+   */
+  | { kind: "tool"; name: string; approval?: boolean }
   /** a tool result came back; the model is working on the next step */
   | { kind: "toolResult" }
   /** the human sent a prompt */
@@ -109,6 +116,21 @@ export function toolActivity(name: string): Activity {
  */
 export const BUSY_HOLD_MS = 30 * 60_000;
 
+/**
+ * The shorter hold for an agent that reports no status (Codex, Pi, older Claude Code), where a
+ * pending tool call is the only evidence of work. It cannot tell a long command from one that
+ * waits for the human to approve it (Codex prompts before running a command under its default
+ * approval policy and writes nothing while it waits), so it only covers the longest single
+ * step we expect, Claude Code's 10 min Bash timeout, plus a minute of slack.
+ */
+export const PENDING_TOOL_HOLD_MS = 11 * 60_000;
+
+/**
+ * A process that has reported status "idle" for this long has finished its turn for good: a
+ * fresh write to its transcript is bookkeeping (see `ActivityHold.idleSinceMs`).
+ */
+const SETTLED_IDLE_MS = IDLE_AFTER_MS;
+
 /** Evidence, beyond transcript age, that a quiet session is still doing something. */
 export type ActivityHold = {
   /**
@@ -116,15 +138,24 @@ export type ActivityHold = {
    * other status, undefined = it reports none (older Claude Code, Codex, Pi).
    */
   busy?: boolean;
+  /**
+   * When the live process last switched to status "idle" (pid file `statusUpdatedAt`), if that
+   * is what it reports. Its transcript still gets written after the turn ended (Claude Code's
+   * `away_summary` ~3 min later, the desktop app's titles and ledgers hours later), and none of
+   * that is the session waking up.
+   */
+  idleSinceMs?: number;
   /** Newest write to the transcript or its subagent transcripts. Lazy: may walk directories. */
   lastWriteMs(): number;
 };
 
 /**
  * Derive the activity from the normalized events of a transcript (oldest first).
- * `mtimeMs` is the transcript's last write; `now` the current time. With a `hold`, a session
- * that says it is busy (or, reporting no status at all, has a pending tool call) is not idle
- * however old its last write, until BUSY_HOLD_MS of silence.
+ * `mtimeMs` is when the conversation last moved (the transcript write that brought its last
+ * event); `now` the current time. With a `hold`, a session that says it is busy is not idle
+ * however old that is, until BUSY_HOLD_MS of silence; one that reports no status at all and has
+ * a pending tool call (not one asking for approval), until PENDING_TOOL_HOLD_MS. A process that
+ * has said "idle" for IDLE_AFTER_MS after a finished turn is idle whatever `mtimeMs` says.
  */
 export function deriveActivity(
   events: readonly (TurnEvent | null)[],
@@ -140,9 +171,18 @@ export function deriveActivity(
       break;
     }
   }
-  if (hold && isHeld(last, hold) && withinHold(mtimeMs, now, hold)) {
+  const holdMs = hold ? holdLimit(last, hold) : 0;
+  if (hold && holdMs > 0 && withinHold(mtimeMs, now, hold, holdMs)) {
     // still working: the last event says on what; its age does not matter
     return last?.kind === "tool" ? toolActivity(last.name) : "thinking";
+  }
+  if (
+    hold?.idleSinceMs !== undefined &&
+    now - hold.idleSinceMs >= SETTLED_IDLE_MS &&
+    (last?.kind === "turnEnd" || (last?.kind === "assistant" && last.final))
+  ) {
+    // the agent itself says the turn ended long ago, whatever was written to the file since
+    return "idle";
   }
   const age = now - mtimeMs;
   if (age >= IDLE_AFTER_MS) return "idle";
@@ -160,19 +200,23 @@ export function deriveActivity(
   }
 }
 
-/** Does the hold apply to a session whose last event is `last`? */
-function isHeld(last: TurnEvent | null, hold: ActivityHold): boolean {
+/** How long the hold keeps a session whose last event is `last` off idle (0 = not held). */
+function holdLimit(last: TurnEvent | null, hold: ActivityHold): number {
   // an open question waits on the human, just like a finished turn: never held
-  if (last?.kind === "tool" && toolActivity(last.name) === "waiting") return false;
-  if (hold.busy === true) return true;
-  // a reported non-busy status outranks a pending tool (it may sit at a permission prompt)
-  return hold.busy === undefined && last?.kind === "tool";
+  if (last?.kind === "tool" && toolActivity(last.name) === "waiting") return 0;
+  if (hold.busy === true) return BUSY_HOLD_MS;
+  // a reported non-busy status outranks a pending tool (it may sit at a permission prompt);
+  // without a status, a call that asks for approval may be sitting at one just the same
+  if (hold.busy === undefined && last?.kind === "tool" && !last.approval) {
+    return PENDING_TOOL_HOLD_MS;
+  }
+  return 0;
 }
 
-function withinHold(mtimeMs: number, now: number, hold: ActivityHold): boolean {
+function withinHold(mtimeMs: number, now: number, hold: ActivityHold, limitMs: number): boolean {
   // only walk the subagent folders once the main transcript alone is too old
-  if (now - mtimeMs < BUSY_HOLD_MS) return true;
-  return now - Math.max(mtimeMs, hold.lastWriteMs()) < BUSY_HOLD_MS;
+  if (now - mtimeMs < limitMs) return true;
+  return now - Math.max(mtimeMs, hold.lastWriteMs()) < limitMs;
 }
 
 // ---- small helpers for normalizers -----------------------------------------------------------

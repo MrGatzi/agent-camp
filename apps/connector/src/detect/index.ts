@@ -31,10 +31,12 @@
  * transcript there on a desk forever ("idle, started 9d ago"). It owns nothing, so agents hosted
  * below it are helpers of no session and keep none busy.
  *
- * A live session turns `idle` after IDLE_AFTER_MS without transcript writes, unless it is
- * evidently still working (see `Detector.describe`): its live Claude process says "busy", or
- * (reporting no status) a tool call is still pending, each until BUSY_HOLD_MS of transcript +
- * subagent silence (see `Detector.hold`); or it has live subagents (see `countSubagents`).
+ * A live session turns `idle` after IDLE_AFTER_MS without conversation (see
+ * `Detector.conversationAt`: bookkeeping lines written after a turn do not count), unless it is
+ * evidently still working (see `Detector.describe`): its live Claude process says "busy" (until
+ * BUSY_HOLD_MS of transcript + subagent silence), or (reporting no status) a tool call is still
+ * pending (until PENDING_TOOL_HOLD_MS, see `Detector.hold`); or it has live subagents (see
+ * `countSubagents`).
  */
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
@@ -47,7 +49,7 @@ import {
 import type { DesignWatcher, DesignWatchStatus } from "../desktop.ts";
 import type { AgentDirs } from "../paths.ts";
 import type { ProcessSource, ProcInfo } from "../proc.ts";
-import { type ActivityHold, deriveActivity } from "./activity.ts";
+import { type ActivityHold, deriveActivity, type TurnEvent } from "./activity.ts";
 import { newSubagentCache, scanClaude } from "./claude.ts";
 import { scanCodex } from "./codex.ts";
 import { COWORK_LIVE_MS, CoworkScanner } from "./cowork.ts";
@@ -99,6 +101,8 @@ export class Detector {
   /** pids from pid files whose process is alive in the current poll (rule 1) */
   private alivePids: ReadonlySet<number> = new Set();
   private subagentCache = newSubagentCache();
+  /** transcript -> its newest conversation entry, and when that entry was first seen */
+  private moved = new Map<string, { entry: object | null; atMs: number }>();
   private readonly now: () => number;
 
   constructor(private readonly opts: DetectorOptions) {
@@ -234,6 +238,7 @@ export class Detector {
       }
     }
     this.tail.retain(keep);
+    for (const p of this.moved.keys()) if (!keep.has(p)) this.moved.delete(p);
     if (this.metaCache.size > 2000) this.metaCache.clear();
     const design = await this.designSession(now, desktop);
     if (design) sessions.push(design);
@@ -266,14 +271,17 @@ export class Detector {
   }
 
   /**
-   * A quiet session is idle after IDLE_AFTER_MS without transcript writes, unless any of these
+   * A quiet session is idle after IDLE_AFTER_MS without conversation (`conversationAt`: the
+   * transcript write that brought its newest event, not later bookkeeping), unless any of these
    * says it is still working:
    *   - its live Claude process reports status "busy" (within BUSY_HOLD_MS of silence),
-   *   - it reports no status and a tool call is still pending (within BUSY_HOLD_MS),
+   *   - it reports no status and a tool call is still pending (within PENDING_TOOL_HOLD_MS;
+   *     not a Codex call that asks for approval: it may sit at the prompt),
    *   - a hosted process still runs (`busy`, within HOSTED_BUSY_MAX_MS), or
    *   - it has live subagents (`countSubagents`: by their lifecycle, at most
    *     SUBAGENT_SILENT_MAX_MS of silence each).
    * An open question to the human (AskUserQuestion, plan approval) is never held: it waits.
+   * And a turn that ended while the process has said "idle" for IDLE_AFTER_MS stays idle.
    * `helpers`: hosted helper processes, added to the transcript-based subagent count.
    */
   private describe(c: Candidate, now: number, busy = false, helpers = 0): SessionInfo {
@@ -283,9 +291,10 @@ export class Detector {
     let context: number | undefined;
     if (c.transcript) {
       const events = entries.map((e) => safe(() => c.normalize(e), null));
+      const at = this.conversationAt(c.transcript, entries, events, c.mtimeMs);
       // a live hosted process counts as a write just now (capped by HOSTED_BUSY_MAX_MS); a busy
       // status or a pending tool call holds a quiet session off idle (see `hold`)
-      activity = deriveActivity(events, busy ? now : c.mtimeMs, now, this.hold(c));
+      activity = deriveActivity(events, busy ? now : at, now, this.hold(c, busy));
       context = roundContext(safe(() => c.context?.(entries), undefined));
     } else {
       // pid file but nothing typed yet
@@ -314,14 +323,57 @@ export class Detector {
   }
 
   /**
+   * When the conversation in `path` last moved: the transcript mtime at the poll that first saw
+   * its newest normalized event (capped by the current mtime, which never really goes back).
+   *
+   * The raw mtime is no measure of that. Claude Code appends a `system`/`away_summary` line about
+   * 182 s after a turn ends (past IDLE_AFTER_MS), and the Claude desktop app appends titles,
+   * `queue-operation` and `artifact-autoreact-ledger` lines to sessions idle for hours. All of
+   * them normalize to null, so with the mtime an idle session would come back from the bar as
+   * "waiting" for another 2 min, and win a desk from an idle holder meanwhile. Entry timestamps
+   * would serve too, but not every line has one, so the time a new event was first seen is used
+   * instead. The first sighting (connector start) can only use the mtime; the pid-file status
+   * covers that case for Claude (`ActivityHold.idleSinceMs`).
+   */
+  private conversationAt(
+    path: string,
+    entries: readonly object[],
+    events: readonly (TurnEvent | null)[],
+    mtimeMs: number,
+  ): number {
+    let entry: object | null = null;
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i]) {
+        entry = entries[i] ?? null;
+        break;
+      }
+    }
+    const prev = this.moved.get(path);
+    // same newest event (or it scrolled out of the tail behind bookkeeping lines): no news
+    if (prev && (entry === null || prev.entry === entry)) {
+      prev.atMs = Math.min(prev.atMs, mtimeMs);
+      return prev.atMs;
+    }
+    this.moved.set(path, { entry, atMs: mtimeMs });
+    return mtimeMs;
+  }
+
+  /**
    * What keeps a quiet live session off "idle" (see `ActivityHold`): the agent's own status,
    * read only from pid files whose process is alive (a dead process's last word is stale).
-   * Without such a status, a pending tool call is the fallback evidence.
+   * Without such a status, a pending tool call is the fallback evidence. `hostedBusy`: a hosted
+   * process runs, so a settled "idle" status must not send the session to the bar.
    */
-  private hold(c: Candidate): ActivityHold {
+  private hold(c: Candidate, hostedBusy = false): ActivityHold {
     const reported = (c.pidStatus ?? []).filter((s) => this.alivePids.has(s.pid));
+    const idle = reported.length > 0 && reported.every((s) => s.status === "idle");
+    const since = reported.map((s) => s.sinceMs);
     return {
       busy: reported.length > 0 ? reported.some((s) => s.status === "busy") : undefined,
+      idleSinceMs:
+        idle && !hostedBusy && since.every((t) => t !== undefined)
+          ? Math.max(...(since as number[]))
+          : undefined,
       lastWriteMs: () =>
         Math.max(
           c.mtimeMs,

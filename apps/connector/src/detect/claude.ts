@@ -72,7 +72,9 @@ export function decodeClaudeFolder(
  *     shell script it had started kept running: "busy" can outlive any visible work.
  * Trust rules (applied in Detector/deriveActivity): honour "busy" only from a pid file whose
  * process is alive; any other value means "reports a status, not busy"; never let "busy"
- * alone hold a session off idle past BUSY_HOLD_MS of transcript + subagent silence.
+ * alone hold a session off idle past BUSY_HOLD_MS of transcript + subagent silence. Conversely,
+ * "idle" (exactly) since IDLE_AFTER_MS after a finished turn keeps the session idle whatever is
+ * appended to its transcript later (`away_summary`, the desktop app's titles and ledgers).
  */
 function readPidFiles(claudeDir: string): PidFile[] {
   const dir = join(claudeDir, "sessions");

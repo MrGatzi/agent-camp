@@ -11,7 +11,8 @@
  * `~/Library/Application Support/Claude/claude-code/<ver>/<hash>/claude.app/Contents/MacOS/claude`,
  * whose whitespace-split argv0 is `…/Library/Application`. `ucomm` (the kernel's copy of the
  * executable's file name, at most MAXCOMLEN = 16 chars, padded to exactly that width) gives the
- * name without a second `ps` spawn. Its wrapper `Claude.app/Contents/Helpers/disclaimer … --
+ * name without a second `ps` spawn (trusted only while argv0 names the same executable: see
+ * `runsAsExe`). Its wrapper `Claude.app/Contents/Helpers/disclaimer … --
  * <same path>` is named `disclaimer`, so it never counts.
  *
  * The Codex app's background `codex app-server` (a top-level `app-server daemon pid-update-loop`
@@ -70,11 +71,28 @@ export function isCodexAppServer(argv: readonly string[]): boolean {
 }
 
 /**
+ * Does the command line run the executable `exe` (a `ucomm`, cut to UCOMM_WIDTH chars) under its
+ * own name: `exe …`, or a path ending in `/exe …` (which may hold spaces)? Not when argv0 was
+ * renamed: Claude Code runs its embedded ripgrep, bfs and ugrep as its own binary with argv0
+ * `rg`/`bfs`/`ugrep` (`ARGV0=ugrep "$_cc_bin" …`), so for the desktop app's Claude Code `ps`
+ * shows ucomm `claude` with args `ugrep -G …`: a grep, not an agent. Without args (unreadable)
+ * there is nothing to contradict the ucomm.
+ */
+export function runsAsExe(args: string, exe: string): boolean {
+  if (args.trim() === "") return true;
+  const name =
+    exe.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + (exe.length >= UCOMM_WIDTH ? "\\S*" : "");
+  // a path starts with / ~ or . and, up to `/exe`, has no space that starts another argument
+  return new RegExp(`^(?:(?=[/~.])(?:(?!\\s[-/~]).)*?/)?${name}(?:\\s|$)`).test(args);
+}
+
+/**
  * One process. `exe`: the executable's file name when the platform reports it apart from argv
- * (macOS `ucomm`); it wins over argv, which may be split wrongly.
+ * (macOS `ucomm`); it wins over argv, which may be split wrongly, as long as argv0 names that
+ * executable too (see `runsAsExe`).
  */
 export function procRow(pid: number, ppid: number, argv: readonly string[], exe?: string): ProcRow {
-  const byExe = exe ? kindOfName(exe) : null;
+  const byExe = exe && runsAsExe(argv.join(" "), exe) ? kindOfName(exe) : null;
   const agent = byExe ?? classifyArgv(argv);
   const r: ProcRow = { pid, ppid, agent };
   if (agent === "claude" && isAgentSdkBackend(argv)) r.backend = true;
@@ -180,8 +198,14 @@ export function agentProcesses(rows: readonly ProcRow[]): ProcInfo[] {
   return procs;
 }
 
+/**
+ * The `ps -axo` columns `psLines` parses. `ucomm` is what makes an executable path with spaces
+ * readable at all (see the header), so tests build their `ps` output from this very string.
+ */
+export const PS_COLUMNS = "pid=,ppid=,ucomm=,args=";
+
 /** Darwin's MAXCOMLEN: `ucomm` is cut to, and padded to, exactly this many characters. */
-const UCOMM_WIDTH = 16;
+export const UCOMM_WIDTH = 16;
 const PS_LINE = new RegExp(`^\\s*(\\d+)\\s+(\\d+) (.{1,${UCOMM_WIDTH}})(?: (.*))?$`);
 
 export type PsLine = { pid: number; ppid: number; exe: string; args: string };
@@ -237,7 +261,7 @@ class MacProcesses implements ProcessSource {
   private desktop = false;
 
   async list(): Promise<ProcInfo[]> {
-    const lines = psLines(await run(["ps", "-axo", "pid=,ppid=,ucomm=,args="]));
+    const lines = psLines(await run(["ps", "-axo", PS_COLUMNS]));
     this.desktop = lines.some((l) => isClaudeDesktopArgs(l.args));
     return psAgents(lines);
   }

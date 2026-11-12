@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import type { SessionInfo } from "@agent-office/protocol";
+import { basename, join } from "node:path";
+import { IDLE_AFTER_MS, type SessionInfo } from "@agent-office/protocol";
 import {
   type ActivityHold,
   BUSY_HOLD_MS,
   deriveActivity,
+  PENDING_TOOL_HOLD_MS,
   TEXT_SETTLE_MS,
   toolActivity,
 } from "../src/detect/activity.ts";
@@ -27,11 +28,14 @@ import {
   fakeProcesses,
   isCodexAppServer,
   type ProcInfo,
+  PS_COLUMNS,
   parseLsof,
   parsePs,
   parseStatPpid,
   procRow,
   psLines,
+  runsAsExe,
+  UCOMM_WIDTH,
 } from "../src/proc.ts";
 import { type FakeHome, makeHome, P, psOut, RAW_IDS } from "./helpers.ts";
 
@@ -319,6 +323,43 @@ describe("detectors on fixtures/home", () => {
     expect(await detector({ assume: true }).poll()).toEqual([]);
   });
 
+  test("Codex waiting for command approval goes idle; a pending command holds 11 min", async () => {
+    h = makeHome();
+    const codex = () =>
+      detector({
+        procs: [{ pid: 777, agent: "codex" }],
+        cwds: { 777: "/Users/anna/code/codex-thing" },
+      })
+        .poll()
+        .then((s) => byProject(s)["codex-thing"]?.activity);
+    // the fixture ends on a pending (sandboxed) `cargo test`: held off idle ...
+    h.age(P.codex, 10 * 60_000);
+    expect(await codex()).toBe("running");
+    // ... but not as long as an explicit busy status would be
+    h.age(P.codex, PENDING_TOOL_HOLD_MS + 1000);
+    expect(await codex()).toBe("idle");
+    // a command that needs approval may sit at the prompt: idle after the usual 2 min
+    appendFileSync(
+      h.path(P.codex),
+      jsonl({
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "exec_command",
+          arguments: JSON.stringify({
+            cmd: "cargo publish",
+            sandbox_permissions: "require_escalated",
+          }),
+          call_id: "call_A4",
+        },
+      }),
+    );
+    h.age(P.codex, 30_000);
+    expect(await codex()).toBe("running");
+    h.age(P.codex, 3 * 60_000);
+    expect(await codex()).toBe("idle");
+  });
+
   test("pid file without a transcript yet -> waiting session", async () => {
     h = makeHome();
     writeFileSync(
@@ -460,6 +501,94 @@ describe("busy sessions are not idle", () => {
     expect((await office())?.activity).toBe("idle");
   });
 
+  describe("bookkeeping lines after a turn do not wake the session", () => {
+    const T = Date.now() - 10 * 60_000; // the website turn ends with end_turn at T
+    const AWAY = { type: "system", subtype: "away_summary", content: "recap" };
+    /** A Detector whose clock the test moves. */
+    const clocked = () => {
+      const clock = { now: T };
+      const d = new Detector({
+        dirs: agentDirs({}, h.home),
+        clientId: "c_test",
+        shareProjectNames: true,
+        processes: fakeProcesses([{ pid: 12346, agent: "claude" }]),
+        now: () => clock.now,
+      });
+      const at = async (ms: number) => {
+        clock.now = T + ms;
+        return byProject(await d.poll()).website?.activity;
+      };
+      return { at, fresh: async (ms: number) => clocked().at(ms) };
+    };
+    /** Append a line and stamp the transcript as written `ms` after T. */
+    const write = (o: object, ms: number) => {
+      appendFileSync(h.path(P.claudeWaiting), jsonl(o));
+      h.age(P.claudeWaiting, -ms, T);
+    };
+
+    test("Claude Code's away_summary ~182 s later: no bar -> desk -> bar bounce", async () => {
+      h = makeHome();
+      h.age(P.claudeWaiting, 0, T);
+      // the live process reports "idle" since the turn ended
+      writeFileSync(
+        h.path(".claude/sessions/12346.json"),
+        JSON.stringify({ pid: 12346, sessionId: WEBSITE_ID, status: "idle", statusUpdatedAt: T }),
+      );
+      const d = clocked();
+      expect(await d.at(60_000)).toBe("waiting");
+      expect(await d.at(150_000)).toBe("idle");
+      write(AWAY, 182_000);
+      expect(await d.at(190_000)).toBe("idle");
+      expect(await d.at(310_000)).toBe("idle");
+      // a connector started after the write knows only the mtime: the status settles it
+      expect(await d.fresh(190_000)).toBe("idle");
+      // a new prompt wakes it at once, status or not
+      write({ type: "user", message: { role: "user", content: "next" } }, 400_000);
+      expect(await d.at(401_000)).toBe("thinking");
+    });
+
+    test("without a status, the time a new event was first seen counts, not the mtime", async () => {
+      h = makeHome();
+      h.age(P.claudeWaiting, 0, T); // its fixture pid file reports no status
+      const d = clocked();
+      expect(await d.at(150_000)).toBe("idle");
+      // the desktop app's titles and ledgers carry no conversation
+      write({ type: "custom-title", customTitle: "x" }, 182_000);
+      write({ type: "artifact-autoreact-ledger", entries: [] }, 183_000);
+      expect(await d.at(190_000)).toBe("idle");
+      // a real turn does
+      write({ type: "user", message: { role: "user", content: "next" } }, 200_000);
+      expect(await d.at(201_000)).toBe("thinking");
+      write(ASSISTANT_DONE, 210_000);
+      expect(await d.at(211_000)).toBe("waiting");
+      write(AWAY, 392_000);
+      expect(await d.at(400_000)).toBe("idle");
+    });
+
+    test("a recent switch to idle, or a hosted process, does not settle it", async () => {
+      h = makeHome();
+      h.age(P.claudeWaiting, 0, T);
+      writeFileSync(
+        h.path(".claude/sessions/12346.json"),
+        JSON.stringify({ pid: 12346, sessionId: WEBSITE_ID, status: "idle", statusUpdatedAt: T }),
+      );
+      // the turn ended 30 s ago: waiting at the desk, as for any finished turn
+      expect(await clocked().fresh(30_000)).toBe("waiting");
+      // a hosted helper still runs: the host stays at its desk (a finished turn: waiting)
+      const hosted = await new Detector({
+        dirs: agentDirs({}, h.home),
+        clientId: "c_test",
+        shareProjectNames: true,
+        processes: fakeProcesses([
+          { pid: 12346, agent: "claude" },
+          { pid: 40000, agent: "pi", hostPid: 12346 },
+        ]),
+        now: () => T + 190_000,
+      }).poll();
+      expect(byProject(hosted).website).toMatchObject({ activity: "waiting", subagents: 1 });
+    });
+  });
+
   test("the status never leaves the machine", async () => {
     h = makeHome();
     pidFile(12346, WEBSITE_ID, "busy");
@@ -584,6 +713,84 @@ describe("activity mapping", () => {
     expect(deriveActivity([done], stale, now, hold(true, now - 60_000))).toBe("thinking");
     expect(deriveActivity([bash], stale, now, hold(undefined, now - 60_000))).toBe("running");
     expect(walked).toBe(4);
+  });
+
+  test("no status: the pending-tool hold is shorter, and never for a call asking approval", () => {
+    const now = 100_000_000;
+    const hold: ActivityHold = { lastWriteMs: () => 0 };
+    const bash = { kind: "tool", name: "exec_command" } as const;
+    const asks = { kind: "tool", name: "exec_command", approval: true } as const;
+    expect(deriveActivity([bash], now - PENDING_TOOL_HOLD_MS + 1000, now, hold)).toBe("running");
+    expect(deriveActivity([bash], now - PENDING_TOOL_HOLD_MS - 1, now, hold)).toBe("idle");
+    // a busy status keeps the long hold
+    expect(
+      deriveActivity([bash], now - PENDING_TOOL_HOLD_MS - 1, now, { ...hold, busy: true }),
+    ).toBe("running");
+    // it may sit at an approval prompt: running while fresh, then idle like before the hold
+    expect(deriveActivity([asks], now - 1000, now, hold)).toBe("running");
+    expect(deriveActivity([asks], now - IDLE_AFTER_MS, now, hold)).toBe("idle");
+  });
+
+  test("a settled idle status outranks fresh writes after a finished turn", () => {
+    const now = 100_000_000;
+    const settled = { lastWriteMs: () => 0, busy: false, idleSinceMs: now - IDLE_AFTER_MS };
+    const done = { kind: "assistant", final: true } as const;
+    expect(deriveActivity([done], now - 1000, now, settled)).toBe("idle");
+    expect(deriveActivity([{ kind: "turnEnd" }], now - 1000, now, settled)).toBe("idle");
+    // just switched: the usual waiting
+    expect(deriveActivity([done], now - 1000, now, { ...settled, idleSinceMs: now - 1000 })).toBe(
+      "waiting",
+    );
+    // a new prompt or anything mid-turn is not "finished": the status may lag behind it
+    expect(deriveActivity([done, { kind: "user" }], now - 1000, now, settled)).toBe("thinking");
+    expect(deriveActivity([{ kind: "tool", name: "Bash" }], now - 1000, now, settled)).toBe(
+      "running",
+    );
+  });
+
+  test("Codex: a command asking for escalated permissions is marked as asking for approval", () => {
+    const call = (payload: object) => normalizeCodex({ type: "response_item", payload });
+    expect(
+      call({
+        type: "function_call",
+        name: "exec_command",
+        arguments: JSON.stringify({ cmd: "pnpm test", sandbox_permissions: "require_escalated" }),
+      }),
+    ).toEqual({ kind: "tool", name: "exec_command", approval: true });
+    expect(
+      call({
+        type: "function_call",
+        name: "shell",
+        arguments: JSON.stringify({ command: ["ls"], with_escalated_permissions: true }),
+      }),
+    ).toEqual({ kind: "tool", name: "shell", approval: true });
+    // the `exec` tool's JS: an object literal, not JSON
+    expect(
+      call({
+        type: "custom_tool_call",
+        name: "exec",
+        input:
+          'text(await tools.exec_command({cmd:"pnpm test",sandbox_permissions:"require_escalated"}))',
+      }),
+    ).toEqual({ kind: "tool", name: "exec", approval: true });
+    // sandboxed, or merely mentioning the words
+    expect(
+      call({
+        type: "function_call",
+        name: "exec_command",
+        arguments: JSON.stringify({
+          cmd: "grep -r require_escalated .",
+          sandbox_permissions: "use_default",
+        }),
+      }),
+    ).toEqual({ kind: "tool", name: "exec_command" });
+    expect(
+      call({
+        type: "function_call",
+        name: "shell",
+        arguments: JSON.stringify({ command: ["ls"], with_escalated_permissions: false }),
+      }),
+    ).toEqual({ kind: "tool", name: "shell" });
   });
 
   test("normalizers", () => {
@@ -846,6 +1053,48 @@ describe("macOS app processes", () => {
     });
     expect(byProject(await d.poll())["agent-office"]).toMatchObject({ agent: "claude" });
   });
+
+  test("Claude Code's own rg/ugrep/bfs (its binary under another argv0) are not agents", () => {
+    // `ARGV0=ugrep "$_cc_bin" …` in Claude Code's shell snapshot, and the Grep tool's embedded
+    // ripgrep: ucomm is the binary's name (`claude`), argv0 the tool's
+    const procs = parsePs(
+      psOut(
+        [12345, 12344, `${DESKTOP_CLAUDE} ${DESKTOP_FLAGS}`, "claude"],
+        [40000, 12345, "/bin/zsh -c -l source snapshot.sh && grep -r foo .", "zsh"],
+        [40001, 40000, "ugrep -G --hidden -r foo .", "claude"],
+        [40002, 12345, "rg --no-config --files /Users/a/code", "claude"],
+        [40003, 40000, "bfs -S dfs /Users/a/code -name claude", "claude"],
+        [40004, 40000, "rg foo /Users/a/.local/bin/claude", "claude"],
+      ),
+    );
+    expect(procs).toEqual([{ pid: 12345, agent: "claude" }]);
+    // the CLI started by name or path, or with an unreadable args line, still counts
+    expect(procRow(1, 0, ["claude", "--resume", "x"], "claude").agent).toBe("claude");
+    expect(procRow(1, 0, ["/opt/homebrew/bin/claude"], "claude").agent).toBe("claude");
+    expect(procRow(1, 0, [], "claude").agent).toBe("claude");
+    // a ucomm cut at 16 chars matches the full file name
+    expect(
+      procRow(1, 0, ["/x/codex/codex-aarch64-apple-darwin", "exec"], "codex-aarch64-apple-darwin")
+        .agent,
+    ).toBe("codex");
+    expect(runsAsExe("ugrep -G foo", "claude")).toBe(false);
+  });
+
+  test.skipIf(process.platform !== "darwin")(
+    "real `ps -axo PS_COLUMNS` parses as psLines expects",
+    async () => {
+      const p = Bun.spawn(["ps", "-axo", PS_COLUMNS], { stdout: "pipe", stderr: "ignore" });
+      const out = await new Response(p.stdout).text();
+      await p.exited;
+      const lines = psLines(out);
+      // every row parses (none dropped by a column layout psLines does not know) ...
+      expect(lines.length).toBe(out.split("\n").filter((l) => l.trim() !== "").length);
+      // ... and this test runner is found by its executable's name, its args intact
+      const self = lines.find((l) => l.pid === process.pid);
+      expect(self?.exe).toBe(basename(process.execPath).slice(0, UCOMM_WIDTH));
+      expect(self?.args).toContain(basename(process.execPath));
+    },
+  );
 
   test("the Codex app-server daemon is marked; codex subcommand args elsewhere are not", () => {
     expect(parsePs(MAC_PS).filter((p) => p.agent === "codex")).toEqual([
