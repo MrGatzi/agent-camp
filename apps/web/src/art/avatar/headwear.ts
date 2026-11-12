@@ -5,7 +5,7 @@
 import type { CharacterLook } from "@agent-office/protocol";
 import { C } from "../palette.ts";
 import type { PixelCanvas } from "../pixel.ts";
-import { mix, NIGHT } from "./color.ts";
+import { lighten, mix, NIGHT } from "./color.ts";
 import { drawNoveltyHeadwear } from "./extras.ts";
 import type { View } from "./geometry.ts";
 import { scale2x } from "./hair.ts";
@@ -624,6 +624,468 @@ function vikingHelmet(p: P, hw: Hw, view: View) {
   }
 }
 
+// ---- crazy wardrobe (WD12) ------------------------------------------------------------------
+/** ASCII art in head rows from y0 ('.' = skip); a key missing from `colors` skips too. */
+function art(
+  p: P,
+  x0: number,
+  y0: number,
+  rows: readonly string[],
+  colors: Record<string, string>,
+) {
+  rows.forEach((r, j) => {
+    for (let i = 0; i < r.length; i++) {
+      const c = colors[r[i]!];
+      if (c) p.set(x0 + i, y0 + j, c);
+    }
+  });
+}
+/** Full 32-wide rows from left halves: the right half mirrored, its keys swapped by `swap`. */
+function sym(half: readonly string[], swap: Record<string, string> = {}): string[] {
+  return half.map(
+    (r) =>
+      r +
+      [...r]
+        .reverse()
+        .map((ch) => swap[ch] ?? ch)
+        .join(""),
+  );
+}
+const BELL = C.lemon;
+const BELL_DARK = C.amber;
+
+/** A spiral horn on the forehead: ramp horn, accent twist; from behind only its tip shows. */
+function unicornHorn(p: P, hw: Hw, view: View) {
+  const { base, shadow, light } = hw.ramp;
+  const twist = hw.accent;
+  /** [y, x0, x1] of the horn, tip first */
+  const front: [number, number, number][] = [
+    [-8, 16, 16],
+    [-7, 16, 16],
+    [-6, 15, 16],
+    [-5, 15, 16],
+    [-4, 15, 16],
+    [-3, 15, 17],
+    [-2, 15, 17],
+    [-1, 15, 17],
+    [0, 14, 17],
+    [1, 14, 17],
+    [2, 14, 17],
+    [3, 14, 18],
+    [4, 14, 18],
+    [5, 14, 18],
+    [6, 14, 18],
+  ];
+  const rows =
+    view === "left"
+      ? // leaning forward over the brow
+        front.map(([y, a, b]): [number, number, number] => {
+          const k = Math.round((5 - y) * 0.4);
+          return [y, a - 2 - k, b - 2 - k];
+        })
+      : view === "up"
+        ? front.filter(([y]) => y <= 2)
+        : front;
+  for (const [y, a, b] of rows)
+    for (let x = a; x <= b; x++) {
+      // twisting grooves rising to the right
+      const k = (((x + 2 * y) % 6) + 6) % 6;
+      const c = k <= 1 ? twist : x >= b && b > a ? shadow : x === a || k === 2 ? light : base;
+      p.set(x, y, view === "up" ? mix(c, shadow, 0.35) : c);
+    }
+  // a little sparkle by the tip
+  if (view === "down") {
+    p.set(19, -5, C.white);
+    p.set(19, -6, mix(twist, C.white, 0.5));
+    p.set(19, -4, mix(twist, C.white, 0.5));
+    p.set(18, -5, mix(twist, C.white, 0.5));
+    p.set(20, -5, mix(twist, C.white, 0.5));
+  }
+}
+
+/** Beanie of alternating gores with a little visor and a propeller on a stalk. */
+function propellerCap(p: P, hw: Hw, view: View) {
+  const { base, shadow, light } = hw.ramp;
+  const a = hw.accent;
+  const dome: Record<number, [number, number]> = {
+    1: [12, 19],
+    2: [10, 21],
+    3: [8, 23],
+    4: [7, 24],
+    5: [7, 24],
+    6: [6, 25],
+    7: [6, 25],
+  };
+  for (const [ys, [x0, x1]] of Object.entries(dome)) {
+    const y = Number(ys);
+    for (let x = x0; x <= x1; x++) {
+      // four gores meeting at the top button
+      const t = (x - 15.5) / (x1 - x0 + 1);
+      const gore = Math.floor((t + 0.5) * 4);
+      let c = gore % 2 ? a : base;
+      if (x >= x1 - 1) c = gore % 2 ? mix(a, NIGHT, 0.3) : shadow;
+      else if (x === x0 + 1 && y > 2) c = gore % 2 ? mix(a, C.white, 0.3) : light;
+      p.set(x, y, c);
+    }
+  }
+  // visor
+  if (view === "down") {
+    p.row(9, 22, 8, shadow);
+    p.row(10, 21, 9, mix(shadow, NIGHT, 0.3));
+  } else if (view === "left") {
+    p.row(2, 7, 7, shadow);
+    p.row(1, 6, 8, mix(shadow, NIGHT, 0.3));
+  }
+  // stalk, hub and the two blades (one up, one down: it spins)
+  const stalk = "#5a6988";
+  p.set(15, 0, stalk);
+  p.set(16, 0, mix(stalk, NIGHT, 0.3));
+  p.set(15, -1, stalk);
+  p.set(16, -1, mix(stalk, NIGHT, 0.3));
+  p.row(15, 16, -2, C.lemon);
+  p.row(15, 16, -3, C.amber);
+  const blade1 = C.red;
+  const blade2 = C.sky;
+  art(p, 6, -5, ["....", "RRRR..", "rRRRRR", ".rrrr."], { R: blade1, r: mix(blade1, NIGHT, 0.3) });
+  art(p, 20, -5, ["..BBBB", "BBBBBB", "bbbb..", ""], { B: blade2, b: mix(blade2, NIGHT, 0.3) });
+}
+
+/** An orange traffic cone with reflective stripes on a square rubber base (ramp = cone). */
+function trafficCone(p: P, hw: Hw, view: View) {
+  const { base, shadow, light } = hw.ramp;
+  const stripe = mix(light, C.white, 0.75);
+  const stripeDark = mix(stripe, shadow, 0.35);
+  const side = view === "left" ? -1 : 0;
+  const rows: Record<number, [number, number]> = {
+    [-7]: [15, 16],
+    [-6]: [14, 17],
+    [-5]: [14, 17],
+    [-4]: [13, 18],
+    [-3]: [13, 18],
+    [-2]: [12, 19],
+    [-1]: [12, 19],
+    0: [11, 20],
+    1: [11, 20],
+    2: [10, 21],
+    3: [10, 21],
+    4: [9, 22],
+    5: [9, 22],
+  };
+  for (const [ys, [x0, x1]] of Object.entries(rows)) {
+    const y = Number(ys);
+    const striped = y === -3 || y === -2 || y === 2 || y === 3;
+    for (let x = x0 + side; x <= x1 + side; x++) {
+      const edge = x >= x1 + side - 1;
+      const c = striped ? (edge ? stripeDark : stripe) : edge ? shadow : base;
+      p.set(x, y, c);
+    }
+    if (!striped && y > -7) p.set(x0 + side + 1, y, light);
+  }
+  // the hole at the tip
+  p.row(15 + side, 16 + side, -7, mix(shadow, NIGHT, 0.4));
+  // square rubber foot
+  const foot = mix(base, NIGHT, 0.45);
+  p.row(5, 26, 6, foot);
+  p.row(5, 26, 7, mix(foot, NIGHT, 0.35));
+  p.row(6, 8, 6, mix(foot, C.white, 0.15));
+}
+
+/** Harlequin cap: base on one half, accent on the other, three floppy points with bells. */
+const JESTER = sym(
+  [
+    "...............Y",
+    "..............YY",
+    "..............yy",
+    "..............LB",
+    ".............LBB",
+    ".............LBB",
+    ".....LB......BBB",
+    "....LBBBB...LBBB",
+    "...LBBBBBB..BBBB",
+    "...BBS.BBBB.BBBB",
+    "..BBS...BBBBBBBB",
+    "..BS.....BBBBBBB",
+    "..YY.....BBBBBBB",
+    ".YYYy...BBBBBBBB",
+    "..yy..AAAAAAAAAA",
+    "......aaaaaaaaaa",
+  ],
+  { B: "A", L: "A", S: "a", A: "B", a: "S" },
+);
+function jesterHat(p: P, hw: Hw, view: View) {
+  const { base, shadow, light } = hw.ramp;
+  const a = hw.accent;
+  art(p, view === "left" ? -1 : 0, -8, JESTER, {
+    B: base,
+    L: light,
+    S: shadow,
+    A: a,
+    a: mix(a, NIGHT, 0.3),
+    Y: BELL,
+    y: BELL_DARK,
+  });
+}
+
+/** Very wide upturned brim, tall round crown, zigzag band and bobbles round the rim. */
+function sombrero(p: P, hw: Hw, view: View) {
+  const { base, shadow, light } = hw.ramp;
+  const a = hw.accent;
+  const aDark = mix(a, NIGHT, 0.3);
+  const cy = 5;
+  for (let x = 1; x <= 30; x++) {
+    const d = Math.abs(x - 15.5) / 15;
+    const h = 2.6 * Math.sqrt(Math.max(0, 1 - d * d));
+    const curl = d > 0.8 ? 2 : d > 0.65 ? 1 : 0;
+    const top = Math.round(cy - h) - curl;
+    const bottom = Math.round(cy + h);
+    for (let y = top; y <= bottom; y++) {
+      const c = y === bottom ? shadow : y === top && curl ? a : x < 12 && y === top ? light : base;
+      p.set(x, y, c);
+    }
+    // bobbles on the rim
+    if (x % 3 === 0) p.set(x, bottom + 1, x % 2 ? a : aDark);
+  }
+  if (view !== "left") p.row(9, 22, cy + 3, mix(shadow, NIGHT, 0.3));
+  // crown
+  const crown: Record<number, [number, number]> = {
+    [-5]: [13, 18],
+    [-4]: [12, 19],
+    [-3]: [11, 20],
+    [-2]: [11, 20],
+    [-1]: [10, 21],
+    0: [10, 21],
+    1: [10, 21],
+    2: [10, 21],
+    3: [10, 21],
+    4: [10, 21],
+  };
+  for (const [ys, [x0, x1]] of Object.entries(crown)) {
+    const y = Number(ys);
+    for (let x = x0; x <= x1; x++) {
+      let c = x >= x1 - 1 ? shadow : x === x0 + 1 ? light : base;
+      // zigzag band
+      if (y === 1 || y === 2) c = (x + y) % 2 ? a : aDark;
+      p.set(x, y, c);
+    }
+  }
+  p.row(14, 17, -5, light);
+  p.row(10, 21, 3, a);
+}
+
+/** A shark swallowing the head: dome with a fin, teeth round the face, tail behind. */
+const SHARK_FRONT = sym([
+  "...............L",
+  "..............LB",
+  "..............LB",
+  ".............LBB",
+  ".............LBB",
+  "..........LLLBBB",
+  "........LLBBBBBB",
+  ".......LBBBBBBBB",
+  "......LBBBBBBBBB",
+  ".....LBBBBBBBBBB",
+  "....LBKWBBBBBBBB",
+  "....LBKKBBBBBBBB",
+  "....BBBBBBBBBBBB",
+  "....BBBGGGGGGGGG",
+  "....BBGWWWWWWWWW",
+  "....BBGW.W.W.W.W",
+  "....BBGW........",
+  "....BBGW........",
+  "....BBG.........",
+  "....BBGW........",
+  "....BBGW........",
+  "....BBG.........",
+  ".....BG.........",
+]).map((r, j) => (j >= 10 ? `${r.slice(0, 26)}${r.slice(26).replace(/L/g, "B")}` : r));
+const SHARK_SIDE = [
+  "................B...............",
+  "...............BB...............",
+  "..............BBB...............",
+  ".............BBBS...............",
+  "............BBBBS...............",
+  "..........LLBBBBBS..............",
+  "......LLLLBBBBBBBBBBB...........",
+  "....LLBBBBBBBBBBBBBBBBB.........",
+  "...LBBKWBBBBBBBBBBBBBBBB........",
+  "..LBBBKKBBBBBBBBBBBSBSBSB.......",
+  ".LBBBBBBBBBBBBBBBBBSBSBSB....S..",
+  ".lllllGGGGGGBBBBBBBBBBBBB...SS..",
+  "..WWWWWWWWWGBBBBBBBBBBBBBB.SSS..",
+  "...W.W.W.W.GBBBBBBBBBBBBBBSSS...",
+  "...........GBBBBBBBBBBBBBBSS....",
+  "............BBBBBBBBBBBBBBSS....",
+  "............BBBBBBBBBBBBBBSSS...",
+  "............BBBBBBBBBBBBBB.SSS..",
+  "............BBBBBBBBBBBBBB...S..",
+  "............BBBBBBBBBBBBBB......",
+  "............BBBBBBBBBBBBBB......",
+  "............BBBBBBBBBBBBBB......",
+  "............BBBBBBBBBBBBB.......",
+  "............BBBBBBBBBBBB........",
+];
+const SHARK_BACK = sym([
+  "...............S",
+  "..............SS",
+  "..............BS",
+  ".............BBS",
+  ".............BBS",
+  "..........LLLBBS",
+  "........LLBBBBBB",
+  ".......LBBBBBBBB",
+  "......LBBBBBBBBB",
+  ".....LBBBBBBBBBB",
+  "....LBBBBBBBBBBB",
+  "....LBBBBBBBBBBB",
+  "....BBBBBBBBBBBB",
+  "....BBBBBBBBBBBB",
+  "....BBBBBBBBBBBB",
+  "....BBBBBBBBBBBB",
+  "....BBBBBBBBBBBB",
+  "....BBBBBBBBBBBB",
+  "....BBBBBBBBBBBB",
+  "....BBBBBBBBBBBB",
+  "....BBBBBBBBBBBB",
+  ".....BBBBBBBBBBB",
+  "......BBBBBBBBBB",
+  "........BBBBBBBB",
+  "...............S",
+  "...............S",
+  "..............SS",
+  ".............SS.",
+  "............SS..",
+]);
+function sharkHat(p: P, hw: Hw, view: View) {
+  const { base, shadow, light } = hw.ramp;
+  const colors = {
+    B: base,
+    S: shadow,
+    L: light,
+    l: mix(light, C.white, 0.5),
+    G: hw.accent,
+    W: C.white,
+    K: NIGHT,
+  };
+  if (view === "left") {
+    art(p, 0, -5, SHARK_SIDE, colors);
+    return;
+  }
+  if (view === "up") {
+    art(p, 0, -5, SHARK_BACK, colors);
+    return;
+  }
+  art(p, 0, -5, SHARK_FRONT, colors);
+  // the right half in shade
+  for (let y = 6; y <= 17; y++) p.set(27, y, shadow);
+}
+
+/** A rubber duck (ramp = duck, accent = beak) sitting on top of the hair, facing `dir`. */
+const DUCK = [
+  "....yyy....",
+  "...yYYYy...",
+  "...YYKYOO..",
+  "...YYYYOo..",
+  "Y...YYY....",
+  "YY.YYYYYY..",
+  "YYYYYwwYYY.",
+  ".YYYYYYYYY.",
+  "..ssssssss.",
+];
+function rubberDuck(pc: PixelCanvas, hw: Hw, view: View, hy: number) {
+  const { base, shadow, light } = hw.ramp;
+  // sit on the hair (or head) under the duck, but never above the headroom
+  let top = 99;
+  for (let x = 12; x <= 19; x++) {
+    const t = topAt(pc, x, hy - 8, hy + 12);
+    if (t !== null) top = Math.min(top, t - hy);
+  }
+  if (top === 99) top = 6;
+  const y0 = Math.max(-8 - hy, top - DUCK.length + 1);
+  const p = painter(pc, hy, view !== "down");
+  art(p, view === "left" ? 9 : 10, y0, DUCK, {
+    Y: base,
+    y: light,
+    w: shadow,
+    s: shadow,
+    K: NIGHT,
+    O: hw.accent,
+    o: mix(hw.accent, NIGHT, 0.3),
+  });
+}
+
+/** Striped nemes headdress: ramp + accent stripes, a band and a little cobra on the brow. */
+function pharaoh(p: P, hw: Hw, view: View) {
+  const { base, light } = hw.ramp;
+  const a = hw.accent;
+  const band = mix(a, C.white, 0.35);
+  const stripe = (x: number, y: number, x1: number) => {
+    const c = y % 2 ? a : base;
+    return x >= x1 - 1 ? mix(c, NIGHT, 0.3) : c;
+  };
+  const outer = (y: number): [number, number] | null => {
+    if (view === "left") {
+      if (y < 1 || y > 23) return null;
+      if (y === 1) return [11, 20];
+      if (y === 2) return [9, 22];
+      if (y <= 9) return [8, 24];
+      return [13, Math.min(27, 24 + Math.floor((y - 9) / 4))];
+    }
+    if (y < 1 || y > 21) return null;
+    return (
+      (
+        {
+          1: [11, 20],
+          2: [9, 22],
+          3: [8, 23],
+          4: [7, 24],
+          5: [6, 25],
+          6: [5, 26],
+          7: [5, 26],
+          8: [4, 27],
+        } as Record<number, [number, number]>
+      )[y] ?? (y <= 13 ? [3, 28] : [2, 29])
+    );
+  };
+  for (let y = 1; y <= 23; y++) {
+    const o = outer(y);
+    if (!o) continue;
+    for (let x = o[0]; x <= o[1]; x++) {
+      if (view === "down" && y >= 10 && x >= 7 && x <= 24) continue;
+      p.set(x, y, stripe(x, y, o[1]));
+    }
+  }
+  if (view === "left") {
+    // band from the brow back to the ear, lappet hanging in front of the shoulder
+    p.row(8, 14, 8, band);
+    p.row(8, 14, 9, mix(a, NIGHT, 0.2));
+    for (let y = 10; y <= 21; y++) p.set(13, y, mix(a, NIGHT, 0.2));
+    for (let y = 22; y <= 29; y++) for (let x = 12; x <= 15; x++) p.set(x, y, stripe(x, y, 15));
+    p.set(8, 7, light);
+    return;
+  }
+  if (view === "up") {
+    // the cloth gathered into a wrapped queue
+    for (let y = 22; y <= 27; y++) p.row(14, 17, y, stripe(14, y, 17));
+    p.row(13, 18, 22, band);
+    p.row(14, 17, 27, mix(a, NIGHT, 0.4));
+    return;
+  }
+  p.row(6, 25, 8, band);
+  p.row(6, 25, 9, mix(a, NIGHT, 0.2));
+  p.set(7, 8, C.white);
+  // lappets in front of the shoulders
+  for (let y = 22; y <= 29; y++) {
+    for (let x = 4; x <= 7; x++) p.set(x, y, stripe(x, y, 99));
+    for (let x = 24; x <= 27; x++) p.set(x, y, stripe(x, y, 27));
+  }
+  // the cobra on the brow
+  art(p, 14, 4, ["..k.", ".kCc", ".Cck", "..C.", ".CC."], {
+    C: band,
+    c: mix(a, NIGHT, 0.3),
+    k: NIGHT,
+  });
+}
+
 /** The wardrobe hats; false = not one of them. */
 function drawWardrobeHat(pc: PixelCanvas, hw: Hw, view: View, hy: number): boolean {
   const p = painter(pc, hy);
@@ -676,6 +1138,30 @@ function drawWardrobeHat(pc: PixelCanvas, hw: Hw, view: View, hy: number): boole
       return true;
     case "viking-helmet":
       vikingHelmet(p, hw, view);
+      return true;
+    case "unicorn-horn":
+      unicornHorn(p, hw, view);
+      return true;
+    case "propeller-cap":
+      propellerCap(pm, hw, view);
+      return true;
+    case "traffic-cone":
+      trafficCone(p, hw, view);
+      return true;
+    case "jester-hat":
+      jesterHat(pm, hw, view);
+      return true;
+    case "sombrero":
+      sombrero(p, hw, view);
+      return true;
+    case "shark-hat":
+      sharkHat(p, hw, view);
+      return true;
+    case "rubber-duck":
+      rubberDuck(pc, hw, view, hy);
+      return true;
+    case "pharaoh":
+      pharaoh(p, hw, view);
       return true;
     default:
       return false;
@@ -831,6 +1317,34 @@ export function drawEarrings(pc: PixelCanvas, L: CharacterLook, view: View, hy: 
   for (const x of xs) {
     if (e.style === "stud") {
       pc.set(x, 18 + hy, e.color);
+    } else if (e.style === "dangle") {
+      // a fine chain with a drop-shaped gem at the end
+      pc.set(x, 18 + hy, e.color);
+      pc.set(x, 19 + hy, dark);
+      pc.set(x, 20 + hy, dark);
+      pc.set(x, 21 + hy, lighten(e.color, 0.45));
+      pc.set(x - 1, 22 + hy, e.color);
+      pc.set(x, 22 + hy, lighten(e.color, 0.2));
+      pc.set(x + 1, 22 + hy, dark);
+      pc.set(x, 23 + hy, dark);
+    } else if (e.style === "feather") {
+      // a bead, then a long feather drifting outwards: dark quill, notched vane, pale tip
+      const out = view === "left" ? 1 : x < 16 ? -1 : 1;
+      const pale = lighten(e.color, 0.4);
+      pc.set(x, 18 + hy, dark);
+      pc.set(x, 19 + hy, pale);
+      pc.set(x, 20 + hy, dark);
+      const vane = ["vqv", "vqv", "nqv", "vqv", "vqn", ".t."];
+      vane.forEach((r, i) => {
+        const y = 21 + i + hy;
+        const x0 = x - 1 + (i >= 3 ? out : 0);
+        for (let k = 0; k < 3; k++) {
+          const ch = r[k];
+          if (ch === "v") pc.set(x0 + k, y, e.color);
+          else if (ch === "n" || ch === "t") pc.set(x0 + k, y, pale);
+          else if (ch === "q") pc.set(x0 + k, y, dark);
+        }
+      });
     } else {
       pc.set(x, 18 + hy, e.color);
       pc.set(x - 1, 19 + hy, e.color);
