@@ -1496,7 +1496,13 @@ describe("OfficeApp look editor", () => {
 
     test("studio: how a Generate on the Mac ended, with the Mac's error", async () => {
       const t = setup();
-      const { app, toConnector, pending, advance } = t;
+      const { app, toConnector, pending, advance, sent } = t;
+      /** what every viewer heard: that it ended, never the Mac's error */
+      const generated = () =>
+        sent
+          .map((d) => JSON.parse(d) as { type: string; data: unknown })
+          .filter((m) => m.type === "look.generated")
+          .map((m) => m.data);
       app.connectorMessage("s1", helloLocal("Tom"));
       await Promise.all(pending);
       me = await claimOn(t, "tom", "s1");
@@ -1504,6 +1510,7 @@ describe("OfficeApp look editor", () => {
         result: "pending",
       });
       expect(await lookInfo(app)).not.toHaveProperty("lastGenerate"); // still drawing
+      expect(generated()).toEqual([]);
       const ask = lookRequests(toConnector).at(-1)!;
       app.connectorMessage(
         "s1",
@@ -1517,6 +1524,7 @@ describe("OfficeApp look editor", () => {
           macError: "exit 1: Invalid API key · Please run /login",
         },
       });
+      expect(generated()).toEqual([{ personId: "tom", result: "off", by: "server" }]);
 
       // the next Generate starts over, and a look drawn on the Mac says so
       advance(21_000);
@@ -1531,6 +1539,7 @@ describe("OfficeApp look editor", () => {
       await Promise.all(pending);
       const info = await lookInfo(app);
       expect(info.lastGenerate).toEqual({ result: "ai", by: "mac" });
+      expect(generated().at(-1)).toEqual({ personId: "tom", result: "ai", by: "mac" });
       expect((info.avatar as { look?: unknown }).look).toEqual(LOOK_FIXTURES.tracht.look);
 
       // saving parts afterwards: that Generate is no longer the newest, nothing to report

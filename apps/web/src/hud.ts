@@ -374,6 +374,8 @@ export class Hud {
     onKey: (e: KeyboardEvent) => void;
     /** the office changed: the studio follows the person's look */
     sync: () => void;
+    /** a Generate on that person's Mac ended (`look.generated`) */
+    generated: () => void;
   } | null = null;
   /** "My desk" in the Me menu */
   onOpenMe: (personId: string) => void = (id) => this.openPanel(id);
@@ -919,8 +921,8 @@ export class Hud {
       return;
     }
     this.closeLookEditor();
-    const { box, onKey, sync } = this.buildLookEditor(p);
-    this.lookEditor = { personId, box, onKey, sync };
+    const { box, onKey, sync, generated } = this.buildLookEditor(p);
+    this.lookEditor = { personId, box, onKey, sync, generated };
     // capture: arrows / Esc belong to the studio, not to the office camera underneath
     window.addEventListener("keydown", onKey, true);
     this.root.append(box);
@@ -929,6 +931,11 @@ export class Hud {
       box.querySelector<HTMLElement>(".look-row")
     )?.focus();
     this.onPanelChange();
+  }
+
+  /** `look.generated`: a Generate on someone's Mac ended; only their open studio cares. */
+  lookGenerated(personId: string) {
+    if (this.lookEditor?.personId === personId) this.lookEditor.generated();
   }
 
   closeLookEditor() {
@@ -951,6 +958,7 @@ export class Hud {
     box: HTMLElement;
     onKey: (e: KeyboardEvent) => void;
     sync: () => void;
+    generated: () => void;
   } {
     const box = el("div", "look-editor look-studio");
     box.setAttribute("role", "dialog");
@@ -1291,33 +1299,41 @@ export class Hud {
         ok: false,
       };
     };
-    /** a Generate went to the person's Mac: poll until the server says how it ended */
-    const waitForMac = async (wait: number) => {
-      const until = Date.now() + LOCAL_LOOK_WAIT_MS;
-      const live = () => this.lookEditor?.box === box && wait === localWait;
-      while (live()) {
-        await new Promise((res) => setTimeout(res, 2_500));
-        if (!live()) return;
-        const info = await this.fetchLookInfo(personId);
-        if (!live()) return;
-        const o = info?.lastGenerate;
-        if (info && o) {
-          if (describeGo) describeGo.disabled = false;
-          if (info.avatar) adopt(info.avatar, info.custom);
-          showMacState(info);
-          const m = outcomeMessage(o);
-          say(m.text, m.ok);
-          return;
-        }
-        if (Date.now() > until) {
-          if (describeGo) describeGo.disabled = false;
-          say(
-            "Your Mac has not answered in 5 minutes. Check that the connector runs there (`agent-office status`), then try again.",
-            false,
-          );
-          return;
-        }
+    /**
+     * A Generate went to the person's Mac. No polling (each GET is a billed Durable Object
+     * request): the server broadcasts `look.generated` when it ends, and the studio then GETs
+     * how (with the Mac's error) once. One last GET after LOCAL_LOOK_WAIT_MS covers a
+     * broadcast missed while the socket reconnected.
+     */
+    let macWait: { wait: number; timer: ReturnType<typeof setTimeout> } | null = null;
+    const waitForMac = (wait: number) => {
+      if (macWait) clearTimeout(macWait.timer);
+      macWait = { wait, timer: setTimeout(() => void checkMac(true), LOCAL_LOOK_WAIT_MS) };
+    };
+    const checkMac = async (final: boolean) => {
+      const w = macWait;
+      const live = () => this.lookEditor?.box === box && macWait === w && w?.wait === localWait;
+      if (!live()) return;
+      const info = await this.fetchLookInfo(personId);
+      if (!live()) return;
+      const o = info?.lastGenerate;
+      if (info && o) {
+        clearTimeout(w!.timer);
+        macWait = null;
+        if (describeGo) describeGo.disabled = false;
+        if (info.avatar) adopt(info.avatar, info.custom);
+        showMacState(info);
+        const m = outcomeMessage(o);
+        say(m.text, m.ok);
+        return;
       }
+      if (!final) return; // an older Generate's news: keep waiting for this one
+      macWait = null;
+      if (describeGo) describeGo.disabled = false;
+      say(
+        "Your Mac has not answered in 5 minutes. Check that the connector runs there (`agent-office status`), then try again.",
+        false,
+      );
     };
     describeForm?.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -1334,7 +1350,7 @@ export class Hud {
       hasDescription = true;
       if (r.pending) {
         say(r.message);
-        void waitForMac(++localWait);
+        waitForMac(++localWait);
         return;
       }
       describeGo.disabled = false;
@@ -1427,7 +1443,7 @@ export class Hud {
       if (!now || JSON.stringify(now) === seen) return;
       adopt(now, null);
     };
-    return { box, onKey, sync };
+    return { box, onKey, sync, generated: () => void checkMac(false) };
   }
 
   /** Person this browser confirmed to be ("It's me" code); null = a spectator. */

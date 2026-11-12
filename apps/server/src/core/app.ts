@@ -131,8 +131,9 @@ type PendingClaim = { codes: ClaimCode[]; exp: number; tries: number };
 const studioKey = (personId: string) => `look.studio.${personId}`;
 /**
  * How a studio Generate that went to the person's Mac ended (`GenerateOutcome` plus the
- * `studio` token it answered): the studio polls it, so a Mac that failed (not logged in,
- * timed out, ...) is reported at once instead of after a silent five-minute wait.
+ * `studio` token it answered): a `look.generated` broadcast tells the studio it is there, so a
+ * Mac that failed (not logged in, timed out, ...) is reported at once instead of after a
+ * silent five-minute wait.
  */
 const outcomeKey = (personId: string) => `look.outcome.${personId}`;
 type StoredOutcome = GenerateOutcome & { studio: string };
@@ -442,6 +443,15 @@ export class OfficeApp {
       ...(macError !== undefined ? { macError: macError.slice(0, 300) } : {}),
     };
     this.store.kvPut(outcomeKey(pending.job.personId), JSON.stringify(outcome));
+    // the studio waits for this instead of polling; it then GETs the details (macError) once.
+    // A Generate already replaced (newer one, saved parts) has nothing to report (lastGenerate)
+    if (this.store.kvGet(studioKey(pending.job.personId)) !== pending.studio) return;
+    const done: MessageOf<"look.generated"> = envelope("look.generated", {
+      personId: pending.job.personId,
+      result: outcome.result,
+      by: outcome.by,
+    });
+    this.transport.broadcast(JSON.stringify(done));
   }
 
   /** The studio's word for how a Generate ended (see LookDescribeResponse.result). */

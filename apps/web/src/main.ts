@@ -418,6 +418,10 @@ async function boot() {
       }
       return;
     }
+    if (msg.type === "look.generated") {
+      hud.lookGenerated(msg.data.personId);
+      return;
+    }
     const changes = model.apply(msg);
     // the demo has no codes: start as the first person (the Me menu switches freely)
     if (demo && !demoMe && model.people.size > 0) {

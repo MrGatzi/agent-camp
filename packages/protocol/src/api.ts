@@ -21,6 +21,7 @@ import {
   InteractionKind,
   InteractionText,
   isCatInteraction,
+  LookGenerated,
   LookGenerator,
   needsSpot,
   PersonId,
@@ -71,8 +72,8 @@ export type LookMacState = z.infer<typeof LookMacState>;
 
 /** How the newest studio Generate drawn on a Mac ended (by = who drew the look). */
 export const GenerateOutcome = z.object({
-  result: z.enum(["ai", "off", "failed", "superseded"]),
-  by: z.enum(["mac", "server"]),
+  result: LookGenerated.shape.data.shape.result,
+  by: LookGenerated.shape.data.shape.by,
   /** why the Mac did not draw it (its error, no answer, reconnected meanwhile) */
   macError: z.string().max(300).optional(),
 });
