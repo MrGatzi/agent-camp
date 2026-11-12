@@ -8,6 +8,7 @@ import { C } from "../palette.ts";
 import { type PixelCanvas, packColor } from "../pixel.ts";
 import { hash2, mix, NIGHT } from "./color.ts";
 import type { View } from "./geometry.ts";
+import { drawElfEars } from "./head.ts";
 
 type Layer = readonly string[];
 
@@ -886,7 +887,518 @@ function longWavy(view: View): Grid {
   return g;
 }
 
+// ---- crazy cuts (WD12): built at 2× as character grids, may rise into the headroom ------------
+// Extra code: E = tiny snake eye.
+
+/** Cuts that rise above body row 0: their grid row 0 is body row -RISE (headroom, WD2). */
+const RISE: Partial<Record<CharacterLook["hair"]["cut"], number>> = {
+  "anime-spikes": 6,
+  beehive: 6,
+  pompadour: 4,
+  "afro-puffs": 2,
+  snakes: 4,
+};
+
+/** Drawing in body rows on a raised grid. */
+type Pen = {
+  g: Grid;
+  put: (x: number, y: number, ch: string) => void;
+  at: (x: number, y: number) => string | undefined;
+  row: (y: number, x0: number, x1: number, ch?: string) => void;
+};
+function pen(base: readonly string[], rise: number): Pen {
+  const g = grid([...Array.from({ length: rise }, () => ""), ...base], 34 + rise);
+  return {
+    g,
+    put: (x, y, ch) => put(g, x, y + rise, ch),
+    at: (x, y) => g[y + rise]?.[x],
+    row: (y, x0, x1, ch = "h") => {
+      if (ch === "h") run(g, y + rise, x0, x1);
+      else fillRow(g, y + rise, x0, x1, ch);
+    },
+  };
+}
+
+/** Fill every texel whose centre lies inside the triangle a-b-c; `ch(x, y)` picks the code. */
+function tri(
+  p: Pen,
+  a: readonly [number, number],
+  b: readonly [number, number],
+  c: readonly [number, number],
+  ch: (x: number, y: number) => string,
+) {
+  const side = (
+    [x1, y1]: readonly [number, number],
+    [x2, y2]: readonly [number, number],
+    x: number,
+    y: number,
+  ) => (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1);
+  const x0 = Math.floor(Math.min(a[0], b[0], c[0]));
+  const x1 = Math.ceil(Math.max(a[0], b[0], c[0]));
+  const y0 = Math.floor(Math.min(a[1], b[1], c[1]));
+  const y1 = Math.ceil(Math.max(a[1], b[1], c[1]));
+  for (let y = y0; y <= y1; y++)
+    for (let x = x0; x <= x1; x++) {
+      const px = x + 0.5;
+      const py = y + 0.5;
+      const d1 = side(a, b, px, py);
+      const d2 = side(b, c, px, py);
+      const d3 = side(c, a, px, py);
+      const neg = d1 < 0 || d2 < 0 || d3 < 0;
+      const pos = d1 > 0 || d2 > 0 || d3 > 0;
+      if (!(neg && pos)) p.put(x, y, ch(x, y));
+    }
+}
+
+/**
+ * One anime spike from a base centre (bx, by), `w` texels each side, to a sharp tip: lit on
+ * the left of its axis, shaded on the right (light from the upper left).
+ */
+function spike(p: Pen, bx: number, by: number, tx: number, ty: number, w: number) {
+  const dx = tx - bx;
+  const dy = ty - by;
+  const len = Math.hypot(dx, dy);
+  const nx = (-dy / len) * w;
+  const ny = (dx / len) * w;
+  tri(p, [bx + nx, by + ny], [bx - nx, by - ny], [tx, ty], (x, y) => {
+    // which side of the axis: screen-right (or below, for sideways spikes) is in shade
+    const cross = dx * (y + 0.5 - by) - dy * (x + 0.5 - bx);
+    const shade = Math.abs(dy) >= Math.abs(dx) ? (dy < 0 ? cross > 0 : cross < 0) : cross > 0;
+    return shade ? "H" : "h";
+  });
+}
+
+/** A filled ellipse of hair; right and lower rim in shade, a sheen patch upper left. */
+function blob(p: Pen, cx: number, cy: number, rx: number, ry: number, sheen = true) {
+  for (let y = Math.floor(cy - ry); y <= Math.ceil(cy + ry); y++)
+    for (let x = Math.floor(cx - rx); x <= Math.ceil(cx + rx); x++) {
+      const u = (x + 0.5 - cx) / rx;
+      const v = (y + 0.5 - cy) / ry;
+      const d = u * u + v * v;
+      if (d > 1) continue;
+      const rim = u > 0.55 || (v > 0.6 && u > -0.2);
+      const lit = sheen && u < -0.2 && v < -0.2 && d > 0.25 && d < 0.6;
+      p.put(x, y, rim ? "H" : lit ? "L" : "h");
+    }
+}
+
+/** Front-view face window (body rows): cleared out of big cuts so the face stays free. */
+function clearFace(p: Pen, top: number, bottom = 30) {
+  for (let y = top; y <= bottom; y++) for (let x = 7; x <= 24; x++) p.put(x, y, ".");
+}
+
+function animeSpikes(view: View): Grid {
+  const R = RISE["anime-spikes"]!;
+  const p = pen([], R);
+  if (view === "down") {
+    blob(p, 15.5, 5, 11, 7);
+    // a crown of huge spikes: up, out to the sides and down past the cheeks
+    spike(p, 10, 2, 6, -6, 3);
+    spike(p, 15.5, 1, 15, -6, 3.5);
+    spike(p, 21, 2, 25, -6, 3);
+    spike(p, 7, 4, 1, -1, 3);
+    spike(p, 24, 4, 30, -1, 3);
+    spike(p, 6, 8, 1, 8, 3);
+    spike(p, 25, 8, 30, 8, 3);
+    spike(p, 6, 11, 2, 17, 2.5);
+    spike(p, 25, 11, 29, 17, 2.5);
+    clearFace(p, 10);
+    // pointed bangs over the forehead, between and beside the eyes
+    for (const [x, tip] of [
+      [9, 13],
+      [15.5, 13],
+      [22, 13],
+    ] as const)
+      tri(p, [x - 3, 9], [x + 3, 9], [x, tip], (xx) => (xx + 0.5 > x ? "H" : "h"));
+    for (const x of [12, 19]) tri(p, [x - 2, 9], [x + 2, 9], [x, 12], () => "h");
+    // sideburn tufts
+    p.row(10, 5, 6);
+    p.row(11, 5, 6);
+    p.row(12, 5, 5, "H");
+    p.row(10, 25, 26, "H");
+    p.row(11, 25, 26, "H");
+    p.row(12, 26, 26, "H");
+  } else if (view === "up") {
+    blob(p, 15.5, 10, 11, 12.5);
+    spike(p, 10, 2, 6, -6, 3);
+    spike(p, 15.5, 1, 15, -6, 3.5);
+    spike(p, 21, 2, 25, -6, 3);
+    spike(p, 7, 4, 1, -1, 3);
+    spike(p, 24, 4, 30, -1, 3);
+    spike(p, 6, 9, 1, 9, 3);
+    spike(p, 25, 9, 30, 9, 3);
+    spike(p, 7, 14, 1, 18, 3);
+    spike(p, 24, 14, 30, 18, 3);
+    // the nape ends in a zigzag of short spikes
+    for (let x = 6; x <= 25; x++) {
+      const k = (x - 6) % 5;
+      const len = 20 + Math.min(k, 4 - k) * 2;
+      for (let y = 18; y <= len; y++) p.put(x, y, k >= 2 ? "H" : "h");
+    }
+  } else {
+    blob(p, 17, 7, 9.5, 8);
+    // everything swept back: spikes stream out behind the head
+    spike(p, 12, 2, 8, -6, 3);
+    spike(p, 17, 1, 19, -6, 3.5);
+    spike(p, 22, 2, 29, -4, 3);
+    spike(p, 23, 6, 30, 3, 3);
+    spike(p, 24, 10, 30, 11, 3);
+    spike(p, 23, 14, 29, 19, 3);
+    spike(p, 21, 17, 23, 23, 2.5);
+    // the face and the ear stay free; a spiky fringe hangs over the brow
+    for (let y = 10; y <= 30; y++) for (let x = 0; x <= 15; x++) p.put(x, y, ".");
+    for (let y = 13; y <= 18; y++) for (let x = 16; x <= 17; x++) p.put(x, y, ".");
+    spike(p, 8, 8, 4, 13, 2.5);
+    spike(p, 12, 9, 10, 14, 2);
+  }
+  return p.g;
+}
+
+function beehive(view: View): Grid {
+  const R = RISE.beehive!;
+  const p = pen([], R);
+  // the tower: half widths per row from the top (row -6) down to the crown
+  const half = [3.5, 5.5, 6.5, 7.5, 7.5, 8, 8, 8, 8.5, 9, 9.5, 10, 10];
+  const cx = view === "left" ? 17.5 : 15.5;
+  half.forEach((w, i) => {
+    const y = i - 6;
+    const a = Math.round(cx - w);
+    const b = Math.round(cx + w) - 1;
+    p.row(y, a, b);
+    p.put(b - 1, y, "H");
+    if (i > 0 && i < 9) p.put(a + 1, y, "L");
+  });
+  // one smooth roll line winding round the tower
+  for (let x = Math.round(cx - 5); x <= Math.round(cx + 6); x++)
+    p.put(x, 1 - Math.round(((x + 0.5 - cx) * 2) / 5), x < cx - 2 ? "L" : "H");
+  if (view === "down") {
+    // smooth sides down to the jaw, flipped out at the ends; a swept fringe
+    for (let y = 7; y <= 17; y++) {
+      p.row(y, 4, 6);
+      p.row(y, 25, 27);
+      p.put(27, y, "H");
+    }
+    p.row(7, 6, 25);
+    p.row(8, 6, 25);
+    for (let x = 7; x <= 18; x++) p.put(x, 9 + (x > 12 ? 1 : 0), "h");
+    p.row(9, 18, 25);
+    p.put(15, 7, "L");
+    p.row(18, 2, 5);
+    p.row(19, 1, 3, "H");
+    p.row(18, 26, 29);
+    p.row(19, 28, 30, "H");
+    // a ribbon round the foot of the tower
+    p.row(5, 7, 24, "R");
+  } else if (view === "up") {
+    for (let y = 7; y <= 17; y++) p.row(y, 4, 27);
+    p.row(18, 2, 29);
+    p.row(19, 1, 4, "H");
+    p.row(19, 27, 30, "H");
+    // the french twist seam up the back
+    for (let y = -4; y <= 15; y++) p.put(15 + (y < 4 ? 1 : 0), y, "H");
+    p.row(5, 7, 24, "R");
+  } else {
+    for (let y = 7; y <= 18; y++) p.row(y, 16, 26);
+    p.row(7, 7, 16);
+    p.row(8, 6, 16);
+    p.row(9, 6, 9);
+    p.row(19, 18, 28);
+    p.row(20, 25, 29, "H");
+    p.row(5, 9, 26, "R");
+  }
+  return p.g;
+}
+
+function pompadour(view: View): Grid {
+  const R = RISE.pompadour!;
+  const p = pen([], R);
+  if (view === "down") {
+    // a big glossy quiff piled up over the forehead, wider than the tight slick sides
+    blob(p, 15.5, 0.5, 10.5, 5.5);
+    p.row(6, 7, 24);
+    p.row(7, 7, 24);
+    // the roll's shadowed underside and a sheen along its top
+    for (let x = 7; x <= 24; x++) p.put(x, 5 + (x > 9 && x < 22 ? 1 : 0), "H");
+    p.row(-3, 10, 16, "L");
+    p.row(-2, 9, 10, "L");
+    for (let y = 6; y <= 14; y++) {
+      p.row(y, 5, 6, "H");
+      p.row(y, 25, 26, "H");
+    }
+  } else if (view === "up") {
+    blob(p, 15.5, 2, 9, 6);
+    blob(p, 15.5, 11, 10.5, 9);
+    // combed straight back to a tapered nape
+    for (const x of [10, 13, 18, 21]) for (let y = 6; y <= 17; y++) p.put(x, y, "H");
+    p.row(20, 9, 22, "H");
+    p.row(21, 11, 20, "H");
+  } else {
+    // in profile the quiff juts out over the forehead and curls under at its front
+    blob(p, 12.5, 1.5, 9.5, 5);
+    blob(p, 17, 7, 9, 6);
+    p.row(5, 3, 6, "H");
+    p.put(3, 4, "H");
+    p.put(4, 6, "H");
+    p.row(-2, 8, 13, "L");
+    for (let y = 9; y <= 18; y++) p.row(y, 17, 25);
+    for (let y = 9; y <= 17; y += 3) p.row(y, 18, 23, "H");
+    p.row(19, 19, 24, "H");
+    for (let y = 10; y <= 30; y++) for (let x = 0; x <= 15; x++) p.put(x, y, ".");
+  }
+  return p.g;
+}
+
+function afroPuffs(view: View): Grid {
+  const R = RISE["afro-puffs"]!;
+  const p = pen(classic("short", view), R);
+  /** a fluffy puff: bumpy edge, curly speckles */
+  const puff = (cx: number, cy: number, r: number, dark = false) => {
+    for (let y = Math.floor(cy - r - 1); y <= Math.ceil(cy + r + 1); y++)
+      for (let x = Math.floor(cx - r - 1); x <= Math.ceil(cx + r + 1); x++) {
+        const u = (x + 0.5 - cx) / r;
+        const v = (y + 0.5 - cy) / r;
+        const bump = (hash2(x, y, 21) % 5) / 18;
+        if (u * u + v * v > 1.05 - bump) continue;
+        const h = hash2(x, y, 23) % 7;
+        const shade = dark || u + v > 0.7 || h === 0;
+        p.put(x, y, h === 1 && u + v < -0.4 && !dark ? "L" : shade ? "H" : "h");
+      }
+  };
+  if (view === "left") {
+    puff(15, -0.5, 4.5, true); // the far puff peeks over
+    puff(21, 2, 5.5);
+  } else {
+    centrePart(p.g, 4 + R, (view === "up" ? 19 : 9) + R);
+    puff(6, 2.5, 5.5);
+    puff(25, 2.5, 5.5);
+  }
+  return p.g;
+}
+
+/** Medusa: snakes for hair, writhing out from a scaly cap, each with tiny eyes. */
+function snakes(view: View): Grid {
+  const R = RISE.snakes!;
+  const p = pen(classic("short", view), R);
+  // scales on the cap
+  for (let y = 0; y < p.g.length; y++)
+    for (let x = 0; x < GW; x++)
+      if (p.g[y]![x] === "h" && (x + 2 * (y % 2)) % 4 === 0) p.g[y]![x] = "H";
+  /**
+   * A snake along a path of points (2-texel body, lit top-left / shaded bottom-right), its head
+   * at the last point looking along `dir`: a wide head, an eye, a flicking tongue.
+   */
+  const snake = (path: readonly (readonly [number, number])[], dir: -1 | 1) => {
+    for (let i = 0; i < path.length - 1; i++) {
+      const [x0, y0] = path[i]!;
+      const [x1, y1] = path[i + 1]!;
+      const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1);
+      for (let k = 0; k <= n; k++) {
+        const x = Math.round(x0 + ((x1 - x0) * k) / n);
+        const y = Math.round(y0 + ((y1 - y0) * k) / n);
+        // banded body: lit top, shaded underside, a light band every few texels
+        const band = (x + y) % 4 === 0;
+        p.put(x, y, band ? "L" : "h");
+        p.put(x + 1, y, "h");
+        p.put(x, y + 1, "H");
+        p.put(x + 1, y + 1, "H");
+      }
+    }
+    const [hx, hy] = path.at(-1)!;
+    // head: 4 wide, 3 tall, snout towards dir
+    const x0 = dir > 0 ? hx : hx - 2;
+    p.row(hy - 1, x0, x0 + 2);
+    p.row(hy, x0, x0 + 3, "h");
+    p.put(dir > 0 ? x0 + 3 : x0, hy, "h");
+    p.row(hy + 1, x0, x0 + 2, "H");
+    p.put(dir > 0 ? x0 + 1 : x0 + 1, hy - 1, "L");
+    p.put(dir > 0 ? x0 + 2 : x0, hy, "E");
+    p.put(dir > 0 ? x0 + 4 : x0 - 1, hy + 1, "R");
+  };
+  if (view === "down") {
+    snake(
+      [
+        [9, 4],
+        [7, 1],
+        [8, -1],
+        [6, -3],
+      ],
+      -1,
+    );
+    snake(
+      [
+        [15, 3],
+        [16, 0],
+        [14, -2],
+        [15, -3],
+      ],
+      1,
+    );
+    snake(
+      [
+        [22, 4],
+        [24, 1],
+        [23, -1],
+        [25, -2],
+      ],
+      1,
+    );
+    snake(
+      [
+        [5, 9],
+        [2, 11],
+        [3, 14],
+        [1, 17],
+      ],
+      -1,
+    );
+    snake(
+      [
+        [25, 9],
+        [28, 11],
+        [27, 14],
+        [29, 16],
+      ],
+      1,
+    );
+    snake(
+      [
+        [4, 13],
+        [5, 17],
+        [4, 20],
+        [5, 22],
+      ],
+      1,
+    );
+    snake(
+      [
+        [26, 13],
+        [25, 17],
+        [26, 20],
+        [25, 22],
+      ],
+      -1,
+    );
+  } else if (view === "up") {
+    for (let y = 12; y <= 19; y++) run(p.g, y + R, 6, 25);
+    snake(
+      [
+        [9, 4],
+        [7, 1],
+        [8, -1],
+        [6, -3],
+      ],
+      -1,
+    );
+    snake(
+      [
+        [15, 3],
+        [16, 0],
+        [14, -2],
+        [15, -3],
+      ],
+      1,
+    );
+    snake(
+      [
+        [22, 4],
+        [24, 1],
+        [23, -1],
+        [25, -2],
+      ],
+      1,
+    );
+    snake(
+      [
+        [5, 9],
+        [2, 11],
+        [3, 14],
+        [1, 17],
+      ],
+      -1,
+    );
+    snake(
+      [
+        [25, 9],
+        [28, 11],
+        [27, 14],
+        [29, 16],
+      ],
+      1,
+    );
+    snake(
+      [
+        [10, 19],
+        [9, 22],
+        [11, 24],
+        [10, 26],
+      ],
+      -1,
+    );
+    snake(
+      [
+        [20, 19],
+        [21, 22],
+        [19, 24],
+        [20, 26],
+      ],
+      1,
+    );
+  } else {
+    snake(
+      [
+        [11, 4],
+        [9, 1],
+        [11, -1],
+        [9, -3],
+      ],
+      -1,
+    );
+    snake(
+      [
+        [18, 3],
+        [20, 0],
+        [19, -2],
+        [21, -3],
+      ],
+      1,
+    );
+    snake(
+      [
+        [24, 7],
+        [27, 5],
+        [28, 2],
+        [29, 0],
+      ],
+      1,
+    );
+    snake(
+      [
+        [24, 13],
+        [27, 15],
+        [26, 18],
+        [28, 21],
+      ],
+      1,
+    );
+    snake(
+      [
+        [7, 9],
+        [5, 11],
+        [6, 13],
+        [4, 14],
+      ],
+      -1,
+    );
+  }
+  return p.g;
+}
+
 const NEW_CUTS: Partial<Record<CharacterLook["hair"]["cut"], (view: View) => Grid>> = {
+  "anime-spikes": animeSpikes,
+  beehive,
+  pompadour,
+  "afro-puffs": afroPuffs,
+  snakes,
   pixie,
   undercut,
   mullet,
@@ -958,7 +1470,8 @@ export function drawHair(pc: PixelCanvas, L: CharacterLook, view: View, hy: numb
   const plain = hairRows(cut, view);
   const rows = tips ? built(`tips/${cut}/${view}`, () => withTips(plain)) : plain;
   const light = cut === "bald" ? L.skin.light : sheen ? ramp.light : ramp.base;
-  pc.sprite(0, hy, rows, {
+  pc.sprite(0, hy - (RISE[cut] ?? 0), rows, {
+    E: C.lemon,
     h: ramp.base,
     H: ramp.shadow,
     L: light,
@@ -969,6 +1482,8 @@ export function drawHair(pc: PixelCanvas, L: CharacterLook, view: View, hy: numb
     U: tips ? mix(tips, NIGHT, 0.3) : ramp.shadow,
   });
   if (L.hair.clips && L.hair.clips !== "none") drawClips(pc, L, view, hy);
+  // elf ears (WD12) poke out through any hair
+  drawElfEars(pc, L, view, hy);
 }
 
 // ---- hair clips ---------------------------------------------------------------------------------
