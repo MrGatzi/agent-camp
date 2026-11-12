@@ -4,7 +4,7 @@
  * with the shared HD painter (no agent colour, no badge), plus the small things he carries
  * (a fire extinguisher, a RAM stick), the mess he leaves behind and the soot on his roof.
  */
-import type { CharacterLook } from "@agent-office/protocol";
+import { type CharacterLook, withWardrobe } from "@agent-office/protocol";
 import { Rectangle, Texture } from "pixi.js";
 import { agentRampOf, type RenderLook } from "./avatar/renderLook.ts";
 import { type CharacterSheet, characterSheet } from "./characters.ts";
@@ -110,7 +110,7 @@ export const RICHARD_LOOK: CharacterLook = {
 };
 
 export const RICHARD_RENDER: RenderLook = {
-  look: RICHARD_LOOK,
+  look: withWardrobe(RICHARD_LOOK),
   agent: "claude",
   agentRamp: agentRampOf("claude"),
   accent: false,

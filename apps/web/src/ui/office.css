@@ -1100,12 +1100,12 @@ body.kiosk .hud-reconnect {
 }
 .look-studio .look-preview .look-canvas {
   width: 96px;
-  height: 144px;
+  height: auto;
   image-rendering: pixelated;
 }
 .look-studio .look-preview .look-canvas:first-child {
   width: 160px;
-  height: 240px;
+  height: auto;
 }
 .look-studio .look-preview .look-ride {
   width: 144px;
@@ -1319,11 +1319,11 @@ body.kiosk .hud-reconnect {
   }
   .look-studio .look-preview .look-canvas {
     width: 48px;
-    height: 72px;
+    height: auto;
   }
   .look-studio .look-preview .look-canvas:first-child {
     width: 80px;
-    height: 120px;
+    height: auto;
   }
   .look-studio .look-note {
     display: none;

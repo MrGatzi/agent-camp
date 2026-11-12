@@ -11,10 +11,11 @@ import {
   WRISTWEAR,
 } from "@agent-office/protocol";
 import { LOOK_FIXTURES } from "@agent-office/protocol/fixtures";
-import { FH, FW } from "../src/art/avatar/geometry.ts";
-import { lookFor, lookKey, paintSheet } from "../src/art/characters.ts";
+import { BODY_ROWS as FH, FW } from "../src/art/avatar/geometry.ts";
+import { lookFor, lookKey } from "../src/art/characters.ts";
 import { vehiclePixels } from "../src/art/party.ts";
 import { packColor } from "../src/art/pixel.ts";
+import { paintBody as paintSheet } from "./bodySheet.ts";
 
 const base = {
   ...avatarFromSeed("anna"),

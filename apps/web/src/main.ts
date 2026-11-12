@@ -42,7 +42,7 @@ import {
   type SetGifRequest,
 } from "@agent-office/protocol";
 import { Application, TextureStyle } from "pixi.js";
-import { CHAR_H, CHAR_RES, CHAR_W, lookFor, lookPreview } from "./art/characters.ts";
+import { BODY_H, CHAR_RES, CHAR_W, HEAD_PAD, lookFor, lookPreview } from "./art/characters.ts";
 import { fitText } from "./art/font.ts";
 import { trophyCanvas } from "./art/fun.ts";
 import { CAT, catTextures } from "./art/fx.ts";
@@ -1043,7 +1043,9 @@ async function boot() {
     const ctx = canvas.getContext("2d")!;
     ctx.imageSmoothingEnabled = false;
     const r = CHAR_RES;
-    ctx.drawImage(src, frame.frame.x * r, frame.frame.y * r, CHAR_W * r, CHAR_H * r, 0, 0, 64, 96);
+    // the body window (as before the headroom), 2 px higher so a tall head still fits
+    const top = frame.frame.y + HEAD_PAD - 2;
+    ctx.drawImage(src, frame.frame.x * r, top * r, CHAR_W * r, BODY_H * r, 0, 0, 64, 96);
     return canvas;
   };
 

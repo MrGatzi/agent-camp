@@ -46,6 +46,10 @@ export function outerEnd(c: Ctx, b: TorsoBox): number {
       return b.end;
     case "thigh":
       return b.seated ? b.end : b.end + 3;
+    case "knee":
+      return b.seated ? b.end : c.legRow(39);
+    case "ankle":
+      return b.seated ? b.end : c.legRow(42);
   }
 }
 

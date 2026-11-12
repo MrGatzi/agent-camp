@@ -597,6 +597,18 @@ function drawAfro(pc: PixelCanvas, L: CharacterLook, view: View, hy: number) {
   }
 }
 
+/** Wardrobe cuts (WD1) drawn as their closest classic cut until they have their own art. */
+const CLASSIC_FALLBACK: Partial<Record<CharacterLook["hair"]["cut"], keyof typeof CLASSIC>> = {
+  pixie: "short",
+  undercut: "short",
+  mullet: "short",
+  pigtails: "long",
+  braids: "long",
+  dreadlocks: "long",
+  "space-buns": "bun",
+  "long-wavy": "long",
+};
+
 export function drawHair(pc: PixelCanvas, L: CharacterLook, view: View, hy: number) {
   const { cut, ramp, sheen } = L.hair;
   if (cut === "afro") {
@@ -612,7 +624,7 @@ export function drawHair(pc: PixelCanvas, L: CharacterLook, view: View, hy: numb
           ? BOB[view]
           : cut === "flip"
             ? FLIP[view]
-            : classic(cut, view);
+            : classic(CLASSIC_FALLBACK[cut] ?? (cut as keyof typeof CLASSIC), view);
   const light = cut === "bald" ? L.skin.light : sheen ? ramp.light : ramp.base;
   pc.sprite(0, hy, rows, { h: ramp.base, H: ramp.shadow, L: light, R: "#e43b44" });
 }

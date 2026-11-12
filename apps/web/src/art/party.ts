@@ -1,6 +1,6 @@
 /** Vehicle art complements the single AvatarSpec paper doll; no separate wardrobe state. */
 import type { AgentKind, AvatarSpec } from "@agent-office/protocol";
-import { CHAR_H, CHAR_RES, CHAR_W, lookFor, paintSheet } from "./characters.ts";
+import { CHAR_H, CHAR_RES, CHAR_W, HEAD_PAD, lookFor, paintSheet } from "./characters.ts";
 import { accentHex } from "./costumes.ts";
 import { C } from "./palette.ts";
 import { PixelCanvas } from "./pixel.ts";
@@ -51,7 +51,9 @@ export function vehicleCanvas(avatar: AvatarSpec): HTMLCanvasElement {
 export function avatarPortrait(avatar: AvatarSpec, agent: AgentKind = "codex"): HTMLCanvasElement {
   const p = new PixelCanvas(64 * CHAR_RES, 64 * CHAR_RES);
   const sheet = paintSheet(lookFor(avatar, agent, null));
-  p.copyFrom(sheet, 0, 0, CHAR_W * CHAR_RES, CHAR_H * CHAR_RES, 24 * CHAR_RES, 24 * CHAR_RES);
+  // feet where they were before the headroom (WD2): the frame starts HEAD_PAD higher
+  const y = (24 - HEAD_PAD) * CHAR_RES;
+  p.copyFrom(sheet, 0, 0, CHAR_W * CHAR_RES, CHAR_H * CHAR_RES, 24 * CHAR_RES, y);
   const vehicle = vehiclePixels(avatar);
   for (let y = 0; y < vehicle.height; y++)
     for (let x = 0; x < vehicle.width; x++) {

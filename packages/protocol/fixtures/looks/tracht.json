@@ -18,12 +18,14 @@
       "eyeColor": "#3b2819",
       "brows": "thin",
       "expression": "grin",
-      "cheeks": "blush"
+      "cheeks": "blush",
+      "makeup": { "lips": "none", "eyeshadow": "none" }
     },
     "hair": {
       "cut": "slicked-back",
       "ramp": { "base": "#5a3e2b", "shadow": "#3b2819", "light": "#7a5a40" },
-      "sheen": true
+      "sheen": true,
+      "tips": "none"
     },
     "facialHair": { "style": "none", "color": "#5a3e2b" },
     "eyewear": {
@@ -127,7 +129,34 @@
       "rightHand": "none",
       "costume": "none",
       "wrist": "none",
-      "accent": "#2ce8f5"
+      "accent": "#2ce8f5",
+      "leftTint": "none",
+      "rightTint": "none",
+      "costumeTint": "none",
+      "wristTint": "none"
+    },
+    "body": { "height": "average", "figure": "neutral" },
+    "underwear": {
+      "top": "none",
+      "topRamp": { "base": "#ffffff", "shadow": "#bdbac0", "light": "#ffffff" },
+      "bottom": "briefs",
+      "bottomRamp": { "base": "#ffffff", "shadow": "#bdbac0", "light": "#ffffff" },
+      "pattern": { "kind": "none", "a": "#ffffff", "b": "none" },
+      "trim": "none"
+    },
+    "apron": {
+      "kind": "none",
+      "ramp": { "base": "#ffffff", "shadow": "#bdbac0", "light": "#ffffff" },
+      "pattern": { "kind": "none", "a": "#ffffff", "b": "none" },
+      "bow": "left"
+    },
+    "accessories": {
+      "mask": { "kind": "none", "color": "#3a4466" },
+      "wings": { "kind": "none", "color": "#3a4466" },
+      "tail": { "kind": "none", "color": "#3a4466" },
+      "gloves": { "kind": "none", "color": "#3a4466" },
+      "necklace": { "kind": "none", "color": "#3a4466" },
+      "bag": { "kind": "none", "color": "#3a4466" }
     }
   }
 }

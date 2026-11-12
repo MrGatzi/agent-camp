@@ -21,7 +21,7 @@ import {
 import { Sprite, Texture } from "pixi.js";
 import {
   type AnimName,
-  CHAR_H,
+  BODY_H,
   type CharacterSheet,
   characterSheet,
   lookFor,
@@ -2190,7 +2190,7 @@ export class CharacterManager {
     let best: SessionCharacter | null = null;
     for (const c of this.chars.values()) {
       if (!c.sprite.visible) continue;
-      if (wx >= c.x - 8 && wx <= c.x + 8 && wy >= c.y - CHAR_H + 2 && wy <= c.y + 2) {
+      if (wx >= c.x - 8 && wx <= c.x + 8 && wy >= c.y - BODY_H + 2 && wy <= c.y + 2) {
         if (!best || c.y > best.y) best = c;
       }
     }

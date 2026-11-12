@@ -58,6 +58,8 @@ function legSkinOrWear(c: Ctx, row: number, dark: boolean, x: number): string {
       return skin;
     case "tights":
       return wear;
+    default:
+      return wear;
   }
 }
 

@@ -374,7 +374,7 @@ describe("repairLook", () => {
   test("bad fields/sections fall back to the base look, good ones are kept", () => {
     const c = clone(tracht.look) as unknown as Record<string, unknown>;
     c.shoes = "white sneakers"; // whole section unusable
-    (c.bottoms as Record<string, unknown>).kind = "kilt"; // one bad field
+    (c.bottoms as Record<string, unknown>).kind = "toga"; // one bad field
     delete (c as Record<string, unknown>).pose; // missing section
     c.build = "huge";
     c.v = 3;
