@@ -7,6 +7,7 @@ banner after a deploy.
 
 ## 2026-11-12
 
+- The office no longer jumps or changes size while the camera zooms
 - 🙂 "Who are you?" in the top bar: confirm once with a code from your Mac, then your portrait sits there with Customize look and your desk; office games and pokes now go out as you
 
 ## 2026-11-11
