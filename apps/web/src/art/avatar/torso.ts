@@ -461,27 +461,7 @@ function drawOuterFront(c: Ctx, b: TorsoBox) {
       break;
     case "blazer":
     case "coat":
-      if (!open) {
-        pc.vline(CX1, b.T + 7, end - b.T - 7, o.ramp.shadow);
-        if (o.kind === "coat") {
-          buttonColumn(
-            c,
-            { ...o.buttons, count: Math.max(o.buttons.count, 3), size: "small" },
-            CX0 - 2,
-            b.T + 7,
-            end - 1,
-            o.ramp.shadow,
-          );
-          buttonColumn(
-            c,
-            { ...o.buttons, count: Math.max(o.buttons.count, 3), size: "small" },
-            CX1 + 2,
-            b.T + 7,
-            end - 1,
-            o.ramp.shadow,
-          );
-        }
-      }
+      if (!open) pc.vline(CX1, b.T + 7, end - b.T - 7, o.ramp.shadow);
       break;
     case "cardigan":
       for (let x = c.tl; x <= c.tr; x += 2) pc.set(x, end, o.ramp.light);
@@ -576,8 +556,30 @@ function drawOuterFront(c: Ctx, b: TorsoBox) {
         break;
     }
   }
-  // buttons: along the wearer's right front edge (viewer's left) when open, centre when closed
-  if (o.buttons.count > 0 && o.kind !== "coat") {
+  // buttons: two rows when double-breasted (closed only; a coat without a stated layout is
+  // double-breasted, as before), else one row along the wearer's right front edge (viewer's
+  // left) when open, down the centre when closed
+  const layout = o.buttons.layout ?? (o.kind === "coat" ? "double" : "single");
+  if (!open && layout === "double") {
+    // looks stored before `layout` existed keep their coat exactly as it was
+    const legacyCoat = o.kind === "coat" && o.buttons.layout === undefined;
+    const perRow = legacyCoat ? Math.max(o.buttons.count, 3) : Math.ceil(o.buttons.count / 2);
+    if (perRow > 0) {
+      // start below the collar opening so the rows sit on cloth
+      let top = b.T + 7;
+      if (!legacyCoat) {
+        let k = 0;
+        while (k < 8 && neckHole(collar, k, "outer") >= 2) k++;
+        top = b.T + k + 1;
+      }
+      const btn: Buttons = legacyCoat
+        ? { ...o.buttons, count: perRow, size: "small" }
+        : { ...o.buttons, count: perRow };
+      const y1 = legacyCoat ? end - 1 : Math.min(end - 1, top + perRow * 2 - 2);
+      buttonColumn(c, btn, CX0 - 2, top, y1, o.ramp.shadow);
+      buttonColumn(c, btn, CX1 + 2, top, y1, o.ramp.shadow);
+    }
+  } else if (o.buttons.count > 0 && (o.kind !== "coat" || o.buttons.layout !== undefined)) {
     const bx = open ? lz - 2 : CX0;
     const top = open && collar === "stand-up" ? b.T + 2 : b.T + 1;
     buttonColumn(
