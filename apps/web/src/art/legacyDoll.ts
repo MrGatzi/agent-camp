@@ -564,6 +564,27 @@ export function drawHead(pc: PixelCanvas, look: Look, view: View, dy: number) {
 /** Neon bracelets around the wrist above the hand pixel (x, y). */
 export function drawWrist(pc: PixelCanvas, wrist: AvatarSpec["wrist"], x: number, y: number) {
   if (wrist === "none") return;
+  switch (wrist) {
+    case "gold-cuffs":
+      // a broad cuff, two rows tall, polished on the lit side
+      pc.hline(x - 1, y - 1, 3, C.amber);
+      pc.hline(x - 1, y, 3, C.amber);
+      pc.set(x - 1, y - 1, C.lemon);
+      pc.set(x, y - 1, C.lemon);
+      pc.set(x + 1, y, C.wood);
+      return;
+    case "spiked":
+      // the HD doll paints these at 2× (studs and spikes); here: a black band, a silver stud
+      pc.hline(x - 1, y, 3, C.ink);
+      pc.set(x, y, C.silver);
+      return;
+    case "friendship":
+      // the HD doll paints these at 2× (thin bands); here: a braid of three colours
+      pc.set(x - 1, y, C.pink);
+      pc.set(x, y, C.lemon);
+      pc.set(x + 1, y, C.sky);
+      return;
+  }
   const color =
     wrist === "neon-pink"
       ? C.pink
@@ -578,6 +599,28 @@ export function drawWrist(pc: PixelCanvas, wrist: AvatarSpec["wrist"], x: number
 
 /** Painters that run after the outline (thin things that must stay thin). */
 export type After = ((pc: PixelCanvas) => void)[];
+
+/**
+ * A small sprite held in the hand: column `g` of `rows` lands on column `gx`, row 0 on `y`;
+ * the sprite is authored sticking out to the right and mirrored for `dir` -1.
+ */
+function heldSprite(
+  pc: PixelCanvas,
+  rows: readonly string[],
+  g: number,
+  gx: number,
+  y: number,
+  dir: -1 | 1,
+  colors: Record<string, string>,
+) {
+  rows.forEach((row, j) => {
+    for (let i = 0; i < row.length; i++) {
+      const ch = row[i]!;
+      if (ch === ".") continue;
+      pc.set(gx + dir * (i - g), y + j, colors[ch]!);
+    }
+  });
+}
 
 /**
  * A held item next to the hand pixel (hx, hy). `dir` -1 = it sticks out to the viewer's
@@ -658,6 +701,105 @@ export function drawHeld(
       pc.set(sx + 1, hy - 4, C.white);
       return;
     }
+    // crazy wardrobe (WD12)
+    case "rubber-chicken":
+      // floppy yellow rubber chicken held by the legs: red comb, orange beak sticking out
+      heldSprite(
+        pc,
+        [".r.", ".yo", ".yr", ".y.", "yy.", "yyl", "ayy", ".aa", ".o."],
+        1,
+        hx + dir,
+        hy - 8,
+        dir,
+        {
+          r: C.red,
+          y: C.lemon,
+          l: C.white,
+          a: C.amber,
+          o: C.orange,
+        },
+      );
+      return;
+    case "trident": {
+      // a golden trident held like a staff: three prongs at shoulder height, the shaft's end
+      // near the ground
+      const rows = ["..l..", "l.y.l", "y.y.y", "yyyyy", "..a..", "..w..", "..w..", "..w.."];
+      heldSprite(pc, [...rows, "..w..", "..w..", "..w..", "..b.."], 2, hx + dir, hy - 7, dir, {
+        l: C.lemon,
+        y: C.amber,
+        a: C.amber,
+        w: C.wood,
+        b: C.bark,
+      });
+      return;
+    }
+    case "pizza":
+      // a slice held by the crust, tip up: cheese, pepperoni, a drip of cheese
+      heldSprite(pc, ["..y.", "..yy", ".yry", ".yyr", "ryyy", "cccc"], 1, hx + dir, hy - 5, dir, {
+        y: C.lemon,
+        r: C.red,
+        c: C.wood,
+      });
+      pc.set(hx + dir * 2, hy - 1, C.sand);
+      return;
+    case "ice-cream":
+      // a waffle cone with a scoop in the accent colour and a cherry on top
+      heldSprite(pc, [".r.", "lss", "sss", "cwc", ".c.", ".w."], 1, hx + dir, hy - 5, dir, {
+        r: C.red,
+        l: C.white,
+        s: color,
+        c: C.sand,
+        w: C.wood,
+      });
+      return;
+    case "torch": {
+      // a wooden torch with a flickering flame (tick swaps the flame's shape)
+      const flame = tick
+        ? ["..o.", ".oy.", "oyly", ".yo.", ".bb."]
+        : [".o..", ".yo.", "ylyo", ".oy.", ".bb."];
+      heldSprite(pc, [...flame, ".w..", ".w..", ".w..", ".w.."], 1, hx + dir, hy - 7, dir, {
+        o: C.orange,
+        y: C.amber,
+        l: C.lemon,
+        b: C.bark,
+        w: C.wood,
+      });
+      return;
+    }
+    case "boombox":
+      // carried by its handle: speakers at both ends, a tape deck in the accent colour
+      heldSprite(pc, [".s.s.", "ddddd", "sdcds", "ddddd"], 2, hx, hy, dir, {
+        s: C.silver,
+        c: color,
+        d: C.slate,
+      });
+      pc.set(hx + dir, hy + 1, C.red);
+      return;
+    case "plunger":
+      // wooden stick up, the red rubber cup hanging below the fist
+      heldSprite(
+        pc,
+        [".b.", ".w.", ".w.", ".w.", ".w.", ".w.", ".w.", ".w.", ".r.", "rrr", "RRR"],
+        1,
+        hx + dir,
+        hy - 7,
+        dir,
+        {
+          b: C.bark,
+          w: C.wood,
+          r: C.red,
+          R: C.wine,
+        },
+      );
+      return;
+    case "megaphone":
+      // a red megaphone pointing away from the fist, its white bell open to the side
+      heldSprite(pc, ["..w", ".rw", "rrw", "..w", ".k."], 1, hx + dir, hy - 2, dir, {
+        w: C.white,
+        r: C.red,
+        k: C.ink,
+      });
+      return;
     case "beer":
       // glass of lager with a foam head
       pc.rect(x, hy - 2, 2, 1, C.white);

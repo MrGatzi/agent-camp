@@ -29,6 +29,7 @@ import { drawHeadSkin } from "./head.ts";
 import { drawEarrings, drawHeadwear } from "./headwear.ts";
 import { drawLegsSeatedFront, drawLegsSide, drawLegsStanding, drawSeatBackHip } from "./legs.ts";
 import type { RenderLook } from "./renderLook.ts";
+import { suitLook } from "./suits.ts";
 import { drawTorsoBack, drawTorsoFront, drawTorsoSide, type TorsoBox, torsoBox } from "./torso.ts";
 import { drawBodyHips, drawBodyTorso } from "./underwear.ts";
 
@@ -216,7 +217,10 @@ function paintFrame(pc: PixelCanvas, r: RenderLook, f: FrameSpec, after: (() => 
  * Paint all frames side by side (32×56 each: HEADROOM rows, then the 48 body rows), 2-texel
  * outline, mirrored right frames.
  */
-export function paintSheet(r: RenderLook): PixelCanvas {
+export function paintSheet(look: RenderLook): PixelCanvas {
+  // a full-body costume (WD12) paints the wearer in its bodysuit (suits.ts); others unchanged
+  const suited = suitLook(look.look);
+  const r = suited === look.look ? look : { ...look, look: suited };
   const pc = new PixelCanvas(FW * SPECS.length, FH);
   SPECS.forEach((spec, i) => {
     if (spec.mirror !== undefined) return;
