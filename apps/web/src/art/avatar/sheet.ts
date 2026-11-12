@@ -4,7 +4,12 @@
  */
 import { HEIGHT_LIFT } from "@agent-office/protocol";
 import { PixelCanvas } from "../pixel.ts";
-import { drawAccessoriesBehind, drawAccessoriesFront, drawAccessoriesHead } from "./accessories.ts";
+import {
+  drawAccessoriesBehind,
+  drawAccessoriesFront,
+  drawAccessoriesHead,
+  drawAccessoriesOverHair,
+} from "./accessories.ts";
 import { drawArmSide, drawArmsBack, drawArmsFront, drawMug, drawRaisedHand } from "./arms.ts";
 import { type Ctx, torsoCols } from "./ctx.ts";
 import { drawCostumeHead, drawCostumeTorso, drawExtras } from "./extras.ts";
@@ -174,6 +179,7 @@ function paintFrame(pc: PixelCanvas, r: RenderLook, f: FrameSpec, after: (() => 
     }
     drawAccessoriesFront(c, b);
     drawHead(c, c.view, c.dy + (f.bow ?? 0));
+    drawAccessoriesOverHair(c, b);
     if (c.view === "down") drawRaisedHand(c, b, f.arms);
     return;
   }
@@ -188,6 +194,7 @@ function paintFrame(pc: PixelCanvas, r: RenderLook, f: FrameSpec, after: (() => 
     drawExtras(c, b, f.arms, 0);
     drawAccessoriesFront(c, b);
     drawHead(c, "up", c.dy);
+    drawAccessoriesOverHair(c, b);
     return;
   }
   // seated, facing the camera

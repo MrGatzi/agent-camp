@@ -645,6 +645,22 @@ export function drawAccessoriesFront(c: Ctx, b: TorsoBox): void {
   drawBag(c, b);
 }
 
+/**
+ * After the head, seen from behind: long hair falls over the top of a backpack, not over all
+ * of it, so the pack is painted again below its top rows.
+ */
+export function drawAccessoriesOverHair(c: Ctx, b: TorsoBox): void {
+  if (c.view !== "up" || c.L.accessories.bag.kind !== "backpack") return;
+  const pc = c.pc;
+  const saved = pc.clip;
+  const top = pc.oy + b.T + 5;
+  pc.clip = saved
+    ? { ...saved, y0: Math.max(saved.y0, top) }
+    : { x0: 0, y0: top, x1: pc.width, y1: pc.height };
+  drawBag(c, b);
+  pc.clip = saved;
+}
+
 export function drawAccessoriesHead(pc: PixelCanvas, L: FullLook, view: View, hy: number): void {
   if (L.accessories.mask.kind === "none") return;
   if (view === "down") drawMaskFront(pc, L, hy);
