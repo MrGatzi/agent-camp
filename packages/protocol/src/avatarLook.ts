@@ -11,6 +11,7 @@ import {
   type AvatarCatalogSpec,
   AvatarSpec,
   avatarFromSeed,
+  Companion,
   DeskMess,
   DeskProp,
   FacialHair,
@@ -23,6 +24,7 @@ import {
   Outfit,
   SkinTone,
   skinToneHex,
+  Trail,
   Vehicle,
   Wristwear,
 } from "./catalog.ts";
@@ -475,6 +477,8 @@ const CATALOG_FIELDS = {
   wrist: Wristwear,
   accentColor: AccentColor,
   vehicle: Vehicle,
+  trail: Trail,
+  companion: Companion,
   deskMess: DeskMess,
 } as const;
 
@@ -516,6 +520,8 @@ export function repairAvatar(
     wrist: pickField("wrist"),
     accentColor: pickField("accentColor"),
     vehicle: pickField("vehicle"),
+    trail: pickField("trail"),
+    companion: pickField("companion"),
     deskProps: fallback.deskProps,
     deskMess: pickField("deskMess"),
   };

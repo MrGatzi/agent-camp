@@ -7,6 +7,7 @@ banner after a deploy.
 
 ## 2026-11-12
 
+- ✨ Magic for your character (Customize look → Magic): leave a trail of glitter stars and sweets wherever you walk, and now and then a little friend tags along for a while: a glowing floating eye in a triangle, a little pig, or both
 - `agent-office status --json` now gives scripts a privacy-safe health snapshot, without config, project names or server credentials
 - 🚢 Schiffe versenken and Vier gewinnt: challenge a colleague from their nameplate and play a move whenever you get to it; your portrait in the top bar shows when it is your turn
 - 🎀 New looks for your character: a curved hairband (hidden from behind, unlike the straight headband), longer sweaters and shirts that hang down over the hips instead of looking like a crop top, and lots of colourful clips in the hair

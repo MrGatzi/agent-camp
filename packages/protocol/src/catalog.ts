@@ -178,6 +178,24 @@ export const VEHICLES = [
 ] as const;
 export const Vehicle = z.enum(ids(VEHICLES));
 export type Vehicle = z.infer<typeof Vehicle>;
+/** What drops behind the character while it walks through the office (fades after a moment). */
+export const TRAILS = [
+  { id: "none", label: "nothing" },
+  { id: "sparkles", label: "glitter stars" },
+  { id: "candy", label: "sweets" },
+  { id: "both", label: "glitter and sweets" },
+] as const;
+export const Trail = z.enum(ids(TRAILS));
+export type Trail = z.infer<typeof Trail>;
+/** A little friend that now and then turns up next to the character and tags along a while. */
+export const COMPANIONS = [
+  { id: "none", label: "none" },
+  { id: "eye", label: "floating eye in a triangle" },
+  { id: "pig", label: "little pig" },
+  { id: "both", label: "eye and pig" },
+] as const;
+export const Companion = z.enum(ids(COMPANIONS));
+export type Companion = z.infer<typeof Companion>;
 
 // ---- desk ---------------------------------------------------------------------------------
 export const DESK_PROPS = [
@@ -216,6 +234,8 @@ export const AvatarCatalogSpec = z.object({
   wrist: Wristwear.default("none"),
   accentColor: AccentColor.default("cyan"),
   vehicle: Vehicle.default("none"),
+  trail: Trail.default("none"),
+  companion: Companion.default("none"),
   /** 0..3 distinct props */
   deskProps: z
     .array(DeskProp)
@@ -253,6 +273,8 @@ export const ViewerAvatar = z.object({
   wrist: Wristwear.catch("none"),
   accentColor: AccentColor.catch("cyan"),
   vehicle: Vehicle.catch("none"),
+  trail: Trail.catch("none"),
+  companion: Companion.catch("none"),
   deskProps: z
     .array(z.unknown())
     .catch([])
@@ -280,6 +302,8 @@ export const AVATAR_CATALOG = {
   wrists: Wristwear.options,
   accentColors: AccentColor.options,
   vehicles: Vehicle.options,
+  trails: Trail.options,
+  companions: Companion.options,
   deskProps: DeskProp.options,
   deskMess: DESK_MESS_LEVELS,
 } as const;
@@ -331,6 +355,8 @@ export function avatarFromSeed(seed: string): AvatarSpec {
     wrist: "none",
     accentColor: "cyan",
     vehicle: "none",
+    trail: "none",
+    companion: "none",
     deskProps,
     deskMess: pick(rand, DESK_MESS_LEVELS),
   };

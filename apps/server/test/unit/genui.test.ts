@@ -145,6 +145,8 @@ describe("genui: schema", () => {
       "wrist",
       "accentColor",
       "vehicle",
+      "trail",
+      "companion",
       "deskProps",
       "deskMess",
       "look",
