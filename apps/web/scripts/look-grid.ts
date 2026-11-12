@@ -7,6 +7,9 @@
  *   bun apps/web/scripts/look-grid.ts out.png json looks.json    [CharacterLook, ...]
  *   bun apps/web/scripts/look-grid.ts out.png vary <path> v1,v2  one field of the probe look
  *                                                               (e.g. headwear.style top-hat,beret)
+ *        [path=value ...]   more fields set on every row, e.g. to fill an optional part:
+ *   bun apps/web/scripts/look-grid.ts out.png vary accessories.pet.kind cat,dragon \
+ *     accessories.pet.color=#63c74d
  */
 import { writeFileSync } from "node:fs";
 import {
@@ -60,10 +63,15 @@ else if (mode === "json")
     look,
   }));
 else if (mode === "vary") {
-  const [path, values] = rest;
+  const [path, values, ...fixed] = rest;
+  const parse = (v: string) => (v === "true" ? true : v === "false" ? false : v);
   looks = values!.split(",").map((v) => {
     const look = structuredClone(probe) as unknown as Record<string, unknown>;
-    setPath(look, path!, v === "true" ? true : v === "false" ? false : v);
+    for (const kv of fixed) {
+      const eq = kv.indexOf("=");
+      setPath(look, kv.slice(0, eq), parse(kv.slice(eq + 1)));
+    }
+    setPath(look, path!, parse(v));
     return { label: v, look: look as unknown as CharacterLook };
   });
 }

@@ -11,6 +11,7 @@ import {
   drawAccessoriesOverHair,
 } from "./accessories.ts";
 import { drawArmSide, drawArmsBack, drawArmsFront, drawMug, drawRaisedHand } from "./arms.ts";
+import { drawAura } from "./auras.ts";
 import { type Ctx, torsoCols } from "./ctx.ts";
 import { drawCostumeHead, drawCostumeTorso, drawExtras } from "./extras.ts";
 import { drawEyewear } from "./eyewear.ts";
@@ -28,6 +29,7 @@ import { drawHair } from "./hair.ts";
 import { drawHeadSkin } from "./head.ts";
 import { drawEarrings, drawHeadwear } from "./headwear.ts";
 import { drawLegsSeatedFront, drawLegsSide, drawLegsStanding, drawSeatBackHip } from "./legs.ts";
+import { drawPet } from "./pets.ts";
 import type { RenderLook } from "./renderLook.ts";
 import { drawTorsoBack, drawTorsoFront, drawTorsoSide, type TorsoBox, torsoBox } from "./torso.ts";
 import { drawBodyHips, drawBodyTorso } from "./underwear.ts";
@@ -146,6 +148,7 @@ function paintFrame(pc: PixelCanvas, r: RenderLook, f: FrameSpec, after: (() => 
   const c = makeCtx(pc, r, f, after, lift, lift === 0 ? (y) => y : dest);
   const b: TorsoBox = torsoBox(c);
   drawAccessoriesBehind(c, b);
+  drawAura(c, b);
   if (f.seat === "none") {
     drawBodyHips(lc, lb);
     if (c.view === "left") drawLegsSide(lc, lb, f.phase);
@@ -180,6 +183,7 @@ function paintFrame(pc: PixelCanvas, r: RenderLook, f: FrameSpec, after: (() => 
     drawAccessoriesFront(c, b);
     drawHead(c, c.view, c.dy + (f.bow ?? 0));
     drawAccessoriesOverHair(c, b);
+    drawPet(c, b);
     if (c.view === "down") drawRaisedHand(c, b, f.arms);
     return;
   }
@@ -195,6 +199,7 @@ function paintFrame(pc: PixelCanvas, r: RenderLook, f: FrameSpec, after: (() => 
     drawAccessoriesFront(c, b);
     drawHead(c, "up", c.dy);
     drawAccessoriesOverHair(c, b);
+    drawPet(c, b);
     return;
   }
   // seated, facing the camera
@@ -209,6 +214,7 @@ function paintFrame(pc: PixelCanvas, r: RenderLook, f: FrameSpec, after: (() => 
   if (r.mug && f.arms === "rest") drawMug(c, c.tr - 1, b.T + 4);
   drawAccessoriesFront(c, b);
   drawHead(c, "down", c.dy);
+  drawPet(c, b);
   drawRaisedHand(c, b, f.arms);
 }
 
