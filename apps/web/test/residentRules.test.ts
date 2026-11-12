@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { seededRandom } from "@agent-office/protocol";
 import { buildOfficeMap, HEAD_DESK, KURT_DESK, SALES_STAND, STOVE_SPOT } from "../src/world/map.ts";
 import { findPath } from "../src/world/pathing.ts";
-import { haggle, hourCrossed, kurtTalk, lineSpots } from "../src/world/residentRules.ts";
+import { haggle, hourCrossed, kurtTalk, kurtWifi, lineSpots } from "../src/world/residentRules.ts";
 
 const grid = (x0: number, y0: number, x1: number, y1: number) => ({
   isWalkable: (x: number, y: number) => x >= x0 && x <= x1 && y >= y0 && y <= y1,
@@ -108,6 +108,17 @@ describe("asking Kurt", () => {
       for (const l of lines) expect(l.text).toMatch(/^[A-Z0-9 .,!?':]+$/);
     }
     expect([...topics].sort()).toEqual(["contract", "klima"]);
+  });
+  test("out of his office he asks where the wifi is, someone answers, he has the last word", () => {
+    const rand = seededRandom("wifi");
+    const answers = new Set<string>();
+    for (let i = 0; i < 100; i++) {
+      const w = kurtWifi(rand);
+      expect(w.ask).toBe("WHERE IS THE WIFI?!");
+      answers.add(w.answer);
+      for (const t of [w.ask, w.answer, w.thanks]) expect(t).toMatch(/^[A-Z0-9 .,!?':]+$/);
+    }
+    expect(answers.size).toBeGreaterThan(3);
   });
   for (const rows of [4, 6]) {
     test(`his office is only reachable through its door (${rows} pod rows)`, () => {

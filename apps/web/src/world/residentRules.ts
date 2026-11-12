@@ -146,3 +146,22 @@ export function kurtTalk(rand: () => number): { topic: KurtTopic; lines: KurtLin
     ],
   };
 }
+
+const WIFI_ANSWERS = [
+  "SAME AS YESTERDAY.",
+  "IT'S ON THE ROUTER.",
+  "ASK RICHARD!",
+  "PASSWORD'S ON THE FRIDGE.",
+  "TURN IT OFF AND ON?",
+  "IT'S ALWAYS BEEN THERE.",
+];
+const WIFI_THANKS = ["AH. THANKS!", "STILL NOTHING.", "THIS AND THAT, THEN.", "OK. WHICH ROUTER?"];
+
+/** Kurt out of his office: "WHERE IS THE WIFI?!", someone answers, he gives his verdict. */
+export function kurtWifi(rand: () => number): { ask: string; answer: string; thanks: string } {
+  return {
+    ask: "WHERE IS THE WIFI?!",
+    answer: pick(rand, WIFI_ANSWERS),
+    thanks: pick(rand, WIFI_THANKS),
+  };
+}

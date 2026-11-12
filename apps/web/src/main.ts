@@ -271,7 +271,11 @@ async function boot() {
   chars.snackOpen = () => chef.cooking;
   chars.onSnack = (x, y) => chef.served(x, y);
   chars.onPunch = (x, y) => headDev.punched(x, y);
-  const kurt = new Kurt(scene.objects, scene.map, effects, (id, text) => chars.sayAtKurt(id, text));
+  const kurt = new Kurt(scene.objects, scene.map, effects, {
+    visitorSays: (id, text) => chars.sayAtKurt(id, text),
+    seated: () => chars.devs(),
+    answer: (id, text) => chars.answerPage(id, text),
+  });
   chars.onAskKurt = (id) => kurt.asked(id);
   const bowParam = params.get("bow");
   if (bowParam && !["0", "false", "off"].includes(bowParam)) headDev.bowEvery = 60;
@@ -286,6 +290,8 @@ async function boot() {
     }
     headDev.nagEvery = 25;
     chars.kurtChance = 0.25;
+    kurt.wifiEvery = 20;
+    kurt.wifiIn = 8;
   }
   const weatherParam = params.get("weather");
   const life = new OfficeLife(
