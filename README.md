@@ -675,22 +675,22 @@ server ships first, a fresh install can get an older connector that ignores
   the optional `deploy` job in `release.yml` then deploys after each release (it skips while
   they are missing). Use this *or* Workers Builds, not both.
 
-**Moving the data to another server (Postgres)**
+**Moving the data to another server**
 
 All office data lives in the SQLite database of the one Durable Object. `GET /api/export`
 (password as `Authorization: Bearer`, not the kiosk key or a browser session) hands it out page by
-page; this script turns it into a Postgres dump:
+page; this script copies it into one SQLite file with the same schema:
 
 ```bash
 AGENT_OFFICE_URL=https://agent-office.<subdomain>.workers.dev CONNECTOR_PASSWORD=... \
-  bun apps/server/scripts/export-postgres.ts agent-office.sql
-createdb agent_office && psql -v ON_ERROR_STOP=1 -d agent_office -f agent-office.sql
+  bun apps/server/scripts/export-sqlite.ts agent-office.sqlite
 ```
 
 Every table comes over as is (history, office messages, looks, custom looks, kv incl. games and
-claims, timelapse frames as `bytea`), with the same ids, indexes and unique keys. Timestamps stay
-Unix milliseconds (`BIGINT`) and JSON stays `TEXT`. Live socket state (who is online right now)
-is not stored and rebuilds when the connectors reconnect.
+claims, timelapse frames as BLOBs), with the same ids and indexes, plus `export_info` (server
+version, export time). Timestamps are Unix milliseconds and JSON is `TEXT`. Any stack reads the
+file directly; `sqlite3 agent-office.sqlite .dump` gives plain SQL for another database. Live
+socket state (who is online right now) is not stored and rebuilds when the connectors reconnect.
 
 ## More
 
