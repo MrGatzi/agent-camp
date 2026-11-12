@@ -365,8 +365,10 @@ describe("busy sessions are not idle", () => {
       activity: "thinking",
       subagents: 1,
     });
-    // the same session reporting "idle" falls back to the transcript: idle, no subagents
+    // the same session reporting "idle", its subagent quiet (no meta.json: 60 s rule), falls
+    // back to the transcript: idle, no subagents
     pidFile(12346, WEBSITE_ID, "idle");
+    h.age(websiteSub("agent-bg.jsonl"), 2 * 60_000);
     expect(await website([{ pid: 12346, agent: "claude" }])).toMatchObject({
       activity: "idle",
       subagents: 0,

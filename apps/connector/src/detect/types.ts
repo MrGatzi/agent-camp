@@ -29,8 +29,11 @@ export type Candidate = {
   normalize(entry: Record<string, unknown>): TurnEvent | null;
   /** share of the context window in use, from the transcript's latest usage numbers */
   context?(entries: readonly Record<string, unknown>[]): number | undefined;
-  /** Claude only: count live subagent transcripts */
-  subagents?(now: number): number;
+  /**
+   * Claude only: count live subagents. `entries` are the raw tail entries of this session's
+   * transcript (already read by the detector), used to see which tool calls are still pending.
+   */
+  subagents?(now: number, entries: readonly Record<string, unknown>[]): number;
   /**
    * A session of the Claude desktop app (Cowork). It may run inside the app's VM, so no
    * process on this machine owns it: it is live while the app runs and its transcript was

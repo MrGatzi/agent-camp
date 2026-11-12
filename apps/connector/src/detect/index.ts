@@ -31,9 +31,10 @@
  * transcript there on a desk forever ("idle, started 9d ago"). It owns nothing, so agents hosted
  * below it are helpers of no session and keep none busy.
  *
- * A live session turns `idle` after IDLE_AFTER_MS without transcript writes, unless its live
- * Claude process says "busy" or (reporting no status) a tool call is still pending; that hold
- * lasts until BUSY_HOLD_MS of transcript + subagent silence (see `Detector.hold`).
+ * A live session turns `idle` after IDLE_AFTER_MS without transcript writes, unless it is
+ * evidently still working (see `Detector.describe`): its live Claude process says "busy", or
+ * (reporting no status) a tool call is still pending, each until BUSY_HOLD_MS of transcript +
+ * subagent silence (see `Detector.hold`); or it has live subagents (see `countSubagents`).
  */
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
@@ -47,7 +48,7 @@ import type { DesignWatcher, DesignWatchStatus } from "../desktop.ts";
 import type { AgentDirs } from "../paths.ts";
 import type { ProcessSource, ProcInfo } from "../proc.ts";
 import { type ActivityHold, deriveActivity } from "./activity.ts";
-import { scanClaude } from "./claude.ts";
+import { newSubagentCache, scanClaude } from "./claude.ts";
 import { scanCodex } from "./codex.ts";
 import { COWORK_LIVE_MS, CoworkScanner } from "./cowork.ts";
 import { scanPi } from "./pi.ts";
@@ -97,6 +98,7 @@ export class Detector {
   private hostedIds = new Set<string>();
   /** pids from pid files whose process is alive in the current poll (rule 1) */
   private alivePids: ReadonlySet<number> = new Set();
+  private subagentCache = newSubagentCache();
   private readonly now: () => number;
 
   constructor(private readonly opts: DetectorOptions) {
@@ -126,7 +128,7 @@ export class Detector {
     const cowork = desktop && this.opts.cowork === true;
     if (!cowork) this.cowork.reset();
     const scanned = [
-      ...safe(() => scanClaude(dirs.claude, this.metaCache)),
+      ...safe(() => scanClaude(dirs.claude, this.metaCache, this.subagentCache)),
       ...safe(() => scanCodex(dirs.codex, this.metaCache)),
       ...safe(() => scanPi(dirs.pi, this.metaCache)),
       ...(cowork ? safe(() => this.cowork.scan(dirs.claudeDesktop, now, this.metaCache)) : []),
@@ -264,18 +266,25 @@ export class Detector {
   }
 
   /**
-   * `busy`: a hosted process (backend or helper) still runs, so the turn is in progress even if
-   * the transcript is quiet (e.g. Pi waiting minutes for a subagent tool call).
+   * A quiet session is idle after IDLE_AFTER_MS without transcript writes, unless any of these
+   * says it is still working:
+   *   - its live Claude process reports status "busy" (within BUSY_HOLD_MS of silence),
+   *   - it reports no status and a tool call is still pending (within BUSY_HOLD_MS),
+   *   - a hosted process still runs (`busy`, within HOSTED_BUSY_MAX_MS), or
+   *   - it has live subagents (`countSubagents`: by their lifecycle, at most
+   *     SUBAGENT_SILENT_MAX_MS of silence each).
+   * An open question to the human (AskUserQuestion, plan approval) is never held: it waits.
    * `helpers`: hosted helper processes, added to the transcript-based subagent count.
    */
   private describe(c: Candidate, now: number, busy = false, helpers = 0): SessionInfo {
     const meta = c.meta();
+    const entries = c.transcript ? this.tail.read(c.transcript) : [];
     let activity: SessionInfo["activity"];
     let context: number | undefined;
     if (c.transcript) {
-      const entries = this.tail.read(c.transcript);
       const events = entries.map((e) => safe(() => c.normalize(e), null));
-      // a live hosted process counts as a write just now (capped by HOSTED_BUSY_MAX_MS)
+      // a live hosted process counts as a write just now (capped by HOSTED_BUSY_MAX_MS); a busy
+      // status or a pending tool call holds a quiet session off idle (see `hold`)
       activity = deriveActivity(events, busy ? now : c.mtimeMs, now, this.hold(c));
       context = roundContext(safe(() => c.context?.(entries), undefined));
     } else {
@@ -283,12 +292,17 @@ export class Detector {
       activity = now - (meta.startedAt ?? now) >= IDLE_AFTER_MS ? "idle" : "waiting";
     }
     const startedAt = Math.max(0, Math.min(now, Math.floor(meta.startedAt ?? c.mtimeMs ?? now)));
-    const subagents = activity === "idle" ? 0 : safe(() => c.subagents?.(now) ?? 0, 0) + helpers;
+    // Live subagents (counted by their own lifecycle, see countSubagents) mean the session is
+    // working even while its own transcript is quiet and nothing above held it: never idle then.
+    const subagents = safe(() => c.subagents?.(now, entries) ?? 0, 0);
+    if (activity === "idle" && subagents > 0) activity = "thinking";
     const info: SessionInfo = {
       sessionKey: sessionKeyFor(this.opts.clientId, c.agent, c.rawId),
       agent: c.agent,
       activity,
-      subagents,
+      // hosted helpers only count while not idle: a long-lived hosted process (e.g. `claude mcp
+      // serve`) must not keep robots at a desk past HOSTED_BUSY_MAX_MS
+      subagents: subagents + (activity === "idle" ? 0 : helpers),
       startedAt,
     };
     if (context !== undefined) info.context = context;

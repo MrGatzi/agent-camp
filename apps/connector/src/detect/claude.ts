@@ -2,6 +2,7 @@
  * Claude Code detector.
  *   <claudeDir>/projects/<encoded-cwd>/<session-id>.jsonl                 transcript
  *   <claudeDir>/projects/<encoded-cwd>/<session-id>/subagents/**\/agent-*.jsonl  subagents
+ *     next to each: agent-<id>.meta.json   { requestShape, toolUseId, finished, ... }
  *   <claudeDir>/sessions/<pid>.json                                       { pid, sessionId, cwd, startedAt,
  *                                                                           status, statusUpdatedAt }
  */
@@ -9,7 +10,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { SUBAGENT_LIVE_MS } from "@agent-office/protocol";
 import { arr, isObj, str, type TurnEvent } from "./activity.ts";
-import { readHead } from "./tail.ts";
+import { readHead, readTail } from "./tail.ts";
 import type { Candidate, CandidateMeta, MetaCache, PidStatus } from "./types.ts";
 
 type PidFile = {
@@ -172,8 +173,169 @@ export function claudeContext(entries: readonly Record<string, unknown>[]): numb
   return undefined;
 }
 
-/** Count subagent transcripts (`agent-*.jsonl`, up to 3 levels below subagents/) written recently. */
-export function countSubagents(subagentsDir: string, now: number): number {
+/**
+ * Never count a subagent whose transcript has been silent this long, whatever its meta says.
+ * A working subagent writes its transcript at least once per tool call, and Claude Code's
+ * Bash tool times out after 10 min at most, so 15 min of silence means the agent is stuck,
+ * was killed without its meta being updated (crash, closed app), or comes from an older Claude
+ * Code that never wrote `finished`. It also bounds how many files we look at per poll.
+ */
+export const SUBAGENT_SILENT_MAX_MS = 15 * 60_000;
+/** Drop the subagent caches when they grow past this many entries (cheap to rebuild). */
+const SUBAGENT_CACHE_MAX = 5000;
+/** How much of a quiet subagent transcript to read when looking for a tool call in flight. */
+const SUBAGENT_TAIL_BYTES = 64 * 1024;
+
+/**
+ * The lifecycle fields of a subagent's `agent-<id>.meta.json`. Its `description` and
+ * `agentType` are deliberately not kept: they never leave the machine, not even as counts.
+ */
+export type SubagentMeta = {
+  /** `requestShape`; undefined for older Claude Code versions that did not write it */
+  shape?: "background" | "foreground";
+  /** `finished: true` (written when an agent is done) or `stoppedByUser: true` */
+  done: boolean;
+  /** the parent's Agent/Task tool_use id that spawned it (local only, used for matching) */
+  toolUseId?: string;
+};
+
+type Stamped<T> = { mtimeMs: number; value: T };
+
+/**
+ * Per-file results keyed by path + mtime, so the 2 s poll does not re-read and re-parse the
+ * same files (a session can have hundreds of finished subagents next to the live ones).
+ */
+export type SubagentCache = {
+  /** meta.json path -> parsed lifecycle fields (null = unreadable / not an object) */
+  meta: Map<string, Stamped<SubagentMeta | null>>;
+  /** agent-*.jsonl path -> "its own transcript ends with a tool call still running" */
+  toolPending: Map<string, Stamped<boolean>>;
+};
+
+export function newSubagentCache(): SubagentCache {
+  return { meta: new Map(), toolPending: new Map() };
+}
+
+/** Parse the lifecycle fields of a subagent meta.json (anything else is dropped). */
+export function parseSubagentMeta(raw: unknown): SubagentMeta | null {
+  if (!isObj(raw)) return null;
+  const shape =
+    raw.requestShape === "background" || raw.requestShape === "foreground"
+      ? raw.requestShape
+      : undefined;
+  return {
+    shape,
+    done: raw.finished === true || raw.stoppedByUser === true,
+    toolUseId: str(raw.toolUseId),
+  };
+}
+
+/** Tool calls seen in transcript entries: tool_use ids started and tool_result ids returned. */
+export type ToolCalls = { started: Set<string>; returned: Set<string> };
+
+/** Collect tool_use / tool_result ids from raw transcript entries (any entry with content). */
+export function toolCalls(entries: readonly Record<string, unknown>[]): ToolCalls {
+  const started = new Set<string>();
+  const returned = new Set<string>();
+  for (const e of entries) {
+    const message = isObj(e.message) ? e.message : undefined;
+    if (!message) continue;
+    for (const block of arr(message.content)) {
+      if (!isObj(block)) continue;
+      if (block.type === "tool_use") {
+        const id = str(block.id);
+        if (id) started.add(id);
+      } else if (block.type === "tool_result") {
+        const id = str(block.tool_use_id);
+        if (id) returned.add(id);
+      }
+    }
+  }
+  return { started, returned };
+}
+
+function stamped<T>(map: Map<string, Stamped<T>>, path: string, mtimeMs: number, load: () => T): T {
+  const hit = map.get(path);
+  if (hit && hit.mtimeMs === mtimeMs) return hit.value;
+  const value = load();
+  map.set(path, { mtimeMs, value });
+  return value;
+}
+
+/** meta.json next to a subagent transcript, cached by mtime; null when missing or unreadable. */
+function subagentMeta(metaPath: string, cache: SubagentCache): SubagentMeta | null {
+  let mtimeMs: number;
+  try {
+    mtimeMs = statSync(metaPath).mtimeMs;
+  } catch {
+    cache.meta.delete(metaPath);
+    return null;
+  }
+  return stamped(cache.meta, metaPath, mtimeMs, () => {
+    try {
+      return parseSubagentMeta(JSON.parse(readFileSync(metaPath, "utf8")));
+    } catch {
+      return null; // half-written: read again once its mtime changes
+    }
+  });
+}
+
+/** True when a subagent's own transcript tail has a tool_use without its tool_result yet. */
+function ownToolPending(path: string, mtimeMs: number, cache: SubagentCache): boolean {
+  return stamped(cache.toolPending, path, mtimeMs, () => {
+    const { started, returned } = toolCalls(readTail(path, SUBAGENT_TAIL_BYTES));
+    for (const id of started) if (!returned.has(id)) return true;
+    return false;
+  });
+}
+
+/**
+ * Is a subagent with this meta still running? `ageMs` is how long its transcript has been
+ * silent, `parent` the tool calls in the tail of the parent session's transcript.
+ *   - `finished` / `stoppedByUser` -> done.
+ *   - foreground: done once the parent has the tool_result for its `toolUseId` (that result
+ *     *is* the agent's answer). Background agents get an immediate "launched" tool_result, so
+ *     this signal is foreground-only.
+ *   - written within SUBAGENT_LIVE_MS -> live.
+ *   - background -> live until `finished` (they keep working while the parent idles).
+ *   - foreground -> live while the parent still waits on its tool_use, or (no tool_use id, e.g.
+ *     workflow agents, or the call scrolled out of the parent's tail) while its own transcript
+ *     ends with a tool call in flight (a long Bash run writes nothing until it returns).
+ *   - older metas without `requestShape`: plain recency, as for subagents without a meta.
+ * The caller applies SUBAGENT_SILENT_MAX_MS on top.
+ */
+export function subagentLive(
+  meta: SubagentMeta,
+  ageMs: number,
+  parent: ToolCalls,
+  ownPending: () => boolean,
+): boolean {
+  if (meta.done) return false;
+  const id = meta.toolUseId;
+  if (meta.shape === "foreground" && id && parent.returned.has(id)) return false;
+  if (ageMs < SUBAGENT_LIVE_MS) return true;
+  if (meta.shape === "background") return true;
+  if (meta.shape === "foreground") {
+    return (id !== undefined && parent.started.has(id)) || ownPending();
+  }
+  return false;
+}
+
+/**
+ * Count live subagent transcripts (`agent-*.jsonl`, up to 3 levels below subagents/) of one
+ * session. Only called for sessions the detector already considers live, so a session whose
+ * process is gone never shows helpers. `parentEntries` are the raw tail entries of the
+ * session's own transcript. Subagents without a meta.json (older Claude Code) count while
+ * written in the last SUBAGENT_LIVE_MS; the others follow `subagentLive`. Nothing silent for
+ * SUBAGENT_SILENT_MAX_MS counts at all. Only the number leaves this function.
+ */
+export function countSubagents(
+  subagentsDir: string,
+  now: number,
+  parentEntries: readonly Record<string, unknown>[] = [],
+  cache: SubagentCache = newSubagentCache(),
+): number {
+  let parent: ToolCalls | undefined;
   let count = 0;
   const walk = (dir: string, depth: number) => {
     let entries: import("node:fs").Dirent[];
@@ -187,11 +349,22 @@ export function countSubagents(subagentsDir: string, now: number): number {
       if (e.isDirectory()) {
         if (depth < 2) walk(p, depth + 1);
       } else if (e.name.startsWith("agent-") && e.name.endsWith(".jsonl")) {
+        let mtimeMs: number;
         try {
-          if (now - statSync(p).mtimeMs < SUBAGENT_LIVE_MS) count++;
+          mtimeMs = statSync(p).mtimeMs;
         } catch {
-          // vanished
+          continue; // vanished
         }
+        const age = now - mtimeMs;
+        // most files are long finished: skip them without touching their meta.json
+        if (age >= SUBAGENT_SILENT_MAX_MS) continue;
+        const meta = subagentMeta(`${p.slice(0, -".jsonl".length)}.meta.json`, cache);
+        if (!meta) {
+          if (age < SUBAGENT_LIVE_MS) count++;
+          continue;
+        }
+        parent ??= toolCalls(parentEntries);
+        if (subagentLive(meta, age, parent, () => ownToolPending(p, mtimeMs, cache))) count++;
       }
     }
   };
@@ -230,7 +403,15 @@ export function latestSubagentWrite(subagentsDir: string): number {
 }
 
 /** Find Claude session candidates. Never throws. */
-export function scanClaude(claudeDir: string, cache: MetaCache = new Map()): Candidate[] {
+export function scanClaude(
+  claudeDir: string,
+  cache: MetaCache = new Map(),
+  subCache: SubagentCache = newSubagentCache(),
+): Candidate[] {
+  if (subCache.meta.size + subCache.toolPending.size > SUBAGENT_CACHE_MAX) {
+    subCache.meta.clear();
+    subCache.toolPending.clear();
+  }
   const pidFiles = readPidFiles(claudeDir);
   const bySession = new Map<string, PidFile[]>();
   for (const pf of pidFiles) {
@@ -275,7 +456,11 @@ export function scanClaude(claudeDir: string, cache: MetaCache = new Map()): Can
       const pfs = bySession.get(rawId) ?? [];
       out.set(
         rawId,
-        makeCandidate({ rawId, path, folder, folderPath, mtimeMs, birthMs, pidFiles: pfs }, cache),
+        makeCandidate(
+          { rawId, path, folder, folderPath, mtimeMs, birthMs, pidFiles: pfs },
+          cache,
+          subCache,
+        ),
       );
     }
   }
@@ -297,6 +482,7 @@ export function scanClaude(claudeDir: string, cache: MetaCache = new Map()): Can
           pidFiles: pfs,
         },
         cache,
+        subCache,
       ),
     );
   }
@@ -314,6 +500,7 @@ function makeCandidate(
     pidFiles: PidFile[];
   },
   cache: MetaCache,
+  subCache: SubagentCache,
 ): Candidate {
   let meta: CandidateMeta | undefined;
   return {
@@ -350,7 +537,8 @@ function makeCandidate(
     },
     normalize: normalizeClaude,
     context: claudeContext,
-    subagents: (now) => countSubagents(join(o.folderPath, o.rawId, "subagents"), now),
+    subagents: (now, entries) =>
+      countSubagents(join(o.folderPath, o.rawId, "subagents"), now, entries, subCache),
     pidStatus: o.pidFiles.flatMap((p): PidStatus[] =>
       p.status ? [{ pid: p.pid, status: p.status, sinceMs: p.statusSince }] : [],
     ),

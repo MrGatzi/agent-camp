@@ -147,6 +147,7 @@ function makeCandidate(f: Found, mtimeMs: number, birthMs: number, cache: MetaCa
     },
     normalize: normalizeClaude,
     context: claudeContext,
-    subagents: (now) => countSubagents(join(f.folderPath, f.rawId, "subagents"), now),
+    subagents: (now, entries) =>
+      countSubagents(join(f.folderPath, f.rawId, "subagents"), now, entries),
   };
 }
