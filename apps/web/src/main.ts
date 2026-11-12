@@ -143,8 +143,11 @@ const showGifs = !["0", "false", "off"].includes(params.get("gifs") ?? "");
 // client-only, nothing is sent and no toon textures are built while off
 const toonsParam = params.get("toons");
 const showToons = toonsParam === null ? !kiosk : !["0", "false", "off"].includes(toonsParam);
-// `?itguy=0`: no IT guy on this screen (e.g. the wall); default on everywhere, client-only
-const showItGuy = !["0", "false", "off"].includes(params.get("itguy") ?? "");
+// `?itguy=0`: no IT guy on this screen (e.g. the wall); default on everywhere, client-only.
+// `?richard=0` stays as an alias so screens bookmarked with the old switch keep working.
+const showItGuy = !["itguy", "richard"].some((k) =>
+  ["0", "false", "off"].includes(params.get(k) ?? ""),
+);
 const nohud = flag("nohud");
 const recorder = flag("recorder");
 const demo = parseDemoMode(params.get("demo"));
