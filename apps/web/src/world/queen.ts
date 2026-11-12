@@ -9,6 +9,7 @@ import { textBubbleTexture } from "../art/fun.ts";
 import { C } from "../art/palette.ts";
 import { QUEEN, queenTextures } from "../art/queen.ts";
 import type { Effects } from "./effects.ts";
+import { facingFor } from "./facing.ts";
 import { type AreaName, type OfficeMap, type Point, TILE } from "./map.ts";
 import { findPath } from "./pathing.ts";
 
@@ -160,8 +161,7 @@ export class OfficeQueen {
       const dx = wp.x - this.x;
       const dy = wp.y - this.y;
       const d = Math.hypot(dx, dy);
-      if (Math.abs(dx) > Math.abs(dy)) this.facing = dx < 0 ? "left" : "right";
-      else if (Math.abs(dy) > 0.5) this.facing = dy < 0 ? "up" : "down";
+      if (d > 0.5) this.facing = facingFor(dx, dy, this.facing);
       if (d <= budget) {
         this.x = wp.x;
         this.y = wp.y;

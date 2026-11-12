@@ -7,6 +7,7 @@ import type { AnimName, CharacterSheet } from "../art/characters.ts";
 import { textBubbleTexture } from "../art/fun.ts";
 import { C } from "../art/palette.ts";
 import type { Effects } from "./effects.ts";
+import { facingFor } from "./facing.ts";
 import { type Facing, type OfficeMap, type Point, TILE } from "./map.ts";
 import { findPath } from "./pathing.ts";
 
@@ -83,9 +84,7 @@ export class Walker {
       const dx = wp.x - this.x;
       const dy = wp.y - this.y;
       const d = Math.hypot(dx, dy);
-      if (d > 0.01)
-        this.facing =
-          Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? "left" : "right") : dy < 0 ? "up" : "down";
+      if (d > 0.01) this.facing = facingFor(dx, dy, this.facing);
       if (d <= budget) {
         this.x = wp.x;
         this.y = wp.y;
