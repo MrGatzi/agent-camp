@@ -51,7 +51,13 @@
       "neckwear": "none",
       "neckwearColor": "#f4f4f2",
       "sleeves": "long",
-      "buttons": { "count": 0, "color": "#f4f4f2", "rim": "none", "size": "small" },
+      "buttons": {
+        "count": 0,
+        "color": "#f4f4f2",
+        "rim": "none",
+        "size": "small",
+        "layout": "single"
+      },
       "peeksAtWaist": true,
       "length": "tucked"
     },
@@ -61,7 +67,13 @@
       "pattern": { "kind": "damask", "a": "#d8cdb8", "b": "#7a6e85" },
       "collar": "stand-up",
       "piping": "#6b6a35",
-      "buttons": { "count": 8, "color": "#6b6a35", "rim": "none", "size": "small" }
+      "buttons": {
+        "count": 8,
+        "color": "#6b6a35",
+        "rim": "none",
+        "size": "small",
+        "layout": "single"
+      }
     },
     "outer": {
       "kind": "janker",
@@ -74,7 +86,13 @@
       "collarColor": "#1f3d2b",
       "collarPiping": "#6b6a35",
       "piping": "none",
-      "buttons": { "count": 5, "color": "#e8dcc6", "rim": "#8a6a4a", "size": "large" },
+      "buttons": {
+        "count": 5,
+        "color": "#e8dcc6",
+        "rim": "#8a6a4a",
+        "size": "large",
+        "layout": "single"
+      },
       "pockets": "flap",
       "pocketPiping": "#3e5a2e",
       "yoke": true
@@ -85,7 +103,13 @@
       "pattern": { "kind": "worn", "a": "#d6bc94", "b": "#9c8158" },
       "flap": true,
       "embroidery": { "motif": "vine", "color": "#3e5a2e", "stitching": "#eadfc8" },
-      "buttons": { "count": 2, "color": "#e8dcc6", "rim": "#8a6a4a", "size": "small" },
+      "buttons": {
+        "count": 2,
+        "color": "#e8dcc6",
+        "rim": "#8a6a4a",
+        "size": "small",
+        "layout": "single"
+      },
       "suspenders": "none",
       "suspendersColor": "#9c8158",
       "belt": "none",
