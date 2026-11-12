@@ -405,7 +405,12 @@ export type AreaName =
   | "cfo"
   | "garden"
   | "bar"
-  | "shop";
+  | "shop"
+  | "arena";
+/** Grid occupies the south arena annex; coordinates follow office growth. */
+export function arenaGrid(map: OfficeMap): Point {
+  return { x: 40, y: map.height - 15 };
+}
 export type Area = { name: AreaName; label: string; x: number; y: number; w: number; h: number };
 export type Facing = "down" | "up" | "left" | "right";
 /** stand = standing; sit = seated facing camera; sitBack = seated facing away; play = busy standing */
@@ -677,11 +682,16 @@ export type OfficeMap = {
   setWalkable(x: number, y: number, on: boolean): void;
 };
 
-export function buildOfficeMap(podRows: number = BASE_POD_ROWS): OfficeMap {
+export function buildOfficeMap(podRows: number = BASE_POD_ROWS, arena = false): OfficeMap {
   const extra = Math.max(0, podRows - BASE_POD_ROWS) * POD_H;
   const rows = [...BASE_ROWS];
   rows.splice(GROW_AT, 0, ...Array.from({ length: extra }, () => GROW_ROW));
   const width = rows[0]!.length;
+  const officeHeight = rows.length;
+  if (arena) {
+    for (let y = 0; y < 18; y++)
+      rows.push(y === 17 ? "h".repeat(width) : `h${",".repeat(width - 2)}h`);
+  }
   const height = rows.length;
   for (const [i, r] of rows.entries()) {
     if (r.length !== width) throw new Error(`map row ${i} has length ${r.length}, want ${width}`);
@@ -703,9 +713,21 @@ export function buildOfficeMap(podRows: number = BASE_POD_ROWS): OfficeMap {
     { name: "meeting", label: "Meeting room", x: 34, y: 13, w: 16, h: 7 },
     { name: "game", label: "Game corner", x: 34, y: 22, w: 10, h: 6 + extra },
     { name: "cfo", label: "CFO's office", x: 45, y: 22, w: 5, h: 6 + extra },
-    { name: "garden", label: "Garden", x: 51, y: 1, w: 12, h: height - 2 },
+    { name: "garden", label: "Garden", x: 51, y: 1, w: 12, h: officeHeight - 2 },
     { name: "bar", label: "Bar", x: 65, y: 1, w: 14, h: 12 },
     { name: "shop", label: "Weed shop", x: 65, y: 15, w: 14, h: 13 + extra },
+    ...(arena
+      ? [
+          {
+            name: "arena" as const,
+            label: "Prompt Arena",
+            x: 37,
+            y: officeHeight + 1,
+            w: 18,
+            h: 16,
+          },
+        ]
+      : []),
   ];
 
   const terrainAt = (x: number, y: number): Terrain | undefined => {
@@ -726,6 +748,12 @@ export function buildOfficeMap(podRows: number = BASE_POD_ROWS): OfficeMap {
     const fp = FOOTPRINTS[ob.kind];
     if (!fp.solid) continue;
     for (let j = 0; j < fp.h; j++) for (let i = 0; i < fp.w; i++) block(ob.x + i, ob.y + j);
+  }
+  if (arena) {
+    // Fighters use a separate combat grid; normal office characters stay in spectator space.
+    for (let y = officeHeight + 3; y < officeHeight + 15; y++)
+      for (let x = 40; x < 52; x++) block(x, y);
+    pois.push(poi("arena-entrance", "arena", 38, officeHeight + 8, "right", "stand"));
   }
   const base = walkable.slice();
   const isWalkable = (x: number, y: number) =>

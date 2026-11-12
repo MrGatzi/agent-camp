@@ -4,7 +4,7 @@
  * (drifting cloud shadows, rain or snow that ramps up and down, petals or leaves in the wind).
  * Sprites only; textures cached in art/vehicles.ts.
  */
-import { type Container, Sprite } from "pixi.js";
+import { Container, Sprite } from "pixi.js";
 import { textBubbleTexture } from "../art/fun.ts";
 import { pixelTexture } from "../art/fx.ts";
 import {
@@ -388,10 +388,15 @@ export class Outdoors {
     effects: Effects,
     season: Season,
   ) {
-    const layers = { decals: scene.decals, glows: scene.glows, fx: scene.fx };
+    const decals = new Container();
+    const glows = new Container();
+    decals.label = glows.label = "actor";
+    scene.decals.addChild(decals);
+    scene.glows.addChild(glows);
+    const layers = { decals, glows, fx: scene.fx };
     const world = () => ({ w: scene.widthPx, h: scene.heightPx });
-    this.car = new Car(scene.decals, world);
-    this.truck = new FoodTruck(scene.decals, world, () => (scene.map.door.x + 3) * TILE, effects);
+    this.car = new Car(layers.decals, world);
+    this.truck = new FoodTruck(layers.decals, world, () => (scene.map.door.x + 3) * TILE, effects);
     this.forest = new Forest(layers, world, effects);
     this.sky = new SkyLayer(
       layers,

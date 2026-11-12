@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "type": "arena.updated",
+  "id": "arena-fixture-1",
+  "ts": 1735689600000,
+  "data": {
+    "arena": {
+      "enabled": true,
+      "available": false,
+      "model": "not configured",
+      "match": null,
+      "historyRevision": 0
+    }
+  }
+}

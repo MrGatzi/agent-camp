@@ -248,6 +248,7 @@ export class Raccoons {
     ];
     for (const [, , f] of spots) {
       const t = new Sprite(trashTextures()[f]!);
+      t.label = "actor";
       t.anchor.set(0.5, 1);
       t.visible = false;
       scene.decals.addChild(t);

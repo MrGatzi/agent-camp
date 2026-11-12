@@ -42,6 +42,7 @@ export interface Store {
   putCustomAvatar(personId: string, avatar: AvatarSpec | null): void;
   kvGet(key: string): string | null;
   kvPut(key: string, value: string): void;
+  kvDelete(key: string): void;
   addSnapshot(ts: number, png: Uint8Array): number;
   listSnapshots(): Omit<SnapshotMeta, "url">[];
   getSnapshot(id: number): Uint8Array | null;
@@ -125,6 +126,9 @@ export class MemoryStore implements Store {
   }
   kvPut(key: string, value: string): void {
     this.kv.set(key, value);
+  }
+  kvDelete(key: string): void {
+    this.kv.delete(key);
   }
   addSnapshot(ts: number, png: Uint8Array): number {
     const id = this.snapshots.length + 1;
@@ -334,6 +338,9 @@ export class SqlStore implements Store {
   }
   kvPut(key: string, value: string): void {
     this.run("INSERT OR REPLACE INTO kv (k, v) VALUES (?, ?)", key, value);
+  }
+  kvDelete(key: string): void {
+    this.run("DELETE FROM kv WHERE k = ?", key);
   }
   addSnapshot(ts: number, png: Uint8Array): number {
     const r = this.run("INSERT INTO snapshots (ts, png) VALUES (?, ?) RETURNING id", ts, png)[0];

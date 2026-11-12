@@ -1,0 +1,112 @@
+.arena-launch {
+  position: absolute;
+  left: 16px;
+  bottom: 82px;
+  z-index: 12;
+}
+.arena-panel {
+  position: absolute;
+  z-index: 30;
+  right: 12px;
+  top: calc(52px + env(safe-area-inset-top));
+  width: min(410px, calc(100vw - 24px));
+  max-height: calc(100dvh - 100px - env(safe-area-inset-top));
+  overflow: auto;
+  padding: 14px;
+  box-sizing: border-box;
+  font-size: 14px;
+}
+.arena-panel[hidden],
+.arena-launch[hidden] {
+  display: none;
+}
+.arena-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.arena-panel h2 {
+  font-size: 18px;
+  margin: 0;
+}
+.arena-panel h3 {
+  margin: 16px 0 6px;
+  font-size: 15px;
+}
+.arena-panel p {
+  line-height: 1.5;
+}
+.arena-panel fieldset {
+  margin: 10px 0;
+  padding: 10px;
+  min-width: 0;
+  border: 1px solid #8b9bb4;
+}
+.arena-panel label {
+  display: block;
+  margin: 6px 0;
+}
+.arena-panel textarea,
+.arena-panel select {
+  width: 100%;
+  box-sizing: border-box;
+  background: #181425;
+  color: #fff;
+  font: inherit;
+  padding: 8px;
+  border: 1px solid #8b9bb4;
+}
+.arena-panel textarea {
+  resize: vertical;
+  min-height: 100px;
+}
+.arena-panel button {
+  min-height: 44px;
+  margin: 3px;
+}
+.arena-panel button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.arena-panel :focus-visible {
+  outline: 2px solid #fee761;
+  outline-offset: 2px;
+}
+.arena-panel .arena-hint {
+  font-size: 12px;
+}
+.arena-panel .arena-info {
+  color: #fee761;
+}
+.arena-panel li {
+  margin: 6px 0;
+}
+.arena-panel ul,
+.arena-panel ol {
+  padding-left: 22px;
+}
+.arena-panel pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  padding: 8px;
+  background: #181425;
+}
+.arena-panel details {
+  border-top: 1px solid #5a6988;
+  margin: 12px 0;
+  padding-top: 10px;
+}
+.kiosk .arena-launch,
+.kiosk .arena-panel,
+.nohud .arena-launch,
+.nohud .arena-panel {
+  display: none;
+}
+@media (max-width: 560px) {
+  .arena-launch {
+    bottom: 100px;
+    left: 16px;
+  }
+}

@@ -172,8 +172,12 @@ export class Camera {
     const a = this.areas().find((ar) => ar.name === name);
     if (!a) return;
     const s = this.screen();
-    const fit = Math.min(s.width / (a.w * TILE + 64), s.height / (a.h * TILE + 64));
-    const zoom = Math.max(2, Math.min(4, Math.floor(fit)));
+    const fit = Math.min(
+      s.width / (a.w * TILE + 64),
+      (s.height - (name === "arena" ? this.inset() : 0)) / (a.h * TILE + 64),
+    );
+    // The whole combat grid must remain visible on phones, not just a cropped close-up.
+    const zoom = name === "arena" ? Math.min(4, fit) : Math.max(2, Math.min(4, Math.floor(fit)));
     this.set({ x: (a.x + a.w / 2) * TILE, y: (a.y + a.h / 2) * TILE, zoom }, instant);
   }
 
@@ -344,7 +348,10 @@ export class Camera {
     if (this.opts.view === "overview") return this.overview(dt);
     this.tourT -= dt;
     if (this.tourT > 0) return;
-    const next = () => TOUR_STOPS[this.tourIdx++ % TOUR_STOPS.length]!;
+    const stops: readonly (AreaName | "all")[] = this.areas().some((a) => a.name === "arena")
+      ? [...TOUR_STOPS, "desks", "arena"]
+      : TOUR_STOPS;
+    const next = () => stops[this.tourIdx++ % stops.length]!;
     let stop = next();
     // closed places are skipped (the next stop is always the desk floor)
     if (stop !== "all" && this.skipStop(stop)) stop = next();

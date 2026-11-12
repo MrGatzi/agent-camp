@@ -79,6 +79,12 @@ jobs:
           echo "::warning::Could not install Chromium (network?); skipping screenshots"
           echo "ok=false" >> "$GITHUB_OUTPUT"
 
+      - name: Arena multi-browser e2e (fake inference only)
+        if: matrix.shard == 1 && steps.browsers.outputs.ok == 'true'
+        env:
+          ARENA_SHOTS: screenshots/arena
+        run: bun run --filter @agent-office/web build && bun tools/screenshots/arena-smoke.ts
+
       - name: Screenshots
         if: steps.browsers.outputs.ok == 'true'
         run: bun run screenshots -- --shard ${{ matrix.shard }}/4

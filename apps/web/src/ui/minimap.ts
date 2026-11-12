@@ -10,6 +10,7 @@ export class Minimap {
   private ctx: CanvasRenderingContext2D;
   private base: HTMLCanvasElement | null = null;
   private acc = 1;
+  arena: () => { x: number; y: number }[] = () => [];
   /** desk pods to draw over the terrain (they are sprites, not part of it) */
   desks: () => { x: number; y: number; w: number; h: number; mine: boolean }[] = () => [];
 
@@ -67,6 +68,10 @@ export class Minimap {
       ctx.fillRect(Math.round(c.x * SCALE) - 2, Math.round(c.y * SCALE) - 4, 4, 4);
       ctx.fillStyle = AGENT_COLORS[c.agent];
       ctx.fillRect(Math.round(c.x * SCALE) - 1, Math.round(c.y * SCALE) - 3, 2, 2);
+    }
+    for (const p of this.arena()) {
+      ctx.fillStyle = "#fee761";
+      ctx.fillRect(Math.round(p.x * SCALE) - 1, Math.round(p.y * SCALE) - 1, 2, 2);
     }
     const v = this.camera.viewRect();
     ctx.strokeStyle = "#fee761";

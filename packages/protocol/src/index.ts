@@ -1,4 +1,5 @@
 export * from "./api.ts";
+export * from "./arena.ts";
 export * from "./avatarLook.ts";
 export * from "./catalog.ts";
 export * from "./constants.ts";

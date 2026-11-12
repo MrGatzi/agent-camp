@@ -9,6 +9,7 @@
  * Parsers never throw; they return { ok: true, msg } | { ok: false, error }.
  */
 import { z } from "zod";
+import { ArenaState } from "./arena.ts";
 import { ViewerAvatar } from "./catalog.ts";
 import { MAX_SELF_DESCRIPTION, PROTOCOL_VERSION, SHORT_SELF_DESCRIPTION } from "./constants.ts";
 import { GameStats, GameSummary, ViewerGamesState } from "./games/wire.ts";
@@ -241,6 +242,7 @@ export const OfficeSnapshot = msg(
   z.object({
     officeName: z.string(),
     party: ViewerPartyState.optional().catch(undefined),
+    arena: ArenaState.optional().catch(undefined),
     /** turn-based games: open ones, the latest results and everybody's record */
     games: ViewerGamesState.optional().catch(undefined),
     serverTime: EpochMs,
@@ -383,6 +385,7 @@ export const MessageDeleted = msg(
   "message.deleted",
   z.object({ messageId: z.string().min(1).max(64) }),
 );
+export const ArenaUpdated = msg("arena.updated", z.object({ arena: ArenaState }));
 
 export const PartyUpdated = msg("party.updated", z.object({ party: ViewerPartyState }));
 /** A turn-based game changed (invite, move, result); `stats` come along when it ended. */
@@ -416,6 +419,7 @@ export const ServerToViewer = z.discriminatedUnion("type", [
   MessageSent,
   MessageDeleted,
   PartyUpdated,
+  ArenaUpdated,
   GameUpdated,
   PersonJoined,
   PersonLeft,
@@ -449,6 +453,7 @@ export type ViewerEvent = Exclude<
       | "interaction.happened"
       | "look.generated"
       | "party.updated"
+      | "arena.updated"
       | "game.updated"
       | "message.sent"
       | "message.deleted";

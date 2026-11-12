@@ -10,6 +10,7 @@
 import {
   type Activity,
   type AgentKind,
+  type ArenaState,
   type AvatarSpec,
   avatarFromSeed,
   type GameStats,
@@ -68,6 +69,7 @@ const ACTIVITY_LOG_MS = 60 * 60_000;
 
 export type ModelChange =
   | { kind: "partyChanged" }
+  | { kind: "arenaChanged" }
   /** a turn-based game changed; `before` is what it was (absent for a new game) */
   | { kind: "gameChanged"; game: GameSummary; before?: GameSummary }
   | { kind: "officeRenamed"; name: string }
@@ -127,6 +129,7 @@ function dayKey(ts: number): string {
 }
 
 export class OfficeModel {
+  arena: ArenaState | undefined;
   party: PartyState = { events: [], scores: {} };
   /** turn-based games: open ones and the latest results */
   games: GameSummary[] = [];
@@ -229,6 +232,8 @@ export class OfficeModel {
       case "office.snapshot": {
         const d = msg.data;
         this.party = d.party ?? { events: [], scores: {} };
+        if (this.arena !== undefined || d.arena !== undefined) out.push({ kind: "arenaChanged" });
+        this.arena = d.arena;
         this.games = d.games?.games ?? [];
         this.gameStats = d.games?.stats ?? {};
         this.timezone = d.timezone;
@@ -356,6 +361,10 @@ export class OfficeModel {
         });
         break;
       }
+      case "arena.updated":
+        this.arena = msg.data.arena;
+        out.push({ kind: "arenaChanged" });
+        break;
       case "party.updated":
         this.party = msg.data.party;
         out.push({ kind: "partyChanged" });

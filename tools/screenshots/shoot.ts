@@ -1192,6 +1192,7 @@ declare global {
       model: {
         people: Map<string, unknown>;
         sessions: Map<string, unknown>;
+        arena?: import("@agent-office/protocol").ArenaState;
         games: { id: string }[];
       };
       camera: {

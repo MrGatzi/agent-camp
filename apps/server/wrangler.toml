@@ -66,3 +66,7 @@ MIN_CONNECTOR_VERSION = "0.0.0"
 #                DEV_MODE ("1" = password defaults to "devpass")
 # Try a description against the real API without deploying:
 #   ANTHROPIC_API_KEY=... bun apps/server/scripts/genui-try.ts <description.md>
+# Arena is OFF unless explicitly enabled; keep these out of [vars] so dashboard choices survive.
+# ARENA_ENABLED=1, ARENA_PROVIDER=anthropic|jev, ARENA_MODEL=<explicit provider model id>
+# ARENA_DAILY_CALLS=640, ARENA_MATCH_CALLS=320; uses existing provider secret above.
+# Reservations are players*40 calls per match, no refunds/retries. Not a dollar cap.

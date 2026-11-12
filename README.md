@@ -288,7 +288,56 @@ curl -X PUT https://<office>/api/people/<personId>/gif \
   -H "content-type: application/json" -d '{"link":null}'
 ```
 
+### Prompt Arena (optional)
+
+The office can host a live **2–8 player prompt-driven arena**. Open **Prompt Arena** or click
+its south-map entrance. Confirm your identity in the top-bar Me menu, write private tactics,
+choose Blade/Bow/Guardian, and ready up. The host starts once everyone is ready. The same
+server-selected LLM chooses each fighter’s moves; a deterministic engine resolves simultaneous
+turns. Two fighters is a duel; larger matches are free-for-all, last fighter standing.
+
+Anyone in the office can spectate. Matches include shields/healing/boost pickups, shrinking
+arena pressure, a results board, wins/knockout rankings, and rematches. Any connected claimed person can open
+a fresh lobby after a match. Only offline hosts hand over; join/ready actions renew a ten-minute
+idle expiry. Cleanup uses existing hub alarms without periodic arena lobby wakeups. Results and rankings load only when requested by the panel, never in turn broadcasts. Tactics stay private;
+after a match you may explicitly reveal only your own frozen prompt for that match.
+**Unlike connector telemetry, these deliberately entered tactics are sent to the configured
+AI provider and stored server-side. Never put secrets or customer information in them.**
+Latest 20 previous matches plus the current match retain prompts and combat journals; aggregate
+leaderboard stats last indefinitely (up to 1000 people). Identity remains the existing courtesy
+claim, not strong authentication. This is friendly office play, not public competitive ranking.
+
+Disabled by default. To enable, configure server variables (dashboard or local `.dev.vars`):
+
+```ini
+ARENA_ENABLED=1
+ARENA_PROVIDER=anthropic
+ARENA_MODEL=claude-haiku-4-5
+ARENA_DAILY_CALLS=640
+ARENA_MATCH_CALLS=320
+```
+
+`ARENA_PROVIDER=jev` uses the existing gateway instead; specify a gateway model id.
+Set the matching existing secret, `ANTHROPIC_API_KEY` or `AI_GATEWAY_API_KEY`, server-side.
+No calls occur while disabled or without an explicitly configured arena provider/model/key.
+Model availability/pricing must be verified before enabling paid matches.
+
+A start reserves **players × 40 calls** against the independent arena daily budget, with no
+refunds/retries (even on cancellation), maximum eight parallel requests, 160 output tokens per
+request, bounded input, and ten-second decisions. These are call/token limits, **not dollar
+caps**; choose a suitable model. Three fully failed turns abort without competitive credit.
+Reloads/disconnects do not stop fights; interrupted server jobs defend rather than repeat calls.
+Set `ARENA_ENABLED=0` to disable all arena work/UI without deleting results. Corrupt arena
+storage fails closed and needs operator recovery; do not delete its budget to bypass a cap.
+See [arena rules and operations](docs/arena.md) for exact combat/recovery rules.
+
+Offline verification: `bun test`, `bun run typecheck`, `bun run lint`, then
+`bun run test:arena` (requires the workspace’s Playwright Chromium installation).
+The browser smoke test runs eight players, spectators and a phone using fake inference only.
+
 ### Privacy
+
+The following describes **connector telemetry**, not manually entered optional arena tactics.
 
 Sent: agent kind (Claude/Codex/Pi), a salted hash of the session id, the project **folder
 name** (turn off with `share_project_names = false` in `~/.config/agent-office/config.toml`),

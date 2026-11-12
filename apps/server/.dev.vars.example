@@ -4,3 +4,9 @@ CONNECTOR_PASSWORD=devpass
 # GENUI_PROVIDER=anthropic
 # ANTHROPIC_API_KEY=
 # AI_GATEWAY_API_KEY=
+# Arena is opt-in; paid inference only after an explicit model is configured and a match starts.
+# ARENA_ENABLED=1
+# ARENA_PROVIDER=anthropic
+# ARENA_MODEL=claude-haiku-4-5
+# ARENA_DAILY_CALLS=640
+# ARENA_MATCH_CALLS=320
