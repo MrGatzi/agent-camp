@@ -9,7 +9,6 @@ import {
   CONNECTOR_TIMEOUT_MS,
   envelope,
   hashString,
-  lookFromCatalog,
   MAX_SELF_DESCRIPTION,
   PERSON_GRACE_MS,
   parseServerToConnector,
@@ -1134,7 +1133,7 @@ describe("hub: custom looks", () => {
   });
 });
 
-describe("hub: custom looks win over GenUI (detailed looks)", () => {
+describe("hub: custom looks win over GenUI and keep their detail (WD9)", () => {
   const TRACHT = LOOK_FIXTURES.tracht;
   /** what the editor sends: the avatar it was opened with (GenUI look included) + picks */
   const edited: AvatarSpec = {
@@ -1146,29 +1145,19 @@ describe("hub: custom looks win over GenUI (detailed looks)", () => {
   };
   const { look: _l, ...picked } = edited;
 
-  test("a custom look is stored and shown with catalog ids only", () => {
+  test("a custom look is stored and shown with its detailed look, as designed", () => {
     const { hub, store } = setup();
     hub.onConnectorMessage("s1", hello("Tom", "mac"), 1_000);
     const r = hub.setCustomAvatar("tom", edited, 2_000)!;
-    expect(r.avatar).toEqual(picked);
-    expect(store.getCustomAvatar("tom")).toEqual(picked);
+    expect(r.avatar).toEqual(edited);
+    expect(store.getCustomAvatar("tom")).toEqual(edited);
     const shown = hub.snapshot(2_000).data.people[0]!.avatar;
-    expect(shown).toEqual(picked);
-    // so the renderer derives the look from the picks: flannel, beer, mint cap
-    const look = resolveLook(shown);
-    expect(look).toEqual(lookFromCatalog(picked));
-    expect(look.outer.pattern.kind).toBe("plaid");
-    expect(look.extras).toMatchObject({ leftHand: "beer", rightHand: "joint" });
-  });
-
-  test("a custom row stored with a detailed look is shown without it", () => {
-    const { hub, store } = setup();
-    store.putCustomAvatar("tom", edited); // e.g. written before this rule
-    hub.onConnectorMessage("s1", hello("Tom", "mac"), 1_000);
-    expect(hub.snapshot(1_000).data.people[0]!.avatar).toEqual(picked);
+    expect(shown).toEqual(edited);
+    expect(resolveLook(shown)).toEqual(TRACHT.look!);
+    // survives a restart
     const hub2 = new Hub(CFG, store);
-    hub2.restore(2_000, [{ socketId: "s1", binding: hub.bindingOf("s1")! }]);
-    expect(hub2.snapshot(2_000).data.people[0]!.avatar).toEqual(picked);
+    hub2.restore(3_000, [{ socketId: "s1", binding: hub.bindingOf("s1")! }]);
+    expect(hub2.snapshot(3_000).data.people[0]!.avatar).toEqual(edited);
   });
 
   test("a detailed GenUI answer while custom fills the automatic row, never the shown look", () => {
@@ -1181,12 +1170,14 @@ describe("hub: custom looks win over GenUI (detailed looks)", () => {
     const job = r.avatarJob!;
     hub.setCustomAvatar("tom", edited, 1_500);
     // the job that was in flight comes back with a detailed look
+    const custom = { ...picked, look: { ...TRACHT.look!, build: "broad" as const } };
+    hub.setCustomAvatar("tom", custom, 1_600);
     expect(hub.setAvatar("tom", TRACHT, job.key, 2_000)).toEqual([]);
-    expect(hub.snapshot(2_000).data.people[0]!.avatar).toEqual(picked);
+    expect(hub.snapshot(2_000).data.people[0]!.avatar).toEqual(custom);
     expect(store.getAvatar("tom")!.avatar).toEqual(TRACHT);
     // a reconnect neither asks GenUI nor swaps the look
     expect(hub.onConnectorMessage("s2", hello("Tom", "mac"), 3_000).avatarJob).toBeUndefined();
-    expect(hub.snapshot(3_000).data.people[0]!.avatar).toEqual(picked);
+    expect(hub.snapshot(3_000).data.people[0]!.avatar).toEqual(custom);
     // Automatic brings the detailed look back for free
     const back = hub.setCustomAvatar("tom", null, 4_000)!;
     expect(back.avatarJob).toBeUndefined();

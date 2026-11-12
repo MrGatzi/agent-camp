@@ -42,7 +42,7 @@ import {
   type SetGifRequest,
 } from "@agent-office/protocol";
 import { Application, TextureStyle } from "pixi.js";
-import { CHAR_H, CHAR_RES, CHAR_W, lookFor, lookPreview } from "./art/characters.ts";
+import { BODY_H, CHAR_RES, CHAR_W, HEAD_PAD, lookFor, lookPreview } from "./art/characters.ts";
 import { fitText } from "./art/font.ts";
 import { trophyCanvas } from "./art/fun.ts";
 import { CAT, catTextures } from "./art/fx.ts";
@@ -906,15 +906,20 @@ async function boot() {
    * Look studio: describe your look. Your own Mac draws it (Claude Code on your own
    * subscription; the look arrives as avatar.updated), else the server's AI (waits for it).
    */
-  async function describeLook(personId: string, description: string) {
+  async function describeLook(
+    personId: string,
+    description: string,
+    opts: { change?: boolean } = {},
+  ) {
     if (demo) return { ok: false, message: "demo: no AI looks here" };
+    const change = !!opts.change;
     try {
       const r = await fetch(
         `/api/people/${encodeURIComponent(personId)}/look${key ? `?key=${encodeURIComponent(key)}` : ""}`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ description }),
+          body: JSON.stringify({ description, ...(change ? { change } : {}) }),
         },
       );
       const body = (await r.json().catch(() => ({}))) as Partial<LookDescribeResponse> & {
@@ -926,13 +931,17 @@ async function boot() {
         return {
           ok: true,
           pending: true,
-          message: `your Mac is drawing you with ${toolName(body.generator ?? "its AI")} on your own subscription, about a minute...`,
+          message: `your Mac is ${change ? "changing your look" : "drawing you"} with ${toolName(body.generator ?? "its AI")} on your own subscription, about a minute...`,
         };
       const message =
         body.result === "ai"
-          ? "new look, straight from your description!"
+          ? change
+            ? "changed! (Undo that change brings the old look back)"
+            : "new look, straight from your description!"
           : body.result === "off"
-            ? offMessage(body.mac)
+            ? change
+              ? offMessage(body.mac).replace("Text saved, but", "Nothing changed:")
+              : offMessage(body.mac)
             : body.result === "superseded"
               ? "your look changed while the AI was drawing (a newer Generate or saved parts), so that one stays"
               : "the AI could not draw you this time (error or daily limit); your look stays. Try again later.";
@@ -1086,7 +1095,9 @@ async function boot() {
     const ctx = canvas.getContext("2d")!;
     ctx.imageSmoothingEnabled = false;
     const r = CHAR_RES;
-    ctx.drawImage(src, frame.frame.x * r, frame.frame.y * r, CHAR_W * r, CHAR_H * r, 0, 0, 64, 96);
+    // the body window (as before the headroom), 2 px higher so a tall head still fits
+    const top = frame.frame.y + HEAD_PAD - 2;
+    ctx.drawImage(src, frame.frame.x * r, top * r, CHAR_W * r, BODY_H * r, 0, 0, 64, 96);
     return canvas;
   };
 

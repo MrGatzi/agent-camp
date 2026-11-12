@@ -1100,12 +1100,12 @@ body.kiosk .hud-reconnect {
 }
 .look-studio .look-preview .look-canvas {
   width: 96px;
-  height: 144px;
+  height: auto;
   image-rendering: pixelated;
 }
 .look-studio .look-preview .look-canvas:first-child {
   width: 160px;
-  height: 240px;
+  height: auto;
 }
 .look-studio .look-preview .look-ride {
   width: 144px;
@@ -1280,6 +1280,169 @@ body.kiosk .hud-reconnect {
   font-size: 11px;
   color: var(--slate);
 }
+
+/* ---- Design it (WD8): section tabs, rows with colour chips, colour picker, outfits ---- */
+.look-studio .design {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.look-studio .design-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.look-studio .design-tab {
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--silver);
+  background: var(--ink);
+  border: 0;
+  box-shadow: inset 0 0 0 2px var(--dusk);
+  cursor: pointer;
+}
+.look-studio .design-tab[aria-selected="true"] {
+  color: var(--night);
+  background: var(--cream);
+  box-shadow: inset 0 0 0 2px var(--night);
+}
+.look-studio .design-tab:focus-visible {
+  outline: 2px solid var(--lemon);
+}
+.look-studio .design-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.look-studio .design-row {
+  /* a fixed column for up to 3 colour chips, so every carousel lines up */
+  grid-template-columns: 110px 44px 1fr 44px 80px;
+}
+.look-studio .design-row.colors-only {
+  grid-template-columns: 110px 1fr;
+}
+.look-studio .row-colors {
+  display: flex;
+  gap: 4px;
+}
+.look-studio .design-row.colors-only .row-colors {
+  grid-column: 2;
+}
+.look-studio .design-row.colors-only .row-value {
+  display: none;
+}
+.look-studio .color-chip,
+.look-studio .swatch {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: var(--chip);
+  border: 2px solid var(--night);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.25);
+  cursor: pointer;
+}
+.look-studio .color-chip.none,
+.look-studio .swatch.none {
+  background: linear-gradient(
+    135deg,
+    var(--cream) 0 44%,
+    var(--red) 44% 56%,
+    var(--cream) 56% 100%
+  );
+}
+.look-studio .color-chip.open,
+.look-studio .swatch.on {
+  outline: 2px solid var(--lemon);
+  outline-offset: 1px;
+}
+.look-studio .color-pop {
+  display: grid;
+  gap: 6px;
+  margin: -2px 0 8px;
+  padding: 8px 10px;
+  background: var(--ink);
+  box-shadow: inset 3px 0 0 var(--lemon);
+}
+.look-studio .color-pop-label {
+  font-size: 12px;
+  color: var(--grey);
+}
+.look-studio .swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.look-studio .color-any {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--silver);
+}
+.look-studio .color-any input {
+  width: 44px;
+  height: 26px;
+  padding: 0;
+  background: none;
+  border: 2px solid var(--night);
+}
+.look-studio .outfit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.look-studio .outfit-head .pixel-btn {
+  flex: none;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.look-studio .outfit-grid {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+  gap: 6px;
+  padding-right: 4px;
+}
+.look-studio .outfit-card {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 4px 2px 6px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--silver);
+  background: var(--ink);
+  border: 0;
+  box-shadow: inset 0 0 0 2px var(--dusk);
+  cursor: pointer;
+}
+.look-studio .outfit-card:hover,
+.look-studio .outfit-card:focus-visible {
+  color: var(--night);
+  background: var(--cream);
+  outline: none;
+}
+.look-studio .outfit-thumb {
+  width: 48px;
+  height: auto;
+  image-rendering: pixelated;
+}
+.look-studio .look-change {
+  display: grid;
+  gap: 6px;
+}
+.look-studio .look-change .change-undo[hidden] {
+  display: none;
+}
 .look-studio .studio-foot {
   display: flex;
   align-items: center;
@@ -1319,11 +1482,11 @@ body.kiosk .hud-reconnect {
   }
   .look-studio .look-preview .look-canvas {
     width: 48px;
-    height: 72px;
+    height: auto;
   }
   .look-studio .look-preview .look-canvas:first-child {
     width: 80px;
-    height: 120px;
+    height: auto;
   }
   .look-studio .look-note {
     display: none;
@@ -1337,6 +1500,19 @@ body.kiosk .hud-reconnect {
   .look-studio .look-row {
     grid-template-columns: 84px 40px 1fr 40px;
     gap: 6px;
+  }
+  /* phones: the colour chips of a part go on their own line under its carousel */
+  .look-studio .design-row {
+    grid-template-columns: 84px 40px 1fr 40px;
+  }
+  .look-studio .design-row .row-colors:not(:empty) {
+    grid-column: 2 / -1;
+  }
+  .look-studio .design-row.colors-only {
+    grid-template-columns: 84px 1fr;
+  }
+  .look-studio .design-row.colors-only .row-colors {
+    grid-column: auto;
   }
   .look-studio .row-value {
     padding: 6px 8px;
@@ -1530,7 +1706,8 @@ body.kiosk .celebration .version {
   color: var(--grey);
   text-transform: uppercase;
 }
-.look-studio .look-describe textarea {
+.look-studio .look-describe textarea,
+.look-studio .look-change textarea {
   width: 100%;
   min-height: 72px;
   max-height: 30vh;
@@ -1564,7 +1741,8 @@ body.kiosk .celebration .version {
   cursor: progress;
 }
 @media (max-width: 760px) {
-  .look-studio .look-describe textarea {
+  .look-studio .look-describe textarea,
+  .look-studio .look-change textarea {
     min-height: 56px;
   }
 }

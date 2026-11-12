@@ -7,17 +7,19 @@ import {
   type AgentKind,
   type AvatarSpec,
   type CharacterLook,
+  type FullLook,
   type Ramp,
   resolveLook,
   type SessionVariation,
+  withWardrobe,
 } from "@agent-office/protocol";
 import { luma, mix, NIGHT } from "./color.ts";
 
 const HAT_OK = new Set<CharacterLook["headwear"]["style"]>(["none", "headphones", "bow"]);
 
 export type RenderLook = {
-  /** the look with the session variation applied */
-  look: CharacterLook;
+  /** the look with the session variation applied, every wardrobe section present */
+  look: FullLook;
   agent: AgentKind;
   /** the agent's colour ramp (AGENT_PALETTES) */
   agentRamp: Ramp;
@@ -42,7 +44,7 @@ export function lookFor(
   agent: AgentKind,
   variation: SessionVariation | null,
 ): RenderLook {
-  const base = resolveLook(avatar);
+  const base = withWardrobe(resolveLook(avatar));
   const agentRamp = agentRampOf(agent);
   let look = base;
   const h = base.hair.ramp;

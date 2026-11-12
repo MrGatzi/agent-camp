@@ -1,13 +1,20 @@
 /**
  * Frame table and body geometry of the HD characters.
  *
- * Frames are 32×48 texels (2× density) and shown at 16×24 world px. Texel rows, standing:
- *   head 6-23 (hair may rise to ~2), torso 24-35, waistband 31, legs split at 38,
- *   feet on row 43, outline rows 44-45 (world row 22, as in the 1× sheet).
+ * Frames are 32×56 texels (2× density) and shown at 16×28 world px, anchored at the feet. The
+ * top HEADROOM rows (WD2) are room for tall people and tall hats: painters work in body rows,
+ * where row 0 is the first row under the headroom (paintSheet offsets them), so a body row is
+ * where it was in the old 32×48 frame. Body rows, standing:
+ *   head 6-23 (hair may rise to ~2, tall hats into the headroom, down to row -8), torso 24-35,
+ *   waistband 31, legs split at 38, feet on row 43, outline rows 44-45 (world row 22).
  * Seated frames move head + torso 6 texels down (3 world px, as before).
  */
 export const FW = 32;
-export const FH = 48;
+/** Texel rows above body row 0 (WD2). */
+export const HEADROOM = 8;
+/** Texel rows of the body frame (as before the headroom). */
+export const BODY_ROWS = 48;
+export const FH = HEADROOM + BODY_ROWS;
 
 export type View = "down" | "up" | "left";
 export type Seat = "none" | "back" | "front";

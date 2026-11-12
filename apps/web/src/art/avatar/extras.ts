@@ -4,14 +4,16 @@
  * look editor introduced (legacyDoll.ts drawHeld/drawWrist, costumes.ts): painted at 1× into a
  * scratch canvas and doubled onto the 32×48 frame, so every item keeps the shape and colours
  * it had. Thin things (joint, cigarette, smoke) are queued in `c.after` and painted after the
- * outline, as before.
+ * outline, as before. The crazy wardrobe (WD12) adds friendship and spiked bracelets painted at
+ * 2× (their bands and studs would be too coarse doubled) and full-body suits (suits.ts).
  */
-import type { CharacterLook } from "@agent-office/protocol";
+import { type CharacterLook, rampFrom } from "@agent-office/protocol";
 import { type CostumeLook, costumeAccessory, costumeHead, costumeTorso } from "../costumes.ts";
 import { type After, drawHeld, drawWrist } from "../legacyDoll.ts";
-import { PixelCanvas } from "../pixel.ts";
+import { PixelCanvas, packColor } from "../pixel.ts";
 import type { Ctx } from "./ctx.ts";
-import type { Arms, View } from "./geometry.ts";
+import { type Arms, BODY_ROWS, FW, HEADROOM, type View } from "./geometry.ts";
+import { drawSuitBody, drawSuitHead, drawSuitLimbs, suitOf } from "./suits.ts";
 import type { TorsoBox } from "./torso.ts";
 
 type Held = NonNullable<CharacterLook["extras"]>["leftHand"];
@@ -23,20 +25,71 @@ const DEFAULT_ACCENT = "#2ce8f5";
 const M = 4;
 const scratch = new PixelCanvas(16 + 2 * M, 24 + 2 * M);
 
+const RGB = 0x00ffffff;
+const OUTLINE = packColor("#181425") & RGB;
+const PURE_WHITE = packColor("#ffffff") & RGB;
+const lumaOf = (v: number) =>
+  (0.299 * (v & 255) + 0.587 * ((v >> 8) & 255) + 0.114 * ((v >> 16) & 255)) / 255;
+
+/** OptHex tint: missing / "none" / a bad value = no tint (the item's own colours). */
+const tintOf = (t: string | undefined): string | null =>
+  t && t !== "none" && /^#[0-9a-f]{6}$/i.test(t) ? t : null;
+
+/**
+ * Recolour what is in the scratch (one item) onto a ramp from `tint` (WD7), by luminance:
+ * darkest third -> shadow, middle -> base, lightest -> light, so shading survives. The outline
+ * colour stays, and pure white stays where it is a highlight (at most a third of the item, e.g.
+ * a lightsaber core or a balloon string); where white is most of the item (a mug) it is tinted.
+ */
+function tintScratch(tint: string) {
+  const r = rampFrom(tint);
+  const steps = [packColor(r.shadow), packColor(r.base), packColor(r.light)];
+  const d = scratch.data;
+  let whites = 0;
+  let total = 0;
+  for (const v of d) {
+    if (v >>> 24 === 0 || (v & RGB) === OUTLINE) continue;
+    total++;
+    if ((v & RGB) === PURE_WHITE) whites++;
+  }
+  const keepWhite = whites * 3 <= total;
+  const recolour = (v: number) =>
+    v >>> 24 !== 0 && (v & RGB) !== OUTLINE && !(keepWhite && (v & RGB) === PURE_WHITE);
+  let lo = 1;
+  let hi = 0;
+  for (const v of d) {
+    if (!recolour(v)) continue;
+    const l = lumaOf(v);
+    lo = Math.min(lo, l);
+    hi = Math.max(hi, l);
+  }
+  for (let i = 0; i < d.length; i++) {
+    const v = d[i]!;
+    if (!recolour(v)) continue;
+    const t = hi - lo < 1e-6 ? 0.5 : (lumaOf(v) - lo) / (hi - lo);
+    const step = steps[t < 1 / 3 ? 0 : t < 2 / 3 ? 1 : 2]!;
+    // keep the item's own alpha
+    d[i] = ((step & RGB) | (v & 0xff000000)) >>> 0;
+  }
+}
+
 /**
  * Paint `paint` at 1× (16×24 frame coordinates) and double it onto `pc`, shifted by (ox, oy)
- * texels. Offset and clip of `pc` apply, so it stays inside the current frame.
+ * texels. Offset and clip of `pc` apply, so it stays inside the current frame. With a `tint`,
+ * the painted item is recoloured onto that colour first (WD7).
  */
 export function overlay1x(
   pc: PixelCanvas,
   ox: number,
   oy: number,
   paint: (p: PixelCanvas) => void,
+  tint?: string | null,
 ): void {
   scratch.data.fill(0);
   scratch.at(M, M);
   paint(scratch);
   scratch.at(0, 0);
+  if (tint) tintScratch(tint);
   const W = scratch.width;
   for (let y = 0; y < scratch.height; y++)
     for (let x = 0; x < W; x++) {
@@ -44,10 +97,12 @@ export function overlay1x(
       if (v >>> 24 === 0) continue;
       const tx = 2 * (x - M) + ox;
       const ty = 2 * (y - M) + oy;
-      pc.put(tx, ty, v);
-      pc.put(tx + 1, ty, v);
-      pc.put(tx, ty + 1, v);
-      pc.put(tx + 1, ty + 1, v);
+      for (let k = 0; k < 4; k++) {
+        const px = tx + (k & 1);
+        const py = ty + (k >> 1);
+        // a long item (the trident's shaft) may reach past the frame: the clip would drop it
+        if (px >= 0 && px < FW && py >= -HEADROOM && py < BODY_ROWS) pc.put(px, py, v);
+      }
     }
 }
 
@@ -66,7 +121,8 @@ export function costumeLook(L: CharacterLook): CostumeLook {
     style === "antenna";
   const costume = L.extras?.costume ?? "none";
   return {
-    outfit: costume === "none" ? "jacket" : costume,
+    // the crazy wardrobe's suits (WD12) have no 1× art: suits.ts draws them on the HD doll
+    outfit: costume === "none" || suitOf(L) ? "jacket" : (costume as CostumeLook["outfit"]),
     accessory: novelty ? style : "none",
     accent: L.extras?.accent ?? DEFAULT_ACCENT,
   };
@@ -75,7 +131,17 @@ export function costumeLook(L: CharacterLook): CostumeLook {
 /** Costume face details (whiskers, eye patch, fangs), head row `hy`. */
 export function drawCostumeHead(pc: PixelCanvas, L: CharacterLook, view: View, hy: number) {
   if ((L.extras?.costume ?? "none") === "none") return;
-  overlay1x(pc, 0, hy, (p) => costumeHead(p, costumeLook(L), view, 0));
+  if (suitOf(L)) {
+    drawSuitHead(pc, L, view, hy);
+    return;
+  }
+  overlay1x(
+    pc,
+    0,
+    hy,
+    (p) => costumeHead(p, costumeLook(L), view, 0),
+    tintOf(L.extras?.costumeTint),
+  );
 }
 
 /** Novelty headwear (ears, horns, halo, crown, hats, antenna), head row `hy`. */
@@ -88,8 +154,18 @@ export function drawNoveltyHeadwear(pc: PixelCanvas, L: CharacterLook, view: Vie
 /** Costume details on the torso (stripes, panels, sash, tail). */
 export function drawCostumeTorso(c: Ctx, b: TorsoBox) {
   if ((c.L.extras?.costume ?? "none") === "none") return;
+  if (suitOf(c.L)) {
+    drawSuitBody(c, b);
+    return;
+  }
   const rows = b.seated ? 5 : 6;
-  overlay1x(c.pc, 0, b.T, (p) => costumeTorso(p, costumeLook(c.L), c.view, 0, rows));
+  overlay1x(
+    c.pc,
+    0,
+    b.T,
+    (p) => costumeTorso(p, costumeLook(c.L), c.view, 0, rows),
+    tintOf(c.L.extras?.costumeTint),
+  );
 }
 
 /** The item for the viewer's left (-1) / right (+1) arm of the front view. */
@@ -97,11 +173,64 @@ export function heldFront(L: CharacterLook, side: -1 | 1): Held {
   return (side < 0 ? L.extras?.leftHand : L.extras?.rightHand) ?? "none";
 }
 
+/** Friendship bracelets in their own colours: three bands one texel thin, braided. */
+const FRIENDSHIP = [
+  ["#f6757a", "#b55088"],
+  ["#fee761", "#63c74d"],
+  ["#2ce8f5", "#0099db"],
+] as const;
+
+/**
+ * Friendship bracelets (WD12), painted at 2× so the bands stay thin: three rows above the hand
+ * at (hx, hy), a texel wider than the arm on each side (the side view's arm is 4 wide). A tint
+ * braids its three shades instead.
+ */
+function friendship(c: Ctx, hx: number, hy: number, tint: string | null) {
+  const r = tint ? rampFrom(tint) : null;
+  const bands = r
+    ? [
+        [r.light, r.base],
+        [r.shadow, r.light],
+        [r.base, r.shadow],
+      ]
+    : FRIENDSHIP;
+  const w = c.view === "left" ? 6 : 4;
+  bands.forEach(([a, b], k) => {
+    for (let i = 0; i < w; i++) c.pc.set(hx - 1 + i, hy - 3 + k, (i + k) % 2 ? b! : a!);
+  });
+}
+
+/**
+ * Spiked wristbands (WD12), at 2×: a black band three texels tall with silver studs, and a
+ * spike poking out on each side. A tint colours the band, the metal stays silver.
+ */
+function spiked(c: Ctx, hx: number, hy: number, tint: string | null) {
+  const band = tint ? rampFrom(tint) : { base: "#262b44", shadow: "#1f1a2b", light: "#3a4466" };
+  const w = c.view === "left" ? 6 : 4;
+  const x0 = hx - 1;
+  for (let i = 0; i < w; i++) {
+    c.pc.set(x0 + i, hy - 3, band.light);
+    c.pc.set(x0 + i, hy - 2, band.base);
+    c.pc.set(x0 + i, hy - 1, band.shadow);
+  }
+  for (let i = 1; i < w; i += 2) c.pc.set(x0 + i, hy - 2, "#c0cbdc");
+  c.pc.set(x0 - 1, hy - 2, "#ffffff");
+  c.pc.set(x0 + w, hy - 2, "#ffffff");
+}
+
 /**
  * One hand's item and bracelet. (hx, hy) = top-left texel of the 2×2 hand, `dir` = the side
  * the item sticks out to.
  */
-function hand(c: Ctx, item: Held, hx: number, hy: number, dir: -1 | 1, wrist = true) {
+function hand(
+  c: Ctx,
+  item: Held,
+  hx: number,
+  hy: number,
+  dir: -1 | 1,
+  tint: string | undefined,
+  wrist = true,
+) {
   const x1 = Math.floor(hx / 2);
   const y1 = Math.floor(hy / 2);
   const ox = hx - 2 * x1;
@@ -110,10 +239,30 @@ function hand(c: Ctx, item: Held, hx: number, hy: number, dir: -1 | 1, wrist = t
   if (!ex) return;
   const tick = (c.f.bob + c.f.phase) % 2;
   const after: After = [];
-  if (wrist && ex.wrist !== "none")
-    overlay1x(c.pc, ox, oy, (p) => drawWrist(p, ex.wrist, x1, y1 - 1));
+  if (wrist && ex.wrist === "friendship") friendship(c, hx, hy, tintOf(ex.wristTint));
+  else if (wrist && ex.wrist === "spiked") spiked(c, hx, hy, tintOf(ex.wristTint));
+  else if (wrist && ex.wrist !== "none")
+    overlay1x(c.pc, ox, oy, (p) => drawWrist(p, ex.wrist, x1, y1 - 1), tintOf(ex.wristTint));
+  // the ice cream's tint colours just the scoop (like the accent), the cone stays a cone
+  const scoop = item === "ice-cream";
   if (item !== "none")
-    overlay1x(c.pc, ox, oy, (p) => drawHeld(p, item, x1, y1, dir, tick, after, ex.accent));
+    overlay1x(
+      c.pc,
+      ox,
+      oy,
+      (p) =>
+        drawHeld(
+          p,
+          item,
+          x1,
+          y1,
+          dir,
+          tick,
+          after,
+          scoop ? (tintOf(tint) ?? ex.accent) : ex.accent,
+        ),
+      scoop ? null : tintOf(tint),
+    );
   for (const paint of after) c.after.push(() => overlay1x(c.pc, ox, oy, paint));
 }
 
@@ -125,12 +274,14 @@ function hand(c: Ctx, item: Held, hx: number, hy: number, dir: -1 | 1, wrist = t
 export function drawExtras(c: Ctx, b: TorsoBox, arms: Arms, phase: number) {
   const ex = c.L.extras;
   if (!ex) return;
+  drawSuitLimbs(c, b, phase);
   if (ex.leftHand === "none" && ex.rightHand === "none" && ex.wrist === "none") return;
   const T = b.T;
   if (c.view === "left") {
     const ax = phase === 1 ? -1 : phase === 3 ? 1 : 0;
-    const item = ex.rightHand !== "none" ? ex.rightHand : ex.leftHand;
-    hand(c, item, 14 + ax * 4, T + 10, -1);
+    const right = ex.rightHand !== "none";
+    const item = right ? ex.rightHand : ex.leftHand;
+    hand(c, item, 14 + ax * 4, T + 10, -1, right ? ex.rightTint : ex.leftTint);
     return;
   }
   if (c.view === "up") {
@@ -143,9 +294,10 @@ export function drawExtras(c: Ctx, b: TorsoBox, arms: Arms, phase: number) {
       lenL = 8;
       lenR = 6;
     }
-    hand(c, ex.rightHand, c.tl - 2, T + lenL, -1);
-    if (arms === "book0" || arms === "book1") hand(c, ex.leftHand, c.tr + 1, T - 2, 1, false);
-    else hand(c, ex.leftHand, c.tr + 1, T + lenR, 1);
+    hand(c, ex.rightHand, c.tl - 2, T + lenL, -1, ex.rightTint);
+    if (arms === "book0" || arms === "book1")
+      hand(c, ex.leftHand, c.tr + 1, T - 2, 1, ex.leftTint, false);
+    else hand(c, ex.leftHand, c.tr + 1, T + lenR, 1, ex.leftTint);
     return;
   }
   // front (standing or seated)
@@ -159,6 +311,8 @@ export function drawExtras(c: Ctx, b: TorsoBox, arms: Arms, phase: number) {
     c.L.pose.hands !== "hand-in-pocket" &&
     ex.rightHand === "none";
   const freeL = c.posed || waving;
-  if (!posedL) hand(c, ex.leftHand, c.tl - 2, T + (!freeL && phase === 1 ? 8 : 10), -1);
-  if (!raised && !posedR) hand(c, ex.rightHand, c.tr + 1, T + (phase === 3 ? 8 : 10), 1);
+  if (!posedL)
+    hand(c, ex.leftHand, c.tl - 2, T + (!freeL && phase === 1 ? 8 : 10), -1, ex.leftTint);
+  if (!raised && !posedR)
+    hand(c, ex.rightHand, c.tr + 1, T + (phase === 3 ? 8 : 10), 1, ex.rightTint);
 }

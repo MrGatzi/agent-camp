@@ -11,11 +11,19 @@ import {
 } from "@agent-office/protocol";
 import { LOOK_FIXTURES } from "@agent-office/protocol/fixtures";
 import { mix } from "../src/art/avatar/color.ts";
-import { ANIM, FH, FW, SPECS } from "../src/art/avatar/geometry.ts";
+import {
+  ANIM,
+  BODY_ROWS as FH,
+  FH as FULL_H,
+  FW,
+  HEADROOM,
+  SPECS,
+} from "../src/art/avatar/geometry.ts";
 import { RefCache } from "../src/art/avatar/refCache.ts";
 import { lookFor } from "../src/art/avatar/renderLook.ts";
-import { paintSheet } from "../src/art/avatar/sheet.ts";
+import { paintSheet as paintFull } from "../src/art/avatar/sheet.ts";
 import { PixelCanvas } from "../src/art/pixel.ts";
+import { paintBody as paintSheet } from "./bodySheet.ts";
 
 const hex = (v: number) =>
   `#${[v & 255, (v >> 8) & 255, (v >> 16) & 255].map((c) => c.toString(16).padStart(2, "0")).join("")}`;
@@ -34,9 +42,9 @@ function colours(pc: PixelCanvas, frame: number, y0 = 0, y1 = FH - 1): Map<strin
   return m;
 }
 
-const frameBytes = (pc: PixelCanvas, frame: number) => {
+const frameBytes = (pc: PixelCanvas, frame: number, rows = FH) => {
   const out: number[] = [];
-  for (let y = 0; y < FH; y++)
+  for (let y = 0; y < rows; y++)
     for (let x = 0; x < FW; x++) out.push(pc.data[y * pc.width + frame * FW + x]!);
   return out.join(",");
 };
@@ -46,10 +54,16 @@ describe("HD character painter", () => {
   const sheet = paintSheet(lookFor(tracht, "claude", null));
   const front = colours(sheet, 0);
 
-  test("sheet is 36 frames of 32×48 texels", () => {
+  test("sheet is 36 frames of 32×56 texels: 8 rows of headroom over the 48 body rows", () => {
     expect(SPECS.length).toBe(36);
-    expect(sheet.width).toBe(36 * 32);
+    const full = paintFull(lookFor(tracht, "claude", null));
+    expect(full.width).toBe(36 * 32);
+    expect(full.height).toBe(56);
+    expect(FULL_H).toBe(HEADROOM + 48);
     expect(sheet.height).toBe(48);
+    // an average look without a tall hat leaves the headroom empty, except the outline of
+    // hair that reaches body row 0 (the frame edge used to clip it)
+    for (let i = 0; i < (HEADROOM - 1) * full.width; i++) expect(full.data[i]! >>> 24).toBe(0);
   });
 
   test("tracht front frame shows the look's key colours", () => {
@@ -301,8 +315,9 @@ describe("HD character painter", () => {
       const seen = new Map<string, string>();
       for (const v of values) {
         const spec: AvatarSpec = { ...baseSpec, look: apply(base, v) };
-        const pc = paintSheet(lookFor(spec, "pi", null));
-        const key = [0, 10, 30].map((f) => frameBytes(pc, f)).join("|");
+        // the full frame: tall hats reach into the headroom
+        const pc = paintFull(lookFor(spec, "pi", null));
+        const key = [0, 10, 30].map((f) => frameBytes(pc, f, FULL_H)).join("|");
         const prev = seen.get(key);
         if (prev !== undefined) same.push(`${name}: ${prev} = ${v}`);
         else seen.set(key, v);

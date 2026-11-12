@@ -4,7 +4,12 @@
  * sales stand. They are drawn
  * with the same HD painter as everybody else; no agent colour, no badge.
  */
-import { avatarFromSeed, type CharacterLook, resolveLook } from "@agent-office/protocol";
+import {
+  avatarFromSeed,
+  type CharacterLook,
+  resolveLook,
+  withWardrobe,
+} from "@agent-office/protocol";
 import { agentRampOf, type RenderLook } from "./avatar/renderLook.ts";
 import { type CharacterSheet, characterSheet } from "./characters.ts";
 
@@ -307,7 +312,7 @@ const SUITS = [
 
 function render(look: CharacterLook): RenderLook {
   return {
-    look,
+    look: withWardrobe(look),
     agent: "claude",
     agentRamp: agentRampOf("claude"),
     accent: false,

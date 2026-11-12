@@ -2,12 +2,14 @@
  * Paper-doll characters. One HD painter (art/avatar/*) draws everybody from a CharacterLook:
  * the avatar's own `look`, or one derived from its catalog fields (`resolveLook`).
  *
- * Frames are 32×48 texels at 2× density and shown at 16×24 world px (texture resolution 2),
- * so layout, seats, hit-testing and animations are unchanged. One sheet (36 frames) per
- * RenderLook; sheets are cached so siblings and re-joins reuse them.
+ * Frames are 32×56 texels at 2× density and shown at 16×28 world px (texture resolution 2),
+ * anchored at the feet: the body is the bottom 16×24 as before, the 4 world px on top are
+ * headroom for tall people and tall hats (WD2), so layout, seats, hit-testing and animations
+ * are unchanged. One sheet (36 frames) per RenderLook; sheets are cached so siblings and
+ * re-joins reuse them.
  */
 import { CanvasSource, Rectangle, Texture } from "pixi.js";
-import { ANIM, type AnimName, FH, FW, SPECS } from "./avatar/geometry.ts";
+import { ANIM, type AnimName, BODY_ROWS, FH, FW, HEADROOM, SPECS } from "./avatar/geometry.ts";
 import { RefCache } from "./avatar/refCache.ts";
 import { lookFor, type RenderLook, renderKey } from "./avatar/renderLook.ts";
 import { paintSheet } from "./avatar/sheet.ts";
@@ -15,9 +17,14 @@ import { PixelCanvas } from "./pixel.ts";
 
 /** Character frame size in world px. */
 export const CHAR_W = 16;
-export const CHAR_H = 24;
 /** Texels per world px of the character textures. */
 export const CHAR_RES = FW / CHAR_W;
+/** Frame height in world px, headroom included. */
+export const CHAR_H = FH / CHAR_RES;
+/** The body part of the frame in world px (hit-testing, portraits), as before the headroom. */
+export const BODY_H = BODY_ROWS / CHAR_RES;
+/** World px of headroom above the body (WD2). */
+export const HEAD_PAD = HEADROOM / CHAR_RES;
 
 export { ANIM, type AnimName, lookFor, paintSheet, type RenderLook };
 /** @deprecated name kept for older imports */
@@ -81,7 +88,8 @@ export const FRAME_TEXELS = { w: FW, h: FH } as const;
 
 /**
  * One frame of a look as a DOM canvas (look editor preview), `scale` canvas px per world px:
- * the 32×48 HD frame drawn at `scale / CHAR_RES` per texel. No Pixi, no cache.
+ * the 32×56 HD frame (headroom included) drawn at `scale / CHAR_RES` per texel. No Pixi, no
+ * cache.
  */
 export function lookPreview(look: RenderLook, frame = 0, scale = 4): HTMLCanvasElement {
   const sheet = paintSheet(look);

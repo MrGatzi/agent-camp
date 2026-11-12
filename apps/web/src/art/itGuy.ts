@@ -4,7 +4,7 @@
  * with the shared HD painter (no agent colour, no badge), plus the small things he carries
  * (a fire extinguisher, a RAM stick), the mess he leaves behind and the soot on his roof.
  */
-import type { CharacterLook } from "@agent-office/protocol";
+import { type CharacterLook, withWardrobe } from "@agent-office/protocol";
 import { Rectangle, Texture } from "pixi.js";
 import { agentRampOf, type RenderLook } from "./avatar/renderLook.ts";
 import { type CharacterSheet, characterSheet } from "./characters.ts";
@@ -97,8 +97,8 @@ export const IT_GUY_LOOK: CharacterLook = {
     hem: "plain",
   },
   legwear: { kind: "none", color: "#eaa98a", accent: "none" },
-  // the painter has no crocs: bright slippers with a darker "hole" dot come closest
-  shoes: { kind: "slippers", ramp: CROCS, sole: "#5c9a2c", accent: "#4a7d22", laces: "none" },
+  // lime crocs: holes and heel strap come with the kind (WD1)
+  shoes: { kind: "crocs", ramp: CROCS, sole: "#5c9a2c", accent: "#4a7d22", laces: "none" },
   pose: { hands: "relaxed", stance: "wide", headTilt: false },
   extras: {
     leftHand: "none",
@@ -110,7 +110,7 @@ export const IT_GUY_LOOK: CharacterLook = {
 };
 
 export const IT_GUY_RENDER: RenderLook = {
-  look: IT_GUY_LOOK,
+  look: withWardrobe(IT_GUY_LOOK),
   agent: "claude",
   agentRamp: agentRampOf("claude"),
   accent: false,

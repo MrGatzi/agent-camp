@@ -10,3 +10,4 @@ export * from "./look.ts";
 export * from "./messages.ts";
 export * from "./officeMessages.ts";
 export * from "./party.ts";
+export * from "./wardrobe.ts";

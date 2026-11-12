@@ -126,3 +126,24 @@ for (const [name, make] of [
     expect(s.getAvatar("tom")?.avatar).toEqual(auto);
   });
 }
+
+describe("custom looks (WD9)", () => {
+  const tracht = LOOK_FIXTURES.tracht;
+  test("new rows keep the detailed look; rows saved before the wardrobe stay catalog ids only", () => {
+    const db = new Database(":memory:");
+    const store = new SqlStore(
+      (sql, ...args) => db.query(sql).all(...(args as never[])) as Record<string, unknown>[],
+    );
+    store.putCustomAvatar("tom", tracht);
+    expect(store.getCustomAvatar("tom")).toEqual(tracht);
+    // the old format: the bare avatar (LK23 dropped its look when reading it)
+    db.query("INSERT OR REPLACE INTO custom_avatars (person, spec, updated) VALUES (?, ?, ?)").run(
+      "anna",
+      JSON.stringify(tracht),
+      1,
+    );
+    const legacy = store.getCustomAvatar("anna")!;
+    expect(legacy.look).toBeUndefined();
+    expect(legacy.outfit).toBe(tracht.outfit ?? "jacket");
+  });
+});

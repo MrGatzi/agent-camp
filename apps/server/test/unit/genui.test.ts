@@ -212,6 +212,9 @@ describe("genui: anthropic", () => {
       "only when the person's self-description explicitly requests them",
     );
     expect(SYSTEM_PROMPT).toContain("otherwise choose an ordinary accessory");
+    // WD12: pets and auras are explained, so "a mermaid with a parrot" has somewhere to go
+    expect(SYSTEM_PROMPT).toContain("accessories.pet");
+    expect(SYSTEM_PROMPT).toContain("mermaid-tail");
     expect(lines.some((l) => l.includes("tokens in=4096 out=2048"))).toBe(true);
     expect(svc.callsToday()).toBe(1);
   });

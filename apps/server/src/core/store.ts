@@ -4,6 +4,7 @@
  */
 import {
   AvatarSpec,
+  catalogAvatar,
   type HistoryRow,
   MESSAGE_MAX_ROWS,
   MESSAGE_RETENTION_MS,
@@ -306,12 +307,21 @@ export class SqlStore implements Store {
       selfDescription ?? null,
     );
   }
+  /**
+   * The custom look (look studio). Rows written since the wardrobe (WD9) are `{wardrobe: 1,
+   * avatar}` and keep their detailed look; older rows are catalog ids only (LK23): a `look`
+   * in them is dropped, so they draw exactly as before.
+   */
   getCustomAvatar(personId: string): AvatarSpec | null {
     const r = this.run("SELECT spec FROM custom_avatars WHERE person = ?", personId)[0];
     if (!r) return null;
     try {
-      const look = AvatarSpec.safeParse(JSON.parse(String(r.spec)));
-      return look.success ? look.data : null;
+      const raw = JSON.parse(String(r.spec)) as unknown;
+      const wardrobe =
+        typeof raw === "object" && raw !== null && "wardrobe" in raw && "avatar" in raw;
+      const look = AvatarSpec.safeParse(wardrobe ? (raw as { avatar: unknown }).avatar : raw);
+      if (!look.success) return null;
+      return wardrobe ? look.data : catalogAvatar(look.data);
     } catch {
       return null;
     }
@@ -324,7 +334,7 @@ export class SqlStore implements Store {
     this.run(
       "INSERT OR REPLACE INTO custom_avatars (person, spec, updated) VALUES (?, ?, ?)",
       personId,
-      JSON.stringify(avatar),
+      JSON.stringify({ wardrobe: 1, avatar }),
       Date.now(),
     );
   }

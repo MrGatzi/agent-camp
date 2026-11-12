@@ -108,6 +108,11 @@ export type AvatarEditResponse = z.infer<typeof AvatarEditResponse>;
  */
 export const LookDescribeRequest = z.object({
   description: z.string().trim().min(1).max(MAX_SELF_DESCRIPTION),
+  /**
+   * "Change by prompt" (WD10): `description` is a change to the look worn now ("make the
+   * jacket red"), not a new description; the result is pinned as a custom look.
+   */
+  change: z.boolean().optional(),
 });
 export type LookDescribeRequest = z.infer<typeof LookDescribeRequest>;
 

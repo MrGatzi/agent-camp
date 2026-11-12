@@ -7,6 +7,7 @@
 import {
   AvatarEditRequest,
   type AvatarEditResponse,
+  CharacterLook,
   envelope,
   type GenerateOutcome,
   HistoryRow,
@@ -587,6 +588,14 @@ export class OfficeApp {
   private applyLook(job: AvatarJob, res: AvatarResult, studio?: string): boolean {
     const { personId } = job;
     const newest = this.store.kvGet(studioKey(personId));
+    if (job.change) {
+      // "Change by prompt" (WD10): the changed look is pinned as a custom look, unless a
+      // newer Generate or a saved look came first; a failed change keeps the look as it is
+      if ((studio && newest && newest !== studio) || res.source !== "ai") return false;
+      const pinned = this.hub.setCustomAvatar(personId, res.avatar, this.now());
+      if (pinned) this.publish(pinned.events);
+      return !!pinned;
+    }
     if (
       (studio && newest && newest !== studio) ||
       !this.hub.isCurrentLookKey(personId, res.key) ||
@@ -1126,6 +1135,17 @@ export class OfficeApp {
     const parsed = AvatarEditRequest.safeParse(body);
     if (!parsed.success)
       return json({ error: z.prettifyError(parsed.error).slice(0, 500) }, { status: 400 });
+    // AvatarSpec drops a bad look silently (viewers must never reject a snapshot over it); a
+    // look designed in the studio must not vanish on save, so it is checked strictly here
+    const rawLook = (body as { avatar?: { look?: unknown } | null }).avatar?.look;
+    if (rawLook !== undefined) {
+      const strict = CharacterLook.safeParse(rawLook);
+      if (!strict.success)
+        return json(
+          { error: `look: ${z.prettifyError(strict.error).slice(0, 480)}` },
+          { status: 400 },
+        );
+    }
     const now = this.now();
     const who = req.headers.get("cf-connecting-ip") ?? req.headers.get("x-forwarded-for") ?? "-";
     if (now - (this.lastLook.get(who) ?? 0) < LOOK_MIN_INTERVAL_MS)
@@ -1212,7 +1232,9 @@ export class OfficeApp {
         { status: 429, headers: { "retry-after": String(resetIn) } },
       );
     }
-    const job = this.hub.describeLook(personId, parsed.data.description);
+    const job = parsed.data.change
+      ? this.hub.changeLook(personId, parsed.data.description, now)
+      : this.hub.describeLook(personId, parsed.data.description);
     if (!job) return json({ error: "not in the office" }, { status: 404 });
     this.lastDescribe.set(personId, now);
     const current = () =>

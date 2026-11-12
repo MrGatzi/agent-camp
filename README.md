@@ -219,18 +219,27 @@ one per way to a look. You can only change your own look. This is a courtesy loc
 office, not real identity: anyone with the office password could start a connector under your
 name. On a shared device, "Forget this device" in that menu (or logging out) drops the claim.
 
-**Pick parts**: flip through hair, face, glasses, cap, outfit (jacket, hoodie, flannel, tee),
-something for each hand (beer, coffee, phone, ...), your ride and desk items with the ◀ ▶
-buttons (or the arrow keys), with a big live preview. **Save parts** pins them, **Undo
-changes** drops what you have not saved. Saving parts replaces an AI look (the studio warns
-you: parts cannot show every detail of it). Outfits that are not in the agent colour carry a
-small agent badge on the tee and a band across the back, so you can still tell Claude from
-Codex at the desk.
+**Design it**: change every part of the look you wear now (your AI look too) and give each
+part its own colour. Tabs for **Outfits** (one click into a business suit, tuxedo, dirndl,
+lederhosen, kilt, ball gown, swimwear, underwear, naked, chef, superhero, witch, pirate, Santa,
+ninja, cowboy, and crazier: mermaid, knight, wizard, luchador, tourist, clown, storm god and
+more, plus **🎲 Surprise me**), **Body** (height, build, figure, skin colour, pose), **Face**
+(eyes, mouth, makeup), **Hair** (cut, colour, dyed tips, beard), **Head** (hats from top hat
+to Tirolerhut, glasses, earrings, masks), **Top** (underwear, shirt, vest or bodice, jacket or
+coat, patterns, buttons), **Bottom** (underwear, trousers or skirt, apron, socks or tights,
+shoes), **Extras** (held items in any colour, wings, tails, gloves, necklaces, bags, a pet on
+your shoulder, an aura around you) and **Desk & ride**. Flip a part with ◀ ▶ (or the arrow keys); the swatch
+next to it opens the colours (or any colour you like). **Save look** pins the design with
+all its detail, **Undo changes** drops what you have not saved. Naked is a smooth, featureless
+doll body. Clothes that are not in the agent colour carry a small agent badge on the chest
+and a band across the back, so you can still tell Claude from Codex at the desk.
 
 **Describe it**: write how you look (a few words or a whole paragraph) and press **Generate
 look**; the Mac you confirmed **It's me** on draws you from it (as above) within a minute or
-two, replacing picked parts. The new look goes live as soon as it is drawn, there is nothing
-to save. While you wear picked parts, this tab offers the way back: **Use the look from my
+two, replacing a saved design. **Change something** edits the look you wear now instead
+("make my jacket red, add a cowboy hat") and keeps everything else; **Undo that change**
+brings the old look back. The new look goes live as soon as it is drawn, there is nothing
+to save. While you wear your own design, this tab offers the way back: **Use the look from my
 description** (or **Back to the automatic look** if you never wrote one). Only that Mac
 draws: each Mac gets its own code, so another connector started under your name never gets
 your text, and a description a connector sends when it connects never runs on any Mac. If

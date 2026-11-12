@@ -229,7 +229,10 @@ describe("lookFromCatalog: look editor items (#11 and later)", () => {
   test("look id lists match the catalog", () => {
     expect([...HELD_KINDS]).toEqual(HELD_ITEMS.map((e) => e.id));
     expect([...WRIST_KINDS]).toEqual(WRISTWEAR.map((e) => e.id));
-    for (const c of COSTUME_KINDS) if (c !== "none") expect(Outfit.options).toContain(c);
+    // WD12 costumes are look-only (drawn on the HD doll), not catalog outfits
+    const lookOnly: readonly string[] = ["banana", "skeleton", "mummy", "knight", "hotdog"];
+    for (const c of COSTUME_KINDS)
+      if (c !== "none" && !lookOnly.includes(c)) expect(Outfit.options as string[]).toContain(c);
   });
 
   test("resolveLook fills missing extras from the catalog fields", () => {
@@ -374,7 +377,7 @@ describe("repairLook", () => {
   test("bad fields/sections fall back to the base look, good ones are kept", () => {
     const c = clone(tracht.look) as unknown as Record<string, unknown>;
     c.shoes = "white sneakers"; // whole section unusable
-    (c.bottoms as Record<string, unknown>).kind = "kilt"; // one bad field
+    (c.bottoms as Record<string, unknown>).kind = "toga"; // one bad field
     delete (c as Record<string, unknown>).pose; // missing section
     c.build = "huge";
     c.v = 3;
@@ -434,7 +437,7 @@ describe("repairAvatar", () => {
     c.hairStyle = "slicked-back"; // not a catalog style
     c.deskProps = ["mug", "mug", "unicorn", "plant", "lamp", "books"];
     c.deskMess = 9;
-    (c.look as Record<string, unknown>).hair = { cut: "pompadour" };
+    (c.look as Record<string, unknown>).hair = { cut: "tentacle-mullet" }; // not a cut
     const seeded = avatarFromSeed("anna");
     const { avatar, repaired } = repairAvatar(c, "anna");
     expect(repaired).toBe(true);

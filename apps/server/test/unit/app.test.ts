@@ -679,7 +679,7 @@ describe("OfficeApp look editor", () => {
     expect(app.hub.isCustomLook("tom")).toBe(false);
   });
 
-  test("a custom look wins over GenUI: its look comes from the picked ids", async () => {
+  test("a custom look wins over GenUI and keeps the look as designed (WD9)", async () => {
     // GenUI on (mocked Anthropic answering with the detailed tracht look)
     const bodies: unknown[] = [];
     const t = setup(
@@ -703,27 +703,33 @@ describe("OfficeApp look editor", () => {
     expect(bodies).toHaveLength(1);
     expect(app.hub.state().people[0]!.avatar.look).toEqual(LOOK_FIXTURES.tracht.look);
 
-    // the editor sends the avatar it was opened with (detailed look included) + a flannel and a
-    // beer: the look is dropped, the picked ids are what everybody sees
+    // the studio sends the look it designed, starting from the AI look: everybody sees it as
+    // designed (a red janker, a beer)
     me = await claim(t, "tom");
-    const edited = {
-      ...LOOK_FIXTURES.tracht,
-      outfit: "flannel",
-      leftHand: "beer",
-      rightHand: "none",
-      accessory: "cap-mint",
+    const tracht = LOOK_FIXTURES.tracht.look!;
+    const designed = {
+      ...tracht,
+      outer: { ...tracht.outer, ramp: { base: "#e43b44", shadow: "#a22633", light: "#f6757a" } },
+      extras: { ...tracht.extras!, leftHand: "beer" as const },
     };
+    const edited = { ...LOOK_FIXTURES.tracht, look: designed };
     const r = (await put(app, "tom", { avatar: edited }))!;
     expect(r.status).toBe(200);
     const body = (await r.json()) as { avatar: AvatarSpec };
-    expect(body.avatar.look).toBeUndefined();
+    expect(body.avatar.look).toEqual(designed);
     const ev = parseViewerMessage(sent.at(-1)!);
     if (!ev.ok || ev.msg.type !== "avatar.updated") throw new Error("no avatar.updated");
-    expect(ev.msg.data.avatar.look).toBeUndefined();
     const look = resolveLook(ev.msg.data.avatar as AvatarSpec);
-    expect(look.outer.pattern.kind).toBe("plaid");
+    expect(look.outer.ramp.base).toBe("#e43b44");
     expect(look.extras?.leftHand).toBe("beer");
-    expect(look.headwear).toMatchObject({ style: "cap", logo: "#ffffff" });
+
+    // a look the schema rejects is refused, not saved without its look
+    advance(2_000);
+    const bad = (await put(app, "tom", {
+      avatar: { ...edited, look: { ...designed, shirt: { ...designed.shirt, kind: "toga" } } },
+    }))!;
+    expect(bad.status).toBe(400);
+    expect(app.hub.state().people[0]!.avatar.look).toEqual(designed);
 
     // a new description: no AI call, nothing replaces the custom look
     const before = sent.length;
@@ -845,6 +851,33 @@ describe("OfficeApp look editor", () => {
       advance(20_000);
       expect((await describeLook(app, "tom", { description: desc }))!.status).toBe(200);
       expect(bodies).toHaveLength(3);
+    });
+
+    test("change by prompt edits the look worn now and pins it; the description stays", async () => {
+      const bodies: unknown[] = [];
+      const t = setup(aiEnv, traceFetch(bodies));
+      const { app, pending } = t;
+      app.connectorMessage("s1", hello("Tom", "red hoodie"));
+      await Promise.all(pending);
+      expect(bodies).toHaveLength(1);
+      me = await claim(t, "tom");
+      const worn = app.hub.state().people[0]!.avatar;
+      const r = (await describeLook(app, "tom", {
+        description: "make the janker red",
+        change: true,
+      }))!;
+      expect(r.status).toBe(200);
+      expect(await r.json()).toMatchObject({ ok: true, result: "ai" });
+      // the prompt carries the look worn now and the change
+      const prompt = String(bodies[1]);
+      expect(prompt).toContain("<current_look>");
+      expect(prompt).toContain("make the janker red");
+      expect(prompt).toContain(JSON.stringify(worn.deskProps).replace(/"/g, '\\"'));
+      // pinned as a custom look; the description and the automatic row are untouched
+      expect(app.hub.isCustomLook("tom")).toBe(true);
+      expect(app.hub.state().people[0]!.avatar.look).toEqual(LOOK_FIXTURES.tracht.look);
+      expect(app.hub.descriptionOf("tom")).toBe("red hoodie");
+      expect(app.store.getAvatar("tom")?.selfDescription).toBe("red hoodie");
     });
 
     test("AI looks off: the description is saved for later and the look stays", async () => {
