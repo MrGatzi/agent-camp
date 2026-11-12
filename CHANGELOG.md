@@ -7,6 +7,7 @@ banner after a deploy.
 
 ## 2026-11-12
 
+- 🧜 A crazy wardrobe: mermaid tails, wizard robes and beards, chain mail, hazmat and astronaut suits, luchador and plague doctor masks, clown shoes, moon boots, a jetpack, sombreros and traffic cones, banana and hot dog costumes and much more. New: a pet on your shoulder (parrot, cat, hamster, octopus, rubber duck, little dragon) and an aura around you (sparkles, fire, a rain cloud, hearts, bees, lightning). 18 new one-click outfits from Mermaid to Storm god, or just ask the AI for "a mermaid with a parrot"
 - 👗 An endless wardrobe: in Customize look, **Design it** lets you change every part of your look and give each part its own colour: height and body shape, skin, hair and makeup, hats from top hat to Tirolerhut, suits and tuxedos, dirndl and lederhosen, skirts and gowns, swimwear and underwear (or nothing at all), capes, wings, tails, masks and more, with one-click outfits and a 🎲 Surprise me. Or just tell the AI what to change ("make my jacket red, add a cowboy hat")
 - Timelapse now lets you watch All frames or one day in your browser's local timezone, with matching counts and thumbnails, and warms only a few frames ahead instead of the whole recording
 - `agent-office status --json` now gives scripts a privacy-safe health snapshot, without config, project names or server credentials

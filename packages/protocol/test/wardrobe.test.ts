@@ -57,6 +57,31 @@ describe("wardrobe", () => {
     expect(new Set(OUTFIT_PRESETS.map((p) => p.id)).size).toBe(OUTFIT_PRESETS.length);
   });
 
+  test("crazy presets (WD12) keep their pets and auras through the parse", () => {
+    const base = randomLook(11);
+    const withPart = OUTFIT_PRESETS.filter(
+      (p) => p.outfit.accessories.pet || p.outfit.accessories.aura,
+    );
+    expect(withPart.length).toBeGreaterThanOrEqual(5);
+    for (const p of withPart) {
+      const parsed = CharacterLook.parse(applyPreset(base, p.id));
+      // a bad pet or aura would be dropped silently by .catch
+      expect(parsed.accessories).toEqual(p.outfit.accessories);
+    }
+    // the presets from before WD12 write neither (their JSON is unchanged)
+    const tux = OUTFIT_PRESETS.find((p) => p.id === "tuxedo")!;
+    expect(Object.keys(tux.outfit.accessories)).not.toContain("pet");
+    // switching outfit takes the pet off, like wings
+    expect(applyPreset(applyPreset(base, "tourist"), "casual").accessories?.pet).toBeUndefined();
+  });
+
+  test("the WD12 look fixtures wear their pet and aura", () => {
+    expect(LOOK_FIXTURES.mermaid.look.accessories?.pet?.kind).toBe("octopus");
+    expect(LOOK_FIXTURES.knight.look.extras?.costume).toBe("knight");
+    expect(LOOK_FIXTURES.wizard.look.accessories?.aura?.kind).toBe("sparkles");
+    expect(LOOK_FIXTURES.wizard.look.facialHair.style).toBe("wizard-beard");
+  });
+
   test("naked preset leaves nothing on", () => {
     const look = withWardrobe(applyPreset(randomLook(1), "naked"));
     expect(look.shirt.kind).toBe("none");
@@ -86,6 +111,14 @@ describe("wardrobe", () => {
       expect(r.data.accessories).toBeDefined();
     }
     expect(randomLook(42)).toEqual(randomLook(42));
+    // pets and auras are rare extras: some, but far from most
+    const looks = Array.from({ length: 500 }, (_, s) => randomLook(s).accessories);
+    const pets = looks.filter((a) => a.pet && a.pet.kind !== "none").length;
+    const auras = looks.filter((a) => a.aura && a.aura.kind !== "none").length;
+    expect(pets).toBeGreaterThan(0);
+    expect(pets).toBeLessThan(75);
+    expect(auras).toBeGreaterThan(0);
+    expect(auras).toBeLessThan(50);
   });
 
   test("repairLook keeps valid wardrobe sections of a partly broken look", () => {

@@ -13,6 +13,7 @@ import { mulberry32 } from "./hash.ts";
 import {
   type Accessories,
   type Apron,
+  AURAS,
   BAGS,
   BOTTOM_KINDS,
   type Body,
@@ -45,6 +46,7 @@ import {
   OUTER_LENGTHS,
   PATTERN_KINDS,
   type Pattern,
+  PETS,
   type Ramp,
   SHIRT_KINDS,
   SHOE_KINDS,
@@ -110,7 +112,7 @@ export const buttons = (count: number, color: string, o: Partial<Buttons> = {}):
 
 export function shirtOf(kind: Shirt["kind"], color: string, o: Partial<Shirt> = {}): Shirt {
   const collar: Shirt["collar"] =
-    kind === "shirt" || kind === "blouse"
+    kind === "shirt" || kind === "blouse" || kind === "hawaiian"
       ? "shirt"
       : kind === "polo"
         ? "polo"
@@ -126,7 +128,12 @@ export function shirtOf(kind: Shirt["kind"], color: string, o: Partial<Shirt> = 
       ? "none"
       : kind === "dirndl-blouse"
         ? "puff"
-        : kind === "tshirt" || kind === "polo" || kind === "jersey" || kind === "crop-top"
+        : kind === "tshirt" ||
+            kind === "polo" ||
+            kind === "jersey" ||
+            kind === "crop-top" ||
+            kind === "hawaiian" ||
+            kind === "tuxedo-tee"
           ? "short"
           : "long";
   return {
@@ -138,7 +145,10 @@ export function shirtOf(kind: Shirt["kind"], color: string, o: Partial<Shirt> = 
     neckwear: "none",
     neckwearColor: "#262b44",
     sleeves,
-    buttons: buttons(kind === "shirt" || kind === "polo" ? 3 : 0, mixHex(color, INK, 0.3)),
+    buttons: buttons(
+      kind === "shirt" || kind === "polo" ? 3 : kind === "hawaiian" ? 4 : 0,
+      mixHex(color, INK, 0.3),
+    ),
     peeksAtWaist: false,
     ...o,
   };
@@ -159,21 +169,35 @@ export function vestOf(kind: Vest["kind"], color: string, o: Partial<Vest> = {})
 export function outerOf(kind: Outer["kind"], color: string, o: Partial<Outer> = {}): Outer {
   const long = kind === "trench-coat" || kind === "coat" || kind === "lab-coat";
   const robe = kind === "kimono" || kind === "bathrobe" || kind === "cape";
+  /** WD12 suits: closed, down to the ankles */
+  const suit = kind === "hazmat" || kind === "astronaut-suit" || kind === "wizard-robe";
   return {
     kind,
     agentColored: false,
     ramp: rampFrom(color),
     pattern: plain(color),
-    open: kind !== "coat" && kind !== "poncho" && kind !== "parka",
-    length: robe ? "knee" : long ? "thigh" : kind === "tailcoat" ? "knee" : "hip",
+    open: kind !== "coat" && kind !== "poncho" && kind !== "parka" && kind !== "chainmail" && !suit,
+    length: suit
+      ? "ankle"
+      : robe || kind === "fur-coat"
+        ? "knee"
+        : long
+          ? "thigh"
+          : kind === "tailcoat"
+            ? "knee"
+            : "hip",
     collar:
       kind === "blazer" || kind === "tuxedo" || kind === "tailcoat" || kind === "trench-coat"
         ? "lapel"
-        : kind === "kimono" || kind === "bathrobe"
+        : kind === "kimono" || kind === "bathrobe" || kind === "fur-coat"
           ? "shawl"
-          : kind === "parka" || kind === "rain-jacket" || kind === "zip-hoodie"
+          : kind === "parka" || kind === "rain-jacket" || kind === "zip-hoodie" || kind === "hazmat"
             ? "hood"
-            : kind === "cape" || kind === "poncho" || kind === "none"
+            : kind === "cape" ||
+                kind === "poncho" ||
+                kind === "none" ||
+                kind === "chainmail" ||
+                suit
               ? "none"
               : "shirt",
     collarColor: "none",
@@ -800,6 +824,234 @@ export const OUTFIT_PRESETS: readonly OutfitPreset[] = [
       accessories: accessoriesOf({ tail: ["dino", "#63c74d"] }),
     }),
   },
+  // ---- crazy wardrobe (WD12) ----
+  {
+    id: "mermaid",
+    label: "Mermaid",
+    outfit: outfit({
+      bottoms: bottomsOf("mermaid-tail", "#2ce8f5", {
+        pattern: { kind: "sequins", a: "#63c74d", b: "none" },
+      }),
+      shoes: BAREFOOT,
+      underwear: underwearOf("bikini-top", "#f6757a", "bikini", "#f6757a"),
+      accessories: accessoriesOf({ necklace: ["pearls", SNOW], pet: ["octopus", "#f77622"] }),
+      headwear: headwearOf("flower-crown", "#63c74d", "#f6757a"),
+    }),
+  },
+  {
+    id: "knight",
+    label: "Knight",
+    outfit: outfit({
+      shirt: shirtOf("longsleeve", "#5a6988"),
+      outer: outerOf("chainmail", "#8b9bb4", { length: "thigh" }),
+      bottoms: bottomsOf("trousers", "#3a3f47", { belt: "#5a3a28" }),
+      shoes: shoesOf("boots", "#5a6988"),
+      accessories: accessoriesOf({ gloves: ["short", "#8b9bb4"], pet: ["dragon", "#3e8948"] }),
+      costume: "knight",
+    }),
+  },
+  {
+    id: "wizard",
+    label: "Wizard",
+    outfit: outfit({
+      shirt: shirtOf("longsleeve", "#1f3d6b"),
+      outer: outerOf("wizard-robe", "#1f3d6b", {
+        pattern: { kind: "galaxy", a: "#fee761", b: "none" },
+      }),
+      bottoms: bottomsOf("trousers", "#1f3d6b"),
+      shoes: shoesOf("slippers", "#68386c"),
+      accessories: accessoriesOf({ aura: ["sparkles", "#fee761"] }),
+      headwear: headwearOf("wizard-hat", "#1f3d6b", "#fee761"),
+      rightHand: "magic-wand",
+    }),
+  },
+  {
+    id: "luchador",
+    label: "Luchador",
+    outfit: outfit({
+      outer: outerOf("cape", GOLD, { length: "knee" }),
+      bottoms: bottomsOf("leggings", "#e43b44", {
+        pattern: { kind: "flames", a: GOLD, b: "none" },
+      }),
+      shoes: shoesOf("boots", "#e43b44", { accent: GOLD }),
+      underwear: underwearOf("none", WHITE, "briefs", GOLD),
+      accessories: accessoriesOf({ mask: ["luchador", "#e43b44"] }),
+    }),
+  },
+  {
+    id: "moonwalker",
+    label: "Moonwalker",
+    outfit: outfit({
+      shirt: shirtOf("longsleeve", WHITE),
+      outer: outerOf("astronaut-suit", WHITE),
+      bottoms: bottomsOf("trousers", WHITE),
+      shoes: shoesOf("moon-boots", "#c0cbdc"),
+      accessories: accessoriesOf({ gloves: ["short", "#c0cbdc"], wings: ["jetpack", "#c0cbdc"] }),
+    }),
+  },
+  {
+    id: "hazmat",
+    label: "Hazmat",
+    outfit: outfit({
+      shirt: shirtOf("tshirt", WHITE),
+      outer: outerOf("hazmat", "#fee761"),
+      bottoms: bottomsOf("trousers", "#fee761"),
+      shoes: shoesOf("rain-boots", BLACK),
+      accessories: accessoriesOf({ mask: ["gas-mask", CHARCOAL], gloves: ["long", BLACK] }),
+    }),
+  },
+  {
+    id: "banana",
+    label: "Banana",
+    outfit: outfit({
+      shirt: shirtOf("tshirt", "#fee761"),
+      bottoms: bottomsOf("leggings", "#fee761"),
+      shoes: shoesOf("sneakers", "#5a3a28"),
+      costume: "banana",
+    }),
+  },
+  {
+    id: "hotdog",
+    label: "Hot dog",
+    outfit: outfit({
+      shirt: shirtOf("tshirt", "#e43b44"),
+      bottoms: bottomsOf("leggings", "#c28569"),
+      shoes: shoesOf("sneakers", "#fee761"),
+      costume: "hotdog",
+    }),
+  },
+  {
+    id: "jester",
+    label: "Jester",
+    outfit: outfit({
+      shirt: shirtOf("longsleeve", "#a22633", {
+        pattern: { kind: "check", a: GOLD, b: "none" },
+      }),
+      bottoms: bottomsOf("leggings", "#a22633"),
+      legwear: legwearOf("striped-stockings", GOLD, "#a22633"),
+      shoes: shoesOf("slippers", GOLD),
+      accessories: accessoriesOf({ necklace: ["ruff", SNOW] }),
+      headwear: headwearOf("jester-hat", "#a22633", GOLD),
+      rightHand: "maracas",
+    }),
+  },
+  {
+    id: "pharaoh",
+    label: "Pharaoh",
+    outfit: outfit({
+      bottoms: bottomsOf("skirt", SNOW, { belt: GOLD }),
+      shoes: shoesOf("sandals", GOLD),
+      accessories: accessoriesOf({ necklace: ["bling", GOLD], pet: ["cat", BLACK] }),
+      headwear: headwearOf("pharaoh", GOLD, "#0058a8"),
+    }),
+  },
+  {
+    id: "tourist",
+    label: "Tourist",
+    outfit: outfit({
+      shirt: shirtOf("hawaiian", "#0099db", {
+        pattern: { kind: "floral", a: "#fee761", b: "#f6757a" },
+      }),
+      bottoms: bottomsOf("shorts", "#ead4aa"),
+      legwear: legwearOf("crew-socks", WHITE),
+      shoes: shoesOf("sandals", "#733e39"),
+      accessories: accessoriesOf({ bag: ["fanny-pack", "#e43b44"], pet: ["parrot", "#e43b44"] }),
+      headwear: headwearOf("sombrero", "#ead4aa", "#e43b44"),
+      rightHand: "ice-cream",
+    }),
+  },
+  {
+    id: "rockstar",
+    label: "Rockstar",
+    outfit: outfit({
+      shirt: shirtOf("tshirt", BLACK, { pattern: { kind: "flames", a: "#f77622", b: "none" } }),
+      outer: outerOf("leather-jacket", BLACK, { buttons: buttons(0, "#c0cbdc") }),
+      bottoms: bottomsOf("jeans", BLACK, {
+        pattern: { kind: "worn", a: "#3a3f47", b: "none" },
+        hem: "frayed",
+      }),
+      shoes: shoesOf("boots", BLACK),
+      accessories: accessoriesOf({ necklace: ["chain", "#c0cbdc"], bag: ["guitar", "#a22633"] }),
+    }),
+  },
+  {
+    id: "mad-scientist",
+    label: "Mad scientist",
+    outfit: outfit({
+      shirt: shirtOf("shirt", WHITE, { neckwear: "bow-tie", neckwearColor: "#63c74d" }),
+      outer: outerOf("lab-coat", WHITE, { pockets: "patch" }),
+      bottoms: bottomsOf("trousers", "#5a6988"),
+      shoes: shoesOf("loafers", "#5a3a28"),
+      accessories: accessoriesOf({ gloves: ["long", "#63c74d"], pet: ["hamster", "#c28569"] }),
+    }),
+  },
+  {
+    id: "clown",
+    label: "Clown",
+    outfit: outfit({
+      shirt: shirtOf("shirt", "#fee761", { pattern: { kind: "dots", a: "#e43b44", b: "none" } }),
+      bottoms: bottomsOf("overalls", "#0099db", {
+        suspenders: "plain",
+        suspendersColor: "#e43b44",
+      }),
+      legwear: legwearOf("striped-stockings", WHITE, "#e43b44"),
+      shoes: shoesOf("clown-shoes", "#e43b44"),
+      accessories: accessoriesOf({
+        mask: ["clown-nose", "#e43b44"],
+        gloves: ["cartoon", WHITE],
+        necklace: ["ruff", WHITE],
+      }),
+      headwear: headwearOf("propeller-cap", "#0099db", "#fee761"),
+      rightHand: "rubber-chicken",
+    }),
+  },
+  {
+    id: "beekeeper",
+    label: "Beekeeper",
+    outfit: outfit({
+      shirt: shirtOf("longsleeve", SNOW),
+      bottoms: bottomsOf("jumpsuit", SNOW),
+      shoes: shoesOf("rain-boots", WHITE),
+      accessories: accessoriesOf({ gloves: ["long", "#ead4aa"], aura: ["bees", GOLD] }),
+      headwear: headwearOf("bucket-hat", SNOW, "#c0cbdc"),
+    }),
+  },
+  {
+    id: "storm-god",
+    label: "Storm god",
+    outfit: outfit({
+      shirt: shirtOf("tank", SNOW),
+      outer: outerOf("cape", "#0058a8", { length: "ankle" }),
+      bottoms: bottomsOf("harem-pants", SNOW, { belt: GOLD }),
+      shoes: shoesOf("sandals", GOLD),
+      accessories: accessoriesOf({ aura: ["lightning", "#fee761"] }),
+      rightHand: "trident",
+    }),
+  },
+  {
+    id: "plague-doctor",
+    label: "Plague doctor",
+    outfit: outfit({
+      shirt: shirtOf("shirt", BLACK),
+      outer: outerOf("coat", BLACK, { length: "ankle" }),
+      bottoms: bottomsOf("trousers", BLACK),
+      shoes: shoesOf("boots", BLACK),
+      accessories: accessoriesOf({ mask: ["plague-doctor", "#ead4aa"], gloves: ["long", BLACK] }),
+      rightHand: "torch",
+    }),
+  },
+  {
+    id: "ugly-sweater",
+    label: "Ugly sweater party",
+    outfit: outfit({
+      shirt: shirtOf("ugly-sweater", "#a22633"),
+      bottoms: bottomsOf("jeans", "#3b5ba5"),
+      legwear: legwearOf("striped-stockings", WHITE, "#e43b44"),
+      shoes: shoesOf("bunny-slippers", SNOW),
+      accessories: accessoriesOf({ necklace: ["bell-collar", GOLD] }),
+      headwear: headwearOf("santa-hat", "#e43b44", SNOW),
+    }),
+  },
 ];
 
 /** Hats that belong to an outfit: switching outfits takes them off again. */
@@ -1031,6 +1283,9 @@ export function randomLook(seed: number): FullLook {
       gloves: [rare(r, GLOVES, 0.1), col()],
       necklace: [rare(r, NECKLACES, 0.15), col()],
       bag: [rare(r, BAGS, 0.15), col()],
+      // WD12: rare extras, like wings
+      pet: [rare(r, PETS, 0.06), col()],
+      aura: [rare(r, AURAS, 0.04), col()],
     }),
   };
 }

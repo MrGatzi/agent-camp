@@ -158,7 +158,9 @@
       "tail": { "kind": "none", "color": "#3a4466" },
       "gloves": { "kind": "none", "color": "#3a4466" },
       "necklace": { "kind": "none", "color": "#3a4466" },
-      "bag": { "kind": "none", "color": "#3a4466" }
+      "bag": { "kind": "none", "color": "#3a4466" },
+      "pet": { "kind": "none", "color": "#3a4466" },
+      "aura": { "kind": "none", "color": "#3a4466" }
     }
   }
 }

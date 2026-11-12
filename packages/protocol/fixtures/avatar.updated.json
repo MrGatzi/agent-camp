@@ -275,6 +275,14 @@
           "bag": {
             "kind": "none",
             "color": "#3a4466"
+          },
+          "pet": {
+            "kind": "none",
+            "color": "#3a4466"
+          },
+          "aura": {
+            "kind": "none",
+            "color": "#3a4466"
           }
         }
       }

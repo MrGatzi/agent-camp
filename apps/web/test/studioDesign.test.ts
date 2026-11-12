@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
+  AURAS,
   applyPreset,
   avatarFromSeed,
   CharacterLook,
   OUTFIT_PRESETS,
+  PETS,
   randomLook,
 } from "@agent-office/protocol";
 import { LOOK_FIXTURES } from "@agent-office/protocol/fixtures";
@@ -22,6 +24,9 @@ const strict = (d: Draft) => {
   // nothing silently dropped by .catch()
   for (const k of ["body", "underwear", "apron", "accessories", "extras"] as const)
     expect(r.data[k]).toBeDefined();
+  // nor an optional part (WD12)
+  for (const k of ["pet", "aura"] as const)
+    if (d.look.accessories[k]) expect(r.data.accessories?.[k]).toEqual(d.look.accessories[k]);
 };
 
 describe("look studio: Design it", () => {
@@ -90,6 +95,32 @@ describe("look studio: Design it", () => {
     expect(visibleColors(hat, d)).toEqual([]);
     hat.set(d, "top-hat");
     expect(visibleColors(hat, d).length).toBe(2);
+  });
+
+  test("pet and aura (optional parts) are added, kept through the parse and recoloured", () => {
+    const rows = DESIGN_SECTIONS.find((s) => s.id === "extras")!.rows;
+    for (const k of ["pet", "aura"] as const) {
+      const row = rows.find((r) => r.id === k)!;
+      expect(row.options.map((o) => o.id)).toEqual([...(k === "pet" ? PETS : AURAS)]);
+      // a catalog look has no pet or aura yet
+      expect(drafts[0]!.look.accessories[k]).toBeUndefined();
+      expect(row.get(drafts[0]!)).toBe("none");
+      for (const o of row.options) {
+        const d = structuredClone(drafts[0]!);
+        row.set(d, o.id);
+        const parsed = CharacterLook.parse(d.look);
+        expect(parsed.accessories?.[k]?.kind).toBe(o.id as never);
+        expect(parsed.accessories?.[k]?.color).toMatch(/^#[0-9a-f]{6}$/);
+      }
+      const d = structuredClone(drafts[0]!);
+      row.set(d, k === "pet" ? "parrot" : "bees");
+      const chip = visibleColors(row, d)[0]!;
+      chip.set(d, "#12ab34");
+      row.set(d, k === "pet" ? "cat" : "fire"); // switching kind keeps the chosen colour
+      expect(CharacterLook.parse(d.look).accessories?.[k]?.color).toBe("#12ab34");
+      row.set(d, "none");
+      expect(visibleColors(row, d)).toEqual([]);
+    }
   });
 
   test("desk items never repeat and the draft key notices changes", () => {

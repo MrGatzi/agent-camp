@@ -7,6 +7,7 @@ import {
   ACCENT_COLORS,
   APRON_BOWS,
   APRON_KINDS,
+  AURAS,
   type AvatarSpec,
   BAGS,
   BOTTOM_KINDS,
@@ -45,6 +46,7 @@ import {
   OUTER_LENGTHS,
   PATTERN_KINDS,
   type Pattern,
+  PETS,
   type Ramp,
   rampFrom,
   resolveLook,
@@ -124,6 +126,25 @@ const SPECIAL: Record<string, string> = {
   "hands-in-pockets": "hands in pockets",
   "hands-on-hips": "hands on hips",
   "arms-crossed": "arms crossed",
+  // crazy wardrobe (WD12)
+  "tie-dye": "tie-dye",
+  elf: "elf ears",
+  "3d": "3D glasses",
+  pharaoh: "pharaoh headdress",
+  hawaiian: "Hawaiian shirt",
+  "ugly-sweater": "ugly Christmas sweater",
+  "tuxedo-tee": "tuxedo T-shirt",
+  hazmat: "hazmat suit",
+  chainmail: "chain mail",
+  luchador: "luchador mask",
+  disguise: "nose & glasses",
+  "plague-doctor": "plague doctor mask",
+  cartoon: "cartoon gloves",
+  ruff: "ruff collar",
+  baguettes: "baguettes (to go)",
+  hotdog: "hot dog",
+  spiked: "spiked wristbands",
+  friendship: "friendship bracelets",
 };
 /** "cowboy-hat" -> "cowboy hat" */
 export const labelOf = (id: string): string => SPECIAL[id] ?? id.replace(/-/g, " ");
@@ -1129,6 +1150,35 @@ export const DESIGN_SECTIONS: readonly DesignSection[] = [
           },
         ),
       ),
+      ...(["pet", "aura"] as const).map((k) =>
+        kindRow(
+          k,
+          k === "pet" ? "Pet" : "Aura",
+          k === "pet" ? PETS : AURAS,
+          (l) => l.accessories[k]?.kind ?? "none",
+          (l, v) => {
+            // optional parts (WD12): a new one starts in the kind's own colour
+            const cur = l.accessories[k];
+            const color = cur && cur.kind !== "none" ? cur.color : (PART_COLORS[v] ?? "#3a4466");
+            l.accessories = { ...l.accessories, [k]: { kind: v, color } };
+          },
+          {
+            colors: [
+              hexChip(
+                `${k}-color`,
+                k,
+                (l) => l.accessories[k]?.color ?? "#3a4466",
+                (l, h) => {
+                  l.accessories = {
+                    ...l.accessories,
+                    [k]: { kind: l.accessories[k]?.kind ?? "none", color: h },
+                  };
+                },
+              ),
+            ],
+          },
+        ),
+      ),
       kindRow(
         "costume",
         "Costume details",
@@ -1252,6 +1302,22 @@ export const DESIGN_SECTIONS: readonly DesignSection[] = [
     ],
   },
 ];
+
+/** The colour a pet or aura starts in when it is picked (WD12). */
+const PART_COLORS: Record<string, string> = {
+  parrot: "#e43b44",
+  cat: "#f77622",
+  hamster: "#c28569",
+  octopus: "#b55088",
+  "rubber-duck": "#fee761",
+  dragon: "#3e8948",
+  sparkles: "#fee761",
+  fire: "#f77622",
+  "rain-cloud": "#8b9bb4",
+  hearts: "#f6757a",
+  bees: "#feae34",
+  lightning: "#fee761",
+};
 
 function extrasOf(l: L): NonNullable<L["extras"]> {
   return (

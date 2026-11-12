@@ -222,12 +222,13 @@ name. On a shared device, "Forget this device" in that menu (or logging out) dro
 **Design it**: change every part of the look you wear now (your AI look too) and give each
 part its own colour. Tabs for **Outfits** (one click into a business suit, tuxedo, dirndl,
 lederhosen, kilt, ball gown, swimwear, underwear, naked, chef, superhero, witch, pirate, Santa,
-ninja, cowboy and more, plus **🎲 Surprise me**), **Body** (height, build, figure, skin colour,
-pose), **Face** (eyes, mouth, makeup), **Hair** (cut, colour, dyed tips, beard), **Head**
-(hats from top hat to Tirolerhut, glasses, earrings, masks), **Top** (underwear, shirt, vest or
-bodice, jacket or coat, patterns, buttons), **Bottom** (underwear, trousers or skirt, apron,
-socks or tights, shoes), **Extras** (held items in any colour, wings, tails, gloves,
-necklaces, bags) and **Desk & ride**. Flip a part with ◀ ▶ (or the arrow keys); the swatch
+ninja, cowboy, and crazier: mermaid, knight, wizard, luchador, tourist, clown, storm god and
+more, plus **🎲 Surprise me**), **Body** (height, build, figure, skin colour, pose), **Face**
+(eyes, mouth, makeup), **Hair** (cut, colour, dyed tips, beard), **Head** (hats from top hat
+to Tirolerhut, glasses, earrings, masks), **Top** (underwear, shirt, vest or bodice, jacket or
+coat, patterns, buttons), **Bottom** (underwear, trousers or skirt, apron, socks or tights,
+shoes), **Extras** (held items in any colour, wings, tails, gloves, necklaces, bags, a pet on
+your shoulder, an aura around you) and **Desk & ride**. Flip a part with ◀ ▶ (or the arrow keys); the swatch
 next to it opens the colours (or any colour you like). **Save look** pins the design with
 all its detail, **Undo changes** drops what you have not saved. Naked is a smooth, featureless
 doll body. Clothes that are not in the agent colour carry a small agent badge on the chest
