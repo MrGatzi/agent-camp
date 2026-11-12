@@ -3,7 +3,8 @@
  * Standing front/back/side and the seated-front lap. Feet stand on texel row 43.
  */
 import type { CharacterLook } from "@agent-office/protocol";
-import { hash2, luma, mix, NIGHT, opt, optOrNull } from "./color.ts";
+import { hash2, lighten, luma, mix, NIGHT, opt, optOrNull } from "./color.ts";
+import { CRAZY_SHOES, crazyShoeFront, crazyShoeSide } from "./crazyShoes.ts";
 import type { Ctx } from "./ctx.ts";
 import { type Fabric, fabricAt } from "./patterns.ts";
 import type { TorsoBox } from "./torso.ts";
@@ -50,6 +51,14 @@ function legEnd(bt: Bottoms): number {
       return 39;
     case "leggings":
       return 42;
+    // crazy wardrobe (WD12)
+    case "hula-skirt":
+      return 40;
+    case "bell-bottoms":
+    case "hoop-skirt":
+      return 42;
+    case "mermaid-tail":
+      return FEET;
     default:
       return 41;
   }
@@ -111,6 +120,26 @@ function legSkinOrWear(c: Ctx, row: number, dark: boolean, x: number): string {
       // bunched knit on the shins, ribbed
       if (row >= 39 && row <= 41) return row % 2 ? wear : mix(wear, NIGHT, 0.18);
       return skin;
+    // crazy wardrobe (WD12)
+    case "striped-stockings": {
+      // witch stockings: one-texel rings of colour and accent (or a contrasting tint)
+      const alt = acc ?? (luma(lw.color) > 0.5 ? mix(lw.color, NIGHT, 0.7) : "#f4f4f2");
+      const ring = row % 2 ? wear : dark ? mix(alt, NIGHT, 0.2) : alt;
+      return row === 36 ? mix(wear, NIGHT, 0.15) : ring;
+    }
+    case "ripped-tights": {
+      // runs and holes: skin shows through ragged two-texel tears
+      const tear = hash2(x >> 1, row >> 1, 61) % 3 === 0 && hash2(x, row, 62) % 4 !== 0;
+      if (tear) return (x + row) % 3 === 0 ? (dark ? sk.base : sk.light) : skin;
+      return (x + row * 3) % 11 === 0 ? mix(wear, "#ffffff", 0.15) : wear;
+    }
+    case "glitter-tights": {
+      // sparkles of light (or the accent) on the colour
+      const h = hash2(x, row, 71) % 7;
+      if (h === 0) return acc ?? mix(lw.color, "#ffffff", 0.75);
+      if (h === 1) return mix(lw.color, "#ffffff", 0.35);
+      return wear;
+    }
     default:
       return wear;
   }
@@ -128,7 +157,23 @@ function bareLeg(c: Ctx, row: number, dark: boolean, x: number): string {
 
 // ---- shoes ------------------------------------------------------------------------------------
 /** Front/back shoe for one foot. `toe` = -1 points left, +1 right, 0 straight. */
-function shoeFront(c: Ctx, x: number, w: number, toe: number, back: boolean, dark: boolean) {
+function shoeFront(
+  c: Ctx,
+  x: number,
+  w: number,
+  toe: number,
+  back: boolean,
+  dark: boolean,
+  drop = 0,
+) {
+  if (drop) {
+    // seated feet: painted lower
+    const save = c.pc.oy;
+    c.pc.oy = save + drop;
+    shoeFront(c, x, w, toe, back, dark);
+    c.pc.oy = save;
+    return;
+  }
   const s = c.L.shoes;
   const r = s.ramp;
   const pc = c.pc;
@@ -362,6 +407,7 @@ function shoeFrontMore(c: Ctx, x: number, w: number, toe: number, back: boolean,
       return;
     }
     default:
+      crazyShoeFront(c, x, w, toe, back, dark);
   }
 }
 
@@ -374,6 +420,10 @@ function shoeSide(c: Ctx, hx: number, len: number, lift = 0) {
   const y1 = FEET - lift;
   const y0 = y1 - 1;
   const tx = hx - len + 1;
+  if (CRAZY_SHOES.has(s.kind)) {
+    crazyShoeSide(c, hx, len);
+    return;
+  }
   switch (s.kind) {
     case "sneakers":
     case "high-tops": {
@@ -838,6 +888,302 @@ function hipFront(c: Ctx, b: TorsoBox, a: number, z: number, bottom: number, bac
   if (bt.buttons.count > 0 && bt.kind !== "overalls") pc.set(15, b.W, bt.buttons.color);
 }
 
+// ---- crazy wardrobe bottoms (WD12) ------------------------------------------------------------
+const HIBISCUS = "#f6757a";
+const POLLEN = "#feae34";
+
+/** Shoes go on before these bottoms (a hem reaches over them). */
+const SHOES_UNDER = new Set<Bottoms["kind"]>(["hoop-skirt", "bell-bottoms"]);
+
+/**
+ * Hula skirt: a band (flowers in front) and vertical grass strands down to a ragged hem around
+ * `end`, flaring a little. `sway` swings the lower strands sideways (walk cycle).
+ */
+function drawHula(
+  c: Ctx,
+  top: number,
+  a0: number,
+  z0: number,
+  end: number,
+  view: "front" | "back" | "side",
+  sway: number,
+) {
+  const bt = c.L.bottoms;
+  const r = bt.ramp;
+  const pc = c.pc;
+  const f = fabric(bt);
+  const shades = [r.base, r.light, r.base, mix(r.base, r.shadow, 0.6)];
+  for (let y = top + 1; y <= end + 1; y++) {
+    const fl = Math.floor((y - top) / 4);
+    const sx = y >= top + 5 ? sway : 0;
+    for (let u = a0 - fl; u <= z0 + fl; u++) {
+      if (y > end - 1 + (hash2(u, 0, 83) % 3)) continue; // ragged ends
+      // a few strands part as they go down: the legs show between them
+      if (y > top + 3 && (u - a0) % 4 === 2 && hash2(u, 1, 84) % 2 === 0) continue;
+      let col = bt.pattern.kind === "none" ? shades[(u + 400) % 4]! : fabricAt(f, u, y - top);
+      if (view !== "side" && u >= z0 + fl - 1) col = r.shadow;
+      if (view === "side" && u === z0 + fl) col = r.shadow;
+      pc.set(u + sx, y, col);
+    }
+  }
+  const band = opt(bt.belt, r.shadow);
+  pc.hline(a0, top, z0 - a0 + 1, band);
+  if (view === "back") {
+    pc.set(15, top + 1, band); // the knot
+    pc.set(16, top + 1, band);
+    return;
+  }
+  const flower = (x: number) => {
+    pc.set(x - 1, top, HIBISCUS);
+    pc.set(x + 1, top, HIBISCUS);
+    pc.set(x, top + 1, HIBISCUS);
+    pc.set(x, top, POLLEN);
+  };
+  if (view === "side") flower(a0 + 1);
+  else {
+    flower(a0 + 1);
+    flower(z0 - 1);
+  }
+}
+
+/** Hoop skirt half widths per row below the waistband: a huge crinoline dome. */
+const HOOP = [6, 7, 8, 9, 10, 11, 12, 13, 14, 14, 14, 13];
+const HOOP_SEATED = [7, 9, 11, 12, 13, 14, 14, 13];
+
+/** Hoop skirt (crinoline ballgown) from the waistband `top` down to `end`, centred. */
+function drawHoop(c: Ctx, top: number, end: number, view: "front" | "back" | "side") {
+  const bt = c.L.bottoms;
+  const r = bt.ramp;
+  const pc = c.pc;
+  const f = fabric(bt);
+  const widths = c.f.seat === "none" ? HOOP : HOOP_SEATED;
+  const fold = mix(r.base, r.shadow, 0.6);
+  for (let y = top; y <= end; y++) {
+    const k = y - top;
+    const hw = widths[Math.min(k, widths.length - 1)]!;
+    const a = 16 - hw;
+    const z = 15 + hw;
+    for (let x = a; x <= z; x++) pc.set(x, y, fabricAt(f, x, k));
+    // folds fanning out from the waist
+    if (k >= 2) for (const t of [-0.6, -0.2, 0.2, 0.6]) pc.set(Math.round(15.5 + t * hw), y, fold);
+    // flounces: two ruffled tiers and the hem
+    if (k === 5 || k === 8 || y === end) pc.hline(a, y, z - a + 1, r.light);
+    if (k === 6 || k === 9) for (let x = a + 1; x < z; x += 2) pc.set(x, y, fold);
+    if (y === end) for (let x = a + 1; x < z; x += 2) pc.set(x, y, r.base);
+    pc.set(a, y, view === "side" ? r.light : mix(r.base, r.light, 0.5));
+    if (k >= 1 && view !== "side") pc.set(a + 1, y, r.light);
+    pc.set(z, y, r.shadow);
+    if (k >= 2) pc.set(z - 1, y, mix(r.base, r.shadow, 0.5));
+  }
+  const belt = optOrNull(bt.belt);
+  pc.hline(16 - widths[0]!, top, widths[0]! * 2, belt ?? r.shadow);
+  if (view === "back") {
+    // a big bow at the back of the waist
+    const bow = belt ?? r.light;
+    const knot = mix(bow, NIGHT, 0.35);
+    pc.sprite(12, top + 1, ["BB....BB", "BBBkkBBB", "BB.kk.BB", "..k..k..", ".k....k."], {
+      B: bow,
+      k: knot,
+    });
+  }
+}
+
+/** Fish scales over a fabric texel (k = rows below the waistband). */
+function scaleAt(f: Fabric, x: number, k: number): string {
+  const r = f.ramp;
+  const base = fabricAt(f, x, k);
+  const off = (Math.floor(k / 2) % 2) * 2;
+  const u = (x + off + 400) % 4;
+  if (k % 2 === 0) return u === 1 ? mix(base, r.light, 0.6) : base;
+  if (u === 3) return r.shadow;
+  return u === 0 || u === 2 ? mix(base, r.shadow, 0.45) : base;
+}
+
+/** The tail fin (fluke) spreading sideways, rows y..y+2, centred on cx + 0.5. */
+function drawFluke(c: Ctx, cx: number, y: number, hw: number) {
+  const r = c.L.bottoms.ramp;
+  const pc = c.pc;
+  const fin = mix(r.light, r.base, 0.25);
+  const rib = mix(r.base, r.light, 0.4);
+  const tip = lighten(r.light, 0.35);
+  const ribbed = (x: number) => ((x - cx + 400) % 2 ? fin : rib);
+  for (let x = cx - 1; x <= cx + 2; x++) pc.set(x, y, ribbed(x));
+  pc.set(cx + 2, y, r.base);
+  for (let x = cx - hw + 1; x <= cx + hw; x++) pc.set(x, y + 1, ribbed(x));
+  pc.set(cx + hw, y + 1, r.base);
+  for (let x = cx - hw - 1; x <= cx + hw + 2; x++) {
+    if (x === cx || x === cx + 1) continue; // the notch
+    const edge = x <= cx - hw || x >= cx + hw + 1;
+    pc.set(x, y + 2, edge ? tip : ribbed(x));
+  }
+}
+
+/** Mermaid tail: both legs in one scaly tail, a fin at the feet (no shoes, no legwear). */
+function drawMermaid(c: Ctx, b: TorsoBox, phase: number) {
+  const bt = c.L.bottoms;
+  const r = bt.ramp;
+  const pc = c.pc;
+  const f = fabric(bt);
+  const seated = c.f.seat !== "none";
+  // half widths from the hip down to the fin (standing: rows W..40; seated: lap, then shins)
+  const narrow = seated ? [7, 7, 7, 7, 5, 4] : [6, 6, 6, 6, 6, 6, 6, 5, 4, 3];
+  const last = seated ? FEET - 1 : 40;
+  const sway = phase === 1 ? -1 : phase === 3 ? 1 : 0;
+  const stop = c.f.seat === "back" ? b.end : last; // at the desk only the hips show
+  for (let y = b.W; y <= stop; y++) {
+    const i = narrow.length - 1 - (last - y);
+    const hw = narrow[Math.max(0, i)]!;
+    const dx = !seated && y >= 38 ? sway : 0;
+    const a = 16 - hw + dx;
+    const z = 15 + hw + dx;
+    for (let x = a; x <= z; x++) pc.set(x, y, scaleAt(f, x - dx, y - b.W));
+    pc.set(a, y, mix(r.base, r.light, 0.5));
+    pc.set(z, y, r.shadow);
+  }
+  // a shell belt of a waistband
+  pc.hline(16 - narrow[0]!, b.W, narrow[0]! * 2, opt(bt.belt, r.light));
+  if (c.f.seat === "back") return;
+  drawFluke(c, 15 + (seated ? 0 : sway * 2), last + 1, seated ? 6 : 5);
+}
+
+/** Mermaid tail, side view: the tail bends at the bottom, the fin fans out front and back. */
+function drawMermaidSide(c: Ctx, b: TorsoBox, phase: number) {
+  const bt = c.L.bottoms;
+  const r = bt.ramp;
+  const pc = c.pc;
+  const f = fabric(bt);
+  const ha = c.tl + 2;
+  const hz = c.tr - 2;
+  const flick = phase === 1 || phase === 3 ? 1 : 0;
+  for (let y = b.W; y <= 41; y++) {
+    const a = y <= 37 ? ha : y <= 39 ? ha + 1 : ha + 2;
+    const z = y <= 38 ? hz : y <= 40 ? hz - 1 : hz - 2;
+    for (let x = a; x <= z; x++) pc.set(x, y, scaleAt(f, x, y - b.W));
+    pc.set(z, y, r.shadow);
+    pc.set(a, y, mix(r.base, r.light, 0.5));
+  }
+  pc.hline(ha, b.W, hz - ha + 1, opt(bt.belt, r.light));
+  // the fin: swept back, its upper lobe lifting (higher still mid-hop)
+  const fin = mix(r.light, r.base, 0.25);
+  const rib = mix(r.base, r.light, 0.4);
+  const tip = lighten(r.light, 0.35);
+  const y = 43;
+  pc.hline(ha + 1, y, hz - ha + 1, fin);
+  pc.hline(ha + 3, y - 1, hz - ha + 1, fin);
+  for (let x = ha + 2; x <= hz + 3; x += 2) pc.set(x, y - (x > hz - 1 ? 1 : 0), rib);
+  pc.set(ha, y, tip);
+  pc.hline(hz + 2, y - 2 - flick, 2, tip);
+  pc.set(hz + 2, y - 1 - flick, fin);
+  pc.set(hz + 3, y - 1 - flick, fin);
+  pc.hline(hz + 2, y, 3, tip);
+}
+
+/**
+ * Harem pants, front/back: a low-slung crotch, baggy legs ballooning out, gathered tight at
+ * the ankles.
+ */
+function drawHarem(c: Ctx, b: TorsoBox, legs: Legs, lUp: number, rUp: number, back: boolean) {
+  const bt = c.L.bottoms;
+  const r = bt.ramp;
+  const pc = c.pc;
+  const f = fabric(bt);
+  const { lx, rx, w } = legs;
+  const ha = lx;
+  const hz = rx + w - 1;
+  const fold = mix(r.base, r.shadow, 0.65);
+  // the seat hangs down to row 39 between the legs
+  for (let y = b.W; y <= 39; y++) {
+    const bag = y >= 34 ? 1 : 0;
+    for (let x = ha - bag; x <= hz + bag; x++) pc.set(x, y, fabricAt(f, x, y - b.W));
+    pc.set(hz + bag, y, r.shadow);
+  }
+  for (const [x, up, dark] of [
+    [lx, lUp, false],
+    [rx, rUp, true],
+  ] as const) {
+    const e = 41 - up;
+    const left = x === lx;
+    for (let y = 38; y < e; y++) {
+      const ob = y >= e - 2 ? 2 : 1; // ballooning out above the cuff
+      const a = x - (left ? ob : 1);
+      const z = x + w - 1 + (left ? 1 : ob);
+      for (let xx = a; xx <= z; xx++) {
+        let col = fabricAt(f, xx, y - b.W);
+        if (dark && col === r.base) col = mix(r.base, r.shadow, 0.5);
+        pc.set(xx, y, col);
+      }
+      pc.set(z, y, r.shadow);
+      if (!back && !dark) pc.set(a, y, r.light);
+    }
+    // gathered cuff
+    for (let xx = x; xx < x + w; xx++) pc.set(xx, e, xx % 2 ? r.light : r.shadow);
+    // a soft fold down the balloon
+    pc.set(x === lx ? x : x + w - 1, e - 1, fold);
+    if (!back) pc.set(x === lx ? x + 1 : x + w - 2, 38, fold);
+  }
+  // the drape of the dropped seat: a shallow U
+  if (!back) {
+    for (const [x, y] of [
+      [12, 35],
+      [13, 36],
+      [14, 37],
+      [15, 38],
+      [16, 38],
+      [17, 37],
+      [18, 36],
+      [19, 35],
+    ] as const)
+      pc.set(x + (lx - 10), y, fold);
+  } else pc.vline(15, b.W + 2, 39 - b.W - 2, fold);
+  // a gathered waistband (or the belt)
+  const belt = optOrNull(bt.belt);
+  for (let x = ha; x <= hz; x++) pc.set(x, b.W, belt ?? (x % 2 ? r.light : r.base));
+}
+
+/** Bell-bottoms, front/back: hip block, legs flaring wide from the knee over the shoes. */
+function drawBells(
+  c: Ctx,
+  b: TorsoBox,
+  legs: Legs,
+  lUp: number,
+  rUp: number,
+  back: boolean,
+  split: number,
+) {
+  const bt = c.L.bottoms;
+  const r = bt.ramp;
+  const pc = c.pc;
+  const f = fabric(bt);
+  const { lx, rx, w } = legs;
+  hipFront(c, b, lx, rx + w - 1, split - 1, back);
+  if (!back) pc.vline(16, b.W + 1, 3, r.shadow); // fly
+  for (const [x, up, dark] of [
+    [lx, lUp, false],
+    [rx, rUp, true],
+  ] as const) {
+    const e = 42 - up;
+    const left = x === lx;
+    for (let y = split; y <= e; y++) {
+      const d = e - y;
+      const fo = d > 2 ? 0 : 3 - d; // outer flare
+      const fi = d > 1 ? 0 : 1; // inner flare
+      const a = x - (left ? fo : fi);
+      const z = x + w - 1 + (left ? fi : fo);
+      for (let xx = a; xx <= z; xx++) {
+        let col = fabricAt(f, xx, y - b.W);
+        if (dark && col === r.base) col = mix(r.base, r.shadow, 0.5);
+        pc.set(xx, y, col);
+      }
+      pc.set(z, y, r.shadow);
+      if (fo > 0 && !back) pc.set(left ? a : z - 1, y, left ? r.light : mix(r.base, r.shadow, 0.3));
+    }
+    // a crease down the front, the hem
+    if (!back) pc.vline(x + 1, split, e - split - 1, r.light);
+    const a = x - (left ? 3 : 1);
+    hemDetail(c, bt, a, w + 4, e, left ? a : a + w + 3, dark);
+  }
+}
+
 /** Standing legs, front or back view. */
 export function drawLegsStanding(c: Ctx, b: TorsoBox, back: boolean, phase: number) {
   const L = c.L;
@@ -852,6 +1198,10 @@ export function drawLegsStanding(c: Ctx, b: TorsoBox, back: boolean, phase: numb
   const rUp = !back && phase === 3 ? 2 : back && phase === 1 ? 2 : 0;
   const ha = lx;
   const hz = rx + w - 1;
+  if (bt.kind === "mermaid-tail") {
+    drawMermaid(c, b, phase);
+    return;
+  }
   // legs (skin/legwear) first, bottoms over them
   for (const [x, up, dark] of [
     [lx, lUp, false],
@@ -878,7 +1228,8 @@ export function drawLegsStanding(c: Ctx, b: TorsoBox, back: boolean, phase: numb
   };
   const shape = skirtShape(bt.kind);
   const longSkirt = !!shape && shape.end >= 41;
-  if (longSkirt) shoes();
+  const shoesFirst = longSkirt || SHOES_UNDER.has(bt.kind);
+  if (shoesFirst) shoes();
   // bottoms: hip block + legs
   if (SKIRTS.has(bt.kind)) {
     for (let y = b.W; y <= end; y++) {
@@ -896,6 +1247,15 @@ export function drawLegsStanding(c: Ctx, b: TorsoBox, back: boolean, phase: numb
   } else if (bt.kind === "none") {
     // nothing on: the hips are the body layer, the legs stay bare
     for (let y = split; y <= FEET; y++) for (let x = lx + w; x < rx; x++) pc.clear(x, y);
+  } else if (bt.kind === "hula-skirt") {
+    const sway = phase === 1 ? -1 : phase === 3 ? 1 : 0;
+    drawHula(c, b.W, ha, hz, end, back ? "back" : "front", back ? -sway : sway);
+  } else if (bt.kind === "hoop-skirt") {
+    drawHoop(c, b.W, end, back ? "back" : "front");
+  } else if (bt.kind === "harem-pants") {
+    drawHarem(c, b, { lx, rx, w }, lUp, rUp, back);
+  } else if (bt.kind === "bell-bottoms") {
+    drawBells(c, b, { lx, rx, w }, lUp, rUp, back, split);
   } else {
     hipFront(c, b, ha, hz, split - 1, back);
     for (const [x, up, dark] of [
@@ -950,7 +1310,7 @@ export function drawLegsStanding(c: Ctx, b: TorsoBox, back: boolean, phase: numb
     }
   }
   drawLegwearExtras(c, lx, rx, w, end, back);
-  if (!longSkirt) shoes();
+  if (!shoesFirst) shoes();
 }
 
 /** Side view legs (facing left). */
@@ -962,9 +1322,15 @@ export function drawLegsSide(c: Ctx, b: TorsoBox, phase: number) {
   const end = legEnd(bt);
   const split = 38;
   const walking = phase === 1 || phase === 3;
+  if (bt.kind === "mermaid-tail") {
+    drawMermaidSide(c, b, phase);
+    return;
+  }
   // hip block
   const ha = c.tl + 2;
   const hz = c.tr - 2;
+  // a hula skirt leaves the legs bare under its strands
+  const fabricEnd = bt.kind === "hula-skirt" ? split - 1 : end;
   // legs: [x at split, x at feet]
   const legs: { top: number; bot: number; dark: boolean }[] = walking
     ? [
@@ -978,17 +1344,49 @@ export function drawLegsSide(c: Ctx, b: TorsoBox, phase: number) {
       const x = Math.round(leg.top + (leg.bot - leg.top) * t);
       const lw = walking ? 4 : 6;
       for (let i = 0; i < lw; i++) {
-        const inside = y <= end;
+        const inside = y <= fabricEnd;
         let col = inside
           ? fabricAt(f, x + i, y - b.W)
           : bareLeg(c, y, leg.dark || i === lw - 1, x + i);
         if (inside && (leg.dark || i === lw - 1)) col = bt.ramp.shadow;
         pc.set(x + i, y, col);
       }
-      if (y === end) hemDetail(c, bt, x, lw, y, x + lw - 1, leg.dark);
+      if (y === fabricEnd) hemDetail(c, bt, x, lw, y, x + lw - 1, leg.dark);
+      if (bt.kind === "harem-pants" && y >= split) {
+        // baggy, gathered at the ankle
+        const col = leg.dark ? bt.ramp.shadow : fabricAt(f, x - 1, y - b.W);
+        if (y < end) {
+          pc.set(x - 1, y, col);
+          pc.set(x + lw, y, bt.ramp.shadow);
+        } else
+          for (let i = 0; i < lw; i++) pc.set(x + i, y, i % 2 ? bt.ramp.light : bt.ramp.shadow);
+      }
     }
     const hx = leg.bot + (walking ? 3 : 5);
     shoeSide(c, hx, walking ? 6 : 8);
+    if (bt.kind === "bell-bottoms") {
+      // the bells flare out over the shoe, front and back
+      for (let y = 40; y <= end; y++) {
+        const t = (y - split) / (FEET - 2 - split);
+        const x = Math.round(leg.top + (leg.bot - leg.top) * t);
+        const lw = walking ? 4 : 6;
+        const fl = y - 39;
+        for (let xx = x - fl; xx < x + lw + fl; xx++) {
+          const edge = xx === x + lw + fl - 1 || leg.dark;
+          pc.set(xx, y, edge ? bt.ramp.shadow : fabricAt(f, xx, y - b.W));
+        }
+        if (y === end) hemDetail(c, bt, x - fl, lw + 2 * fl, y, x - fl, leg.dark);
+      }
+    }
+  }
+  if (bt.kind === "hula-skirt") {
+    const sway = phase === 1 ? 1 : phase === 3 ? -1 : 0;
+    drawHula(c, b.W, ha, hz, end, "side", sway);
+    return;
+  }
+  if (bt.kind === "hoop-skirt") {
+    drawHoop(c, b.W, end, "side");
+    return;
   }
   if (SKIRTS.has(bt.kind)) {
     for (let y = b.W; y <= end; y++) {
@@ -1036,7 +1434,11 @@ export function drawLegsSide(c: Ctx, b: TorsoBox, phase: number) {
 
 /** Back view seated (at a desk): only the waistband shows above the chair. */
 export function drawSeatBackHip(c: Ctx, b: TorsoBox) {
-  if (c.L.bottoms.kind === "none") return; // the body layer shows
+  const kind = c.L.bottoms.kind;
+  if (kind === "none") return; // the body layer shows
+  if (kind === "hula-skirt") return drawHula(c, b.W, c.tl + 1, c.tr - 1, b.end, "back", 0);
+  if (kind === "hoop-skirt") return drawHoop(c, b.W, b.end, "back");
+  if (kind === "mermaid-tail") return drawMermaid(c, b, 0);
   hipFront(c, b, c.tl + 1, c.tr - 1, b.end, true);
 }
 
@@ -1047,7 +1449,19 @@ export function drawLegsSeatedFront(c: Ctx, b: TorsoBox) {
   const pc = c.pc;
   const f = fabric(bt);
   const none = bt.kind === "none";
-  if (!none) hipFront(c, b, c.tl + 1, c.tr - 1, b.end, false);
+  if (bt.kind === "mermaid-tail") {
+    // sitting on the tail: the fin rests on the floor where the feet would be
+    drawMermaid(c, b, 0);
+    return;
+  }
+  if (bt.kind === "hoop-skirt") {
+    // the crinoline spreads over the chair, the toes peek out under the hem
+    shoeFront(c, 8, 4, 0, false, false, 2);
+    shoeFront(c, 20, 4, 0, false, true, 2);
+    drawHoop(c, b.W, FEET + 1, "front");
+    return;
+  }
+  if (!none && bt.kind !== "hula-skirt") hipFront(c, b, c.tl + 1, c.tr - 1, b.end, false);
   const shape = skirtShape(bt.kind);
   const short =
     SHORT_KINDS.has(bt.kind) ||
@@ -1055,6 +1469,7 @@ export function drawLegsSeatedFront(c: Ctx, b: TorsoBox) {
     (!!shape && shape.end <= 41) ||
     bt.kind === "tutu" ||
     bt.kind === "bike-shorts" ||
+    bt.kind === "hula-skirt" ||
     none;
   // knees (thighs foreshortened toward the camera)
   for (let y = 40; y <= 43; y++) {
@@ -1077,7 +1492,13 @@ export function drawLegsSeatedFront(c: Ctx, b: TorsoBox) {
   }
   pc.vline(15, 40, short ? 2 : 4, none ? L.skin.shadow : bt.ramp.shadow);
   if (bt.kind === "tutu") pc.hline(c.tl - 1, b.end, c.tr - c.tl + 3, bt.ramp.light);
-  if (short && !none) {
+  if (bt.kind === "hula-skirt") {
+    // the strands fall over the lap and the knees
+    for (let y = 40; y <= 41; y++)
+      for (let x = 8; x <= 23; x++) pc.set(x, y, bareLeg(c, y - 2, x > 15, x));
+    pc.vline(15, 40, 2, L.skin.shadow);
+    drawHula(c, b.W, c.tl + 1, c.tr - 1, 42, "front", 0);
+  } else if (short && !none) {
     hemDetail(c, bt, 8, 8, 41, 8, false);
     hemDetail(c, bt, 16, 8, 41, 23, true);
     if (bt.embroidery.motif !== "none") {
@@ -1086,9 +1507,26 @@ export function drawLegsSeatedFront(c: Ctx, b: TorsoBox) {
     }
   }
   // shoes on rows 44-45 (feet two texels lower than standing)
-  const save = pc.oy;
-  pc.oy = save + 2;
-  shoeFront(c, 8, 4, 0, false, false);
-  shoeFront(c, 20, 4, 0, false, true);
-  pc.oy = save;
+  shoeFront(c, 8, 4, 0, false, false, 2);
+  shoeFront(c, 20, 4, 0, false, true, 2);
+  if (bt.kind === "bell-bottoms") {
+    // the bells flare over the shoes
+    for (const [x0, x1] of [
+      [6, 14],
+      [17, 25],
+    ] as const) {
+      for (let x = x0 + 1; x < x1; x++) pc.set(x, 43, fabricAt(f, x, 43));
+      for (let x = x0; x <= x1; x++) pc.set(x, 44, fabricAt(f, x, 44));
+      pc.set(x1, 44, bt.ramp.shadow);
+      pc.set(x1 - 1, 43, bt.ramp.shadow);
+      hemDetail(c, bt, x0, x1 - x0 + 1, 44, x0, x1 > 16);
+    }
+    pc.set(15, 43, bt.ramp.shadow);
+    pc.set(16, 43, bt.ramp.shadow);
+  }
+  if (bt.kind === "harem-pants") {
+    // gathered cuffs at the ankles
+    for (const x0 of [8, 18])
+      for (let x = x0; x < x0 + 6; x++) pc.set(x, 43, x % 2 ? bt.ramp.light : bt.ramp.shadow);
+  }
 }
