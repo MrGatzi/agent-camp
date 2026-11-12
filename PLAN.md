@@ -82,7 +82,7 @@ Optional: the installer may add a user-level Claude Code hook in `~/.claude/sett
 
 ### Deriving activity
 
-Tail only the last ~32 KB of each live transcript (append-only, keep a byte offset). Map the latest entry to one verb: `typing` (edit/write tools), `reading` (read/grep/glob/search), `running` (bash/shell), `thinking` (assistant turn, no tool yet), `waiting` (turn finished, waiting for the human), `idle` (no writes for 2+ min, process alive). Exact mapping is implementer decides; unknown tools → `thinking`.
+Tail only the last ~32 KB of each live transcript (append-only, keep a byte offset). Map the latest entry to one verb: `typing` (edit/write tools), `reading` (read/grep/glob/search), `running` (bash/shell), `thinking` (assistant turn, no tool yet), `waiting` (turn finished, waiting for the human), `idle` (no writes for 2+ min, process alive, and nothing says it is still working: a busy pid-file status or a pending tool call, each for at most 30 min of silence, or live subagents). Exact mapping is implementer decides; unknown tools → `thinking`.
 
 ### What gets sent
 
