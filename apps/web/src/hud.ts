@@ -35,8 +35,9 @@ import { iconUrl } from "./art/icons.ts";
 import type { ConnectionStatus } from "./net/viewer.ts";
 import { installMode, onInstallChange, promptInstall } from "./pwa.ts";
 import type { OfficeModel, OfficeStats, PersonState, SessionState } from "./state/officeModel.ts";
-import { cycleOption } from "./ui/carousel.ts";
 import { CustomizeSection, type PutGif } from "./ui/customizeSection.ts";
+import { avatarOfDraft, type Draft, draftKey, draftOf } from "./ui/studio/design.ts";
+import { buildDesignPane, designTabStep } from "./ui/studio/designPane.ts";
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: string) => {
   const e = document.createElement(tag);
@@ -119,51 +120,6 @@ export type LookInfo = {
 };
 /** How long the studio waits for a look drawn on the person's Mac. */
 const LOCAL_LOOK_WAIT_MS = 5 * 60_000;
-
-type LookField = Exclude<keyof AvatarSpec, "deskProps" | "deskMess">;
-/** The look editor's catalog rows (arrow carousels), in order. */
-const LOOK_FIELDS: {
-  key: LookField;
-  label: string;
-  options: readonly { id: string; label: string }[];
-}[] = [
-  { key: "hairStyle", label: "Hair", options: HAIR_STYLES },
-  { key: "hairColor", label: "Hair color", options: HAIR_COLORS },
-  { key: "skinTone", label: "Skin", options: SKIN_TONES },
-  { key: "facialHair", label: "Face", options: FACIAL_HAIR },
-  { key: "glasses", label: "Glasses", options: GLASSES },
-  { key: "accessory", label: "Head", options: ACCESSORIES },
-  { key: "outfit", label: "Outfit", options: OUTFITS },
-  { key: "leftHand", label: "Left hand", options: HELD_ITEMS },
-  { key: "rightHand", label: "Right hand", options: HELD_ITEMS },
-  { key: "wrist", label: "Bracelets", options: WRISTWEAR },
-  { key: "accentColor", label: "Accent color", options: ACCENT_COLORS },
-  { key: "vehicle", label: "Vehicle", options: VEHICLES },
-];
-const MESS_LABEL = ["spotless", "a bit messy", "messy", "chaos"] as const;
-/** The picked parts of a look, comparable whatever order its keys came in. */
-const partsKey = (a: AvatarSpec) =>
-  JSON.stringify([...LOOK_FIELDS.map((f) => a[f.key]), a.deskProps, a.deskMess]);
-/** Where each catalog row sits in the look studio. */
-const LOOK_GROUPS: { title: string; keys: readonly LookField[] }[] = [
-  {
-    title: "Character",
-    keys: ["hairStyle", "hairColor", "skinTone", "facialHair", "glasses", "accessory"],
-  },
-  { title: "Outfit & hands", keys: ["outfit", "leftHand", "rightHand", "wrist", "accentColor"] },
-  { title: "Ride", keys: ["vehicle"] },
-];
-
-/** One carousel in the look studio: a list of choices and how it reads/writes the draft. */
-type LookRow = {
-  id: string;
-  label: string;
-  options: readonly { id: string; label: string }[];
-  get: () => string;
-  set: (id: string) => void;
-  /** choices to skip right now (desk props already on another slot) */
-  skip?: () => ReadonlySet<string>;
-};
 
 const POKES: { kind: InteractionKind; label: string; title: string }[] = [
   { kind: "wave", label: "&#128075; Wave", title: "Wave (pops up on their Mac)" },
@@ -343,7 +299,9 @@ export class Hud {
   /** custom look? AI looks on? own description? (GET /api/people/:id/avatar); null = unknown */
   fetchLookInfo: (personId: string) => Promise<LookInfo | null> = async () => null;
   /** look studio: a new look from a description (server GenUI); null hides the box */
-  onDescribeLook: ((personId: string, description: string) => Promise<LookResult>) | null = null;
+  onDescribeLook:
+    | ((personId: string, description: string, opts?: { change?: boolean }) => Promise<LookResult>)
+    | null = null;
   private meId: string | null = null;
   /** `me` changed (confirmed, forgotten, restored from the cookie) */
   onMeChange: (me: string | null) => void = () => {};
@@ -950,9 +908,10 @@ export class Hud {
    * The look studio: two ways to a look, one tab each, so it is always clear what a button does.
    * - Describe: write how you look, Generate. The AI look goes live as soon as it is drawn
    *   (nothing to save); the preview shows the look everybody sees now.
-   * - Pick parts: carousels over the catalog, then "Save parts". Parts are catalog ids only and
-   *   cannot hold a detailed AI look, so the preview shows exactly what saving gives, and saving
-   *   replaces the AI look (the Describe tab offers the way back).
+   *   "Change something" edits the look worn now by prompt and pins the result (WD10).
+   * - Design it (WD8): every part and colour of the look worn now (an AI look included), outfit
+   *   presets and a dice, then "Save look". The saved design is pinned as a custom look with all
+   *   its detail (the Describe tab offers the way back).
    */
   private buildLookEditor(p: PersonState): {
     box: HTMLElement;
@@ -973,71 +932,13 @@ export class Hud {
     /** picked parts are worn (they win over the description); null = not known yet */
     let custom: boolean | null = active.look ? false : null;
     let hasDescription = false;
-    // catalog ids only: saved parts are drawn from them alone, so the parts preview shows
-    // exactly what "Save parts" gives
-    const draft: AvatarSpec = structuredClone(catalogAvatar(active));
-    let baseline = partsKey(draft);
-    let mode: "describe" | "parts" = canDescribe && active.look ? "describe" : "parts";
+    /** the design being edited: the look worn now, every part and colour editable */
+    let draft: Draft = draftOf(active);
+    let baseline = draftKey(draft);
+    let mode: "describe" | "parts" = canDescribe && active.look && !custom ? "describe" : "parts";
+    /** the look before the last "Change something", for its Undo */
+    let undoTo: { avatar: AvatarSpec; custom: boolean } | null = null;
 
-    // desk props are three slots of their own; empty ones are dropped when saving
-    const slotIdx = Array.from({ length: MAX_DESK_PROPS }, (_, i) => i);
-    const slots: string[] = slotIdx.map((i) => draft.deskProps[i] ?? "none");
-    const syncProps = () => {
-      draft.deskProps = slots.filter((x) => x !== "none") as AvatarSpec["deskProps"];
-    };
-    const byKey = new Map(LOOK_FIELDS.map((f) => [f.key, f]));
-    const fieldRow = (key: LookField): LookRow => {
-      const f = byKey.get(key)!;
-      return {
-        id: key,
-        label: f.label,
-        options: f.options,
-        get: () => String(draft[key]),
-        set: (id) => {
-          (draft as Record<string, unknown>)[key] = id;
-        },
-      };
-    };
-    const groups: { title: string; rows: LookRow[] }[] = LOOK_GROUPS.map((g) => ({
-      title: g.title,
-      rows: g.keys.filter((k) => byKey.has(k)).map(fieldRow),
-    }));
-    groups.push({
-      title: "Desk",
-      rows: [
-        ...slotIdx.map(
-          (i): LookRow => ({
-            id: `desk${i}`,
-            label: `Desk item ${i + 1}`,
-            options: [{ id: "none", label: "nothing" }, ...DESK_PROPS],
-            get: () => slots[i]!,
-            set: (id) => {
-              slots[i] = id;
-              syncProps();
-            },
-            skip: () => new Set(slots.filter((x, j) => j !== i && x !== "none")),
-          }),
-        ),
-        {
-          id: "deskMess",
-          label: "Desk mess",
-          options: DESK_MESS_LEVELS.map((m) => ({ id: String(m), label: MESS_LABEL[m] })),
-          get: () => String(draft.deskMess),
-          set: (id) => {
-            draft.deskMess = Number(id) as AvatarSpec["deskMess"];
-          },
-        },
-      ],
-    });
-    const rows = groups.flatMap((g) => g.rows);
-
-    const rowHtml = (r: LookRow) =>
-      `<div class="look-row" data-field="${r.id}" tabindex="0" role="group" aria-label="${esc(r.label)}">
-        <span class="row-label">${esc(r.label)}</span>
-        <button type="button" class="pixel-btn arrow prev" aria-label="Previous ${esc(r.label.toLowerCase())}">&#9664;</button>
-        <span class="row-value" aria-live="polite"></span>
-        <button type="button" class="pixel-btn arrow next" aria-label="Next ${esc(r.label.toLowerCase())}">&#9654;</button>
-      </div>`;
     const describePane = `
           <div class="studio-pane pane-describe" role="tabpanel" id="look-pane-describe" aria-labelledby="look-tab-describe">
             <div class="look-callout" hidden></div>
@@ -1049,6 +950,15 @@ export class Hud {
                 <button class="pixel-btn describe-go" type="submit">&#10024; Generate look</button>
               </div>
             </form>
+            <form class="look-change">
+              <label class="describe-label" for="look-change-text">Change something</label>
+              <textarea id="look-change-text" rows="2" maxlength="${MAX_SELF_DESCRIPTION}" placeholder="make my jacket red, add a cowboy hat, go barefoot..."></textarea>
+              <div class="describe-foot">
+                <span class="dim">Changes the look you wear now and keeps the rest.</span>
+                <button class="pixel-btn change-go" type="submit">&#9999;&#65039; Change it</button>
+              </div>
+              <button type="button" class="link-btn change-undo" hidden>Undo that change</button>
+            </form>
             <div class="pane-note dim">A new look goes live for everyone as soon as it is drawn. There is nothing to save.</div>
             <div class="back-to-described" hidden>
               <span>You are wearing picked parts, so your description is not used.</span>
@@ -1058,15 +968,10 @@ export class Hud {
     const partsPane = `
           <div class="studio-pane pane-parts" role="tabpanel" id="look-pane-parts" aria-labelledby="look-tab-parts">
             <div class="pane-note parts-note dim"></div>
-            <div class="studio-rows">${groups
-              .map(
-                (g) =>
-                  `<div class="look-group"><h3>${esc(g.title)}</h3>${g.rows.map(rowHtml).join("")}</div>`,
-              )
-              .join("")}</div>
+            <div class="design-mount"></div>
             <div class="parts-foot">
               <button type="button" class="pixel-btn parts-undo">Undo changes</button>
-              <button type="button" class="pixel-btn save">Save parts</button>
+              <button type="button" class="pixel-btn save">Save look</button>
             </div>
           </div>`;
     box.innerHTML = `
@@ -1086,7 +991,7 @@ export class Hud {
             canDescribe
               ? `<div class="studio-tabs" role="tablist" aria-label="How to make your look">
               <button type="button" role="tab" class="pixel-btn studio-tab" id="look-tab-describe" aria-controls="look-pane-describe" data-mode="describe">&#10024; Describe it</button>
-              <button type="button" role="tab" class="pixel-btn studio-tab" id="look-tab-parts" aria-controls="look-pane-parts" data-mode="parts">&#9776; Pick parts</button>
+              <button type="button" role="tab" class="pixel-btn studio-tab" id="look-tab-parts" aria-controls="look-pane-parts" data-mode="parts">&#127912; Design it</button>
             </div>${describePane}`
               : ""
           }${partsPane}
@@ -1116,29 +1021,32 @@ export class Hud {
     const describeText = describeForm?.querySelector("textarea") ?? null;
     const describeGo = q<HTMLButtonElement>(".describe-go");
     const describeHint = q(".describe-hint");
-    const rowEls = new Map(
-      [...box.querySelectorAll<HTMLElement>(".look-row")].map((e) => [e.dataset.field!, e]),
-    );
+    const changeForm = q<HTMLFormElement>(".look-change");
+    const changeText = changeForm?.querySelector("textarea") ?? null;
+    const changeGo = q<HTMLButtonElement>(".change-go");
+    const changeUndo = q<HTMLButtonElement>(".change-undo");
 
     const say = (msg: string, ok?: boolean) => {
       status.textContent = msg;
       status.className = `poke-status look-status${ok === undefined ? "" : ok ? " ok" : " err"}`;
     };
-    const dirty = () => partsKey(draft) !== baseline;
-    /** the parts start over from the look worn now */
+    const dirty = () => draftKey(draft) !== baseline;
+    /** the design starts over from the look worn now */
     const resetDraft = () => {
-      Object.assign(draft, structuredClone(catalogAvatar(active)));
-      for (const i of slotIdx) slots[i] = draft.deskProps[i] ?? "none";
-      baseline = partsKey(draft);
+      draft = draftOf(active);
+      baseline = draftKey(draft);
     };
-    const paintRow = (r: LookRow) => {
-      const e = rowEls.get(r.id)!;
-      const value = r.get();
-      const idx = r.options.findIndex((o) => o.id === value);
-      e.dataset.value = value;
-      e.querySelector(".row-value")!.innerHTML =
-        `<span class="row-text">${esc(r.options[idx]?.label ?? value)}</span><span class="row-count">${idx + 1}/${r.options.length}</span>`;
-    };
+    const design = buildDesignPane({
+      draft: () => draft,
+      change: (mutate) => {
+        mutate(draft);
+        paint();
+        say("");
+      },
+      thumb: (look) => this.previewLook({ ...draft, look }, agent)[0]!,
+      esc,
+    });
+    q(".design-mount")!.replaceWith(design.el);
     const aiWorn = () => !!active.look && custom !== true;
     const paint = () => {
       for (const t of tabs) {
@@ -1153,21 +1061,20 @@ export class Hud {
           ? "&#9664; &#9654; change &middot; &#9650; &#9660; row &middot; Esc close"
           : "Ctrl+Enter generate &middot; Esc close";
       current.innerHTML = `<span class="dim">Wearing now:</span> <b>${
-        custom ? "picked parts" : active.look ? "AI look from your description" : "automatic look"
+        custom
+          ? "your own design"
+          : active.look
+            ? "AI look from your description"
+            : "automatic look"
       }</b>`;
       const showDraft = mode === "parts";
       preview.replaceChildren(...this.previewLook(showDraft ? draft : active, agent));
-      previewNote.textContent = !showDraft
-        ? ""
-        : dirty()
-          ? "Preview of your picked parts. Not saved yet."
-          : aiWorn()
-            ? "Your AI look as parts: parts can only come close to it."
-            : "";
+      previewNote.textContent =
+        showDraft && dirty() ? "Preview of your design. Not saved yet." : "";
       partsNote.textContent = aiWorn()
-        ? "Saving parts replaces your AI look. Parts cannot show every detail of it."
-        : "Pick each part, then save.";
-      for (const r of rows) paintRow(r);
+        ? "This is your AI look: change any part or colour, then save it as your own design."
+        : "Change any part or colour, or start from an outfit, then save.";
+      design.paint();
       saveBtn.disabled = !dirty();
       undoBtn.disabled = !dirty();
       if (backBox && useDescribed) {
@@ -1176,13 +1083,13 @@ export class Hud {
           ? "Use the look from my description"
           : "Back to the automatic look";
       }
+      if (changeUndo) changeUndo.hidden = !undoTo;
     };
     /** a look became the one worn (a Generate, a save, a broadcast) */
     const adopt = (avatar: AvatarSpec, isCustom: boolean | null) => {
       active = structuredClone(avatar);
       seen = JSON.stringify(avatar);
       if (isCustom !== null) custom = isCustom;
-      else if (avatar.look) custom = false; // saved parts never carry a detailed look
       if (!dirty() || isCustom !== null) resetDraft();
       paint();
     };
@@ -1359,16 +1266,41 @@ export class Hud {
       // the Mac's state may have changed since the studio opened: show how to fix it
       else if (r.mac && r.mac !== "ready") void loadInfo();
     });
-    const step = (r: LookRow, dir: -1 | 1) => {
-      r.set(cycleOption(r.options, r.get(), dir, r.skip?.()));
-      paint();
-      say("");
-    };
-    for (const r of rows) {
-      const e = rowEls.get(r.id)!;
-      e.querySelector(".prev")!.addEventListener("click", () => step(r, -1));
-      e.querySelector(".next")!.addEventListener("click", () => step(r, 1));
-    }
+    changeForm?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!this.onDescribeLook || !changeText || !changeGo) return;
+      const text = changeText.value.trim();
+      if (!text) {
+        say('say what should change first, e.g. "make my jacket red"', false);
+        changeText.focus();
+        return;
+      }
+      changeGo.disabled = true;
+      if (describeGo) describeGo.disabled = true;
+      const before = { avatar: structuredClone(active), custom: custom === true };
+      say("the AI is changing your look, this can take a minute...");
+      const r = await this.onDescribeLook(personId, text, { change: true });
+      if (r.pending) {
+        undoTo = before;
+        say(r.message);
+        waitForMac(++localWait);
+        changeGo.disabled = false;
+        return;
+      }
+      changeGo.disabled = false;
+      if (describeGo) describeGo.disabled = false;
+      say(r.message, r.ok);
+      if (r.ok && r.avatar) {
+        undoTo = before;
+        changeText.value = "";
+        adopt(r.avatar, true);
+      } else if (r.mac && r.mac !== "ready") void loadInfo();
+    });
+    changeUndo?.addEventListener("click", () => {
+      const back = undoTo;
+      undoTo = null;
+      if (back) void save(back.custom ? back.avatar : null);
+    });
     const save = async (avatar: AvatarSpec | null) => {
       if (!this.onEditLook) return;
       localWait++;
@@ -1379,7 +1311,10 @@ export class Hud {
       if (!r.ok) return;
       adopt(r.avatar ?? avatar ?? active, avatar !== null);
     };
-    saveBtn.addEventListener("click", () => void save(structuredClone(draft)));
+    saveBtn.addEventListener("click", () => {
+      undoTo = null;
+      void save(avatarOfDraft(draft));
+    });
     undoBtn.addEventListener("click", () => {
       resetDraft();
       paint();
@@ -1407,7 +1342,7 @@ export class Hud {
       if (typing && e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         e.stopImmediatePropagation();
-        describeForm?.requestSubmit();
+        target?.closest("form")?.requestSubmit();
         return;
       }
       // typing shortcuts of the office must not fire behind the studio
@@ -1423,19 +1358,29 @@ export class Hud {
         return;
       }
       if (mode !== "parts") return;
+      if (target?.closest(".design-tabs")) {
+        if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+          e.preventDefault();
+          designTabStep(design, e.key === "ArrowLeft" ? -1 : 1);
+        }
+        return;
+      }
+      const rows = design.rows();
+      if (!rows.length) return;
       e.preventDefault();
       const row = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>(".look-row");
       const at = Math.max(
         0,
-        rows.findIndex((r) => r.id === row?.dataset.field),
+        rows.findIndex((r) => r.el === row),
       );
       if (e.key === "ArrowUp" || e.key === "ArrowDown") {
         const next = rows[(at + (e.key === "ArrowUp" ? -1 : 1) + rows.length) % rows.length]!;
-        rowEls.get(next.id)!.focus();
+        next.el.focus();
         return;
       }
-      if (!row) rowEls.get(rows[0]!.id)!.focus();
-      step(rows[at]!, e.key === "ArrowLeft" ? -1 : 1);
+      if (!row) rows[0]!.el.focus();
+      design.step(rows[at]!.row, e.key === "ArrowLeft" ? -1 : 1);
+      design.rows()[at]?.el.focus();
     };
     /** the office changed: follow my look (a Mac-drawn look, another tab of mine saving) */
     const sync = () => {
