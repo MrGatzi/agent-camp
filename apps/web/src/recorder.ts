@@ -12,13 +12,13 @@ export const SNAPSHOT_WIDTH = 480;
 export async function captureSnapshot(app: Application, scene: OfficeScene): Promise<Blob | null> {
   const scale = SNAPSHOT_WIDTH / scene.widthPx;
   const w = SNAPSHOT_WIDTH;
-  const h = Math.round(scene.heightPx * scale);
+  const h = Math.round((scene.heightPx - scene.topPx) * scale);
   const rt = RenderTexture.create({ width: w, height: h, scaleMode: "nearest" });
   const root = scene.root;
   const saved = { sx: root.scale.x, sy: root.scale.y, x: root.x, y: root.y, visible: root.visible };
   try {
     root.scale.set(scale);
-    root.position.set(0, 0);
+    root.position.set(0, -scene.topPx * scale);
     root.visible = true;
     app.renderer.render({ container: root, target: rt, clear: true });
     const canvas = app.renderer.extract.canvas(rt) as HTMLCanvasElement;

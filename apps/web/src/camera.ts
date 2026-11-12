@@ -24,6 +24,14 @@ const TOUR_STOPS: readonly (AreaName | "all")[] = [
   "desks",
   "shop",
   "desks",
+  "sagrada",
+  "desks",
+  "burj",
+  "desks",
+  "ars",
+  "desks",
+  "airport",
+  "desks",
   "all",
 ];
 const FOLLOW_S = 9;
@@ -85,7 +93,7 @@ export class Camera {
   constructor(
     private readonly world: Container,
     private readonly screen: () => { width: number; height: number },
-    private worldSize: () => { width: number; height: number },
+    private worldSize: () => { width: number; height: number; top?: number },
     private areas: () => readonly Area[],
     private readonly opts: CameraOptions,
   ) {
@@ -94,7 +102,7 @@ export class Camera {
     if (opts.view === "overview") this.tourT = opts.overviewEvery ?? 120;
     const w = worldSize();
     this.x = this.target.x = w.width / 2;
-    this.y = this.target.y = w.height / 2;
+    this.y = this.target.y = (w.top ?? 0) + w.height / 2;
   }
 
   /** while true the auto-pilot stays off (e.g. an agent card is open) */
@@ -138,7 +146,8 @@ export class Camera {
         ? size / 2
         : Math.min(size + margin - half, Math.max(half - margin, v));
     t.x = clampAxis(t.x, halfW, w.width);
-    t.y = clampAxis(t.y + shiftY, halfH, w.height) - shiftY;
+    const top = w.top ?? 0;
+    t.y = top + clampAxis(t.y - top + shiftY, halfH, w.height) - shiftY;
   }
 
   set(view: Partial<View>, instant = false) {
@@ -158,7 +167,7 @@ export class Camera {
     const inset = this.inset();
     const fw = Math.min(w.width, this.fitWidth());
     const z = this.fitZoom(fw);
-    this.set({ x: fw / 2, y: w.height / 2 - inset / 2 / z, zoom: z }, instant);
+    this.set({ x: fw / 2, y: (w.top ?? 0) + w.height / 2 - inset / 2 / z, zoom: z }, instant);
     this.fitted = true;
     this.fitW = fw;
   }
@@ -172,8 +181,13 @@ export class Camera {
     const a = this.areas().find((ar) => ar.name === name);
     if (!a) return;
     const s = this.screen();
-    const fit = Math.min(s.width / (a.w * TILE + 64), s.height / (a.h * TILE + 64));
-    const zoom = Math.max(2, Math.min(4, Math.floor(fit)));
+    const scenic = ["sagrada", "burj", "ars", "airport"].includes(name);
+    // Landmarks fit on phones; preserve the established zoom for office rooms.
+    const fit = Math.min(
+      s.width / (a.w * TILE + 64),
+      (s.height - (scenic ? this.inset() : 0)) / (a.h * TILE + 64),
+    );
+    const zoom = scenic ? Math.min(4, fit) : Math.max(2, Math.min(4, Math.floor(fit)));
     this.set({ x: (a.x + a.w / 2) * TILE, y: (a.y + a.h / 2) * TILE, zoom }, instant);
   }
 

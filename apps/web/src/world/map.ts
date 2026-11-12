@@ -16,6 +16,8 @@
  * checks row lengths and that every desk and POI is reachable from the door.
  */
 
+import { DISTRICT_COLS, DISTRICT_X, LANDMARKS } from "./landmarkLayout.ts";
+
 export const TILE = 16;
 /** Columns of the original office (desks, rooms, garden); the east street block comes after. */
 export const OFFICE_COLS = 64;
@@ -405,7 +407,11 @@ export type AreaName =
   | "kurt"
   | "garden"
   | "bar"
-  | "shop";
+  | "shop"
+  | "sagrada"
+  | "burj"
+  | "ars"
+  | "airport";
 export type Area = { name: AreaName; label: string; x: number; y: number; w: number; h: number };
 export type Facing = "down" | "up" | "left" | "right";
 /** stand = standing; sit = seated facing camera; sitBack = seated facing away; play = busy standing */
@@ -681,6 +687,16 @@ export function buildOfficeMap(podRows: number = BASE_POD_ROWS): OfficeMap {
   const extra = Math.max(0, podRows - BASE_POD_ROWS) * POD_H;
   const rows = [...BASE_ROWS];
   rows.splice(GROW_AT, 0, ...Array.from({ length: extra }, () => GROW_ROW));
+  // Keep office coordinates unchanged; expand the walkable grid only eastwards.
+  for (let y = 0; y < rows.length; y++) {
+    const promenade = y >= 27;
+    const west = promenade ? `${rows[y]!.slice(0, 79)}s` : rows[y]!;
+    rows[y] =
+      west +
+      (y === 0
+        ? "h".repeat(DISTRICT_COLS)
+        : `${(promenade ? "s" : ",").repeat(DISTRICT_COLS - 1)}h`);
+  }
   const width = rows[0]!.length;
   const height = rows.length;
   for (const [i, r] of rows.entries()) {
@@ -697,6 +713,7 @@ export function buildOfficeMap(podRows: number = BASE_POD_ROWS): OfficeMap {
   }));
   const deskBottom = POD_Y0 + podRows * POD_H; // exclusive
   const areas: Area[] = [
+    ...LANDMARKS,
     { name: "desks", label: "Desk floor", x: 1, y: 3, w: 32, h: deskBottom - 2 },
     { name: "kitchen", label: "Kitchen", x: 34, y: 3, w: 8, h: 8 },
     { name: "lounge", label: "Lounge", x: 42, y: 3, w: 8, h: 8 },
@@ -726,6 +743,22 @@ export function buildOfficeMap(podRows: number = BASE_POD_ROWS): OfficeMap {
     const fp = FOOTPRINTS[ob.kind];
     if (!fp.solid) continue;
     for (let j = 0; j < fp.h; j++) for (let i = 0; i < fp.w; i++) block(ob.x + i, ob.y + j);
+  }
+  // The airfield is scenery, not a pedestrian shortcut.
+  // Its southern viewing promenade connects to the original street.
+  for (let y = 1; y < 27; y++) for (let x = DISTRICT_X + 1; x < width - 1; x++) block(x, y);
+  for (const landmark of LANDMARKS) {
+    if (landmark.y < 0) continue; // northern skyline is scenery outside the pedestrian grid
+    pois.push(
+      poi(
+        `${landmark.name}-view`,
+        landmark.name,
+        landmark.x + Math.floor(landmark.w / 2),
+        28,
+        "up",
+        "stand",
+      ),
+    );
   }
   const base = walkable.slice();
   const isWalkable = (x: number, y: number) =>

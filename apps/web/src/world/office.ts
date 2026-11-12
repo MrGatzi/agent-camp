@@ -33,6 +33,8 @@ import {
   type WindowRect,
   windowPane,
 } from "../art/tiles.ts";
+import { NORTH_TOP } from "./landmarkLayout.ts";
+import { LandmarkDistrict } from "./landmarks.ts";
 import {
   deskPitch,
   deskPx,
@@ -110,6 +112,9 @@ export class OfficeScene {
   readonly glows = new Container();
   readonly fx = new Container();
   terrainCanvas!: HTMLCanvasElement;
+  minimapCanvas!: HTMLCanvasElement;
+  readonly topPx = NORTH_TOP;
+  private landmarks!: LandmarkDistrict;
   readonly desks = new Map<string, DeskView>();
   private slots: SlotView[] = [];
   /** points of interest added by nooks (idle characters visit them too) */
@@ -158,6 +163,7 @@ export class OfficeScene {
 
   /** Rebuild everything static (used when the desk floor grows). Characters re-attach. */
   rebuild(map: OfficeMap) {
+    this.landmarks.destroy();
     const keepChars = this.objects.children.filter(
       (c) => c.label === "character" || c.label === "actor",
     );
@@ -191,9 +197,13 @@ export class OfficeScene {
       s.position.set(piece.x, piece.y);
       this.floor.addChild(s);
     }
-    this.overlay.position.set(-SURROUND, -SURROUND);
+    this.landmarks = new LandmarkDistrict(this.terrainCanvas);
+    this.minimapCanvas = this.landmarks.minimap;
+    this.decals.addChild(this.landmarks.ground);
+    this.objects.addChild(this.landmarks.aircraft);
+    this.overlay.position.set(-SURROUND, this.topPx - SURROUND);
     this.overlay.width = this.widthPx + 2 * SURROUND;
-    this.overlay.height = this.heightPx + 2 * SURROUND;
+    this.overlay.height = this.heightPx - this.topPx + 2 * SURROUND;
 
     for (const rect of terrain.windows) {
       const s = new Sprite(windowPane("day", rect.w, rect.h));
@@ -629,6 +639,7 @@ export class OfficeScene {
   }
 
   update(time: number, dt: number) {
+    this.landmarks.update(time);
     if (this.shakeAmp > 0.05) {
       const a = this.shakeAmp;
       this.root.pivot.set(Math.round(Math.sin(time * 61) * a), Math.round(Math.cos(time * 47) * a));

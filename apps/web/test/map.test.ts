@@ -71,7 +71,7 @@ describe("office map", () => {
     for (const rows of [4, 6]) {
       test(`bar, shop and corner spots sit in their areas and are reachable (${rows} pod rows)`, () => {
         const map = buildOfficeMap(rows);
-        expect(map.width).toBe(80);
+        expect(map.width).toBe(120);
         const area = (n: string) => map.areas.find((a) => a.name === n)!;
         const inside = (n: string, t: { x: number; y: number }) => {
           const a = area(n);

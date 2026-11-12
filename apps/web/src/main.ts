@@ -350,7 +350,7 @@ async function boot() {
   const camera = new Camera(
     scene.root,
     () => app.screen,
-    () => ({ width: scene.widthPx, height: scene.heightPx }),
+    () => ({ width: scene.widthPx, height: scene.heightPx - scene.topPx, top: scene.topPx }),
     () => scene.map.areas,
     {
       kiosk,
@@ -367,11 +367,15 @@ async function boot() {
   // wall screens and the fit view frame the office (64 columns); the east street block joins
   // the frame only while someone is there, so tiles stay big on a 1080p wall
   camera.fitWidth = () =>
-    chars.positions().some((p) => p.x >= OFFICE_COLS * 16) ? scene.widthPx : OFFICE_COLS * 16;
+    chars.positions().some((p) => p.x >= 80 * 16)
+      ? scene.widthPx
+      : chars.positions().some((p) => p.x >= OFFICE_COLS * 16)
+        ? 80 * 16
+        : OFFICE_COLS * 16;
   camera.skipStop = (name) =>
     (name === "bar" && !scene.barOpen) || (name === "shop" && !scene.shopOpen);
   const minimap = new Minimap(hud.minimapHost, camera, chars);
-  minimap.setTerrain(scene.terrainCanvas);
+  minimap.setTerrain(scene.minimapCanvas, scene.topPx);
   minimap.desks = () => scene.deskRects();
 
   // initial view
@@ -395,7 +399,7 @@ async function boot() {
     kurt.setMap(scene.map);
     duo?.setMap(scene.map);
     life.reattach();
-    minimap.setTerrain(scene.terrainCanvas);
+    minimap.setTerrain(scene.minimapCanvas, scene.topPx);
     chars.syncSlots();
     camera.worldChanged();
   };
