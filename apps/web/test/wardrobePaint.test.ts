@@ -18,7 +18,7 @@ import {
 import { FH, FW, HEADROOM } from "../src/art/avatar/geometry.ts";
 import { lookFor } from "../src/art/avatar/renderLook.ts";
 import { paintSheet } from "../src/art/avatar/sheet.ts";
-import type { PixelCanvas } from "../src/art/pixel.ts";
+import { PixelCanvas } from "../src/art/pixel.ts";
 
 const hex = (v: number) =>
   `#${[v & 255, (v >> 8) & 255, (v >> 16) & 255].map((c) => c.toString(16).padStart(2, "0")).join("")}`;
@@ -95,7 +95,7 @@ const variants: Variant[] = [
     }),
     E.APRON_BOWS,
   ],
-  ...(["mask", "wings", "tail", "gloves", "necklace", "bag"] as const).map(
+  ...(["mask", "wings", "tail", "gloves", "necklace", "bag", "pet", "aura"] as const).map(
     (k): Variant => [
       `accessories.${k}`,
       (l, v) => ({
@@ -109,6 +109,8 @@ const variants: Variant[] = [
         gloves: E.GLOVES,
         necklace: E.NECKLACES,
         bag: E.BAGS,
+        pet: E.PETS,
+        aura: E.AURAS,
       }[k],
     ],
   ),
@@ -210,6 +212,55 @@ describe("wardrobe on the HD doll", () => {
         }
       expect(other / (skin + other)).toBeLessThan(0.05);
     }
+  });
+
+  test("a look without pet or aura (stored before WD12) paints as with none", () => {
+    const { pet: _p, aura: _a, ...older } = base.accessories;
+    const sheet = (accessories: FullLook["accessories"]) =>
+      frameBytes(paint({ ...base, accessories }), 0) +
+      frameBytes(paint({ ...base, accessories }), 30);
+    const before = sheet(older);
+    expect(sheet({ ...older, pet: { kind: "none", color: "#e43b44" } })).toBe(before);
+    expect(sheet({ ...older, aura: { kind: "none", color: "#e43b44" } })).toBe(before);
+  });
+
+  test("pets and auras stay inside their frames, the cloud and bees in the headroom", () => {
+    const proto = PixelCanvas.prototype;
+    const origSet = proto.set;
+    const bad: string[] = [];
+    proto.set = function (this: PixelCanvas, x, y, h, a) {
+      const c = this.clip;
+      const px = x + this.ox;
+      const py = y + this.oy;
+      if (c && (px < c.x0 || px >= c.x1 || py < c.y0 || py >= c.y1)) bad.push(`${px},${py}`);
+      origSet.call(this, x, y, h, a);
+    };
+    try {
+      for (const height of E.HEIGHTS)
+        for (const [i, kind] of E.PETS.entries()) {
+          const aura = E.AURAS[i % E.AURAS.length]!;
+          const look = {
+            ...base,
+            body: { ...base.body, height },
+            accessories: {
+              ...base.accessories,
+              pet: { kind, color: "#63c74d" },
+              aura: { kind: aura, color: "#feae34" },
+            },
+          };
+          paint(look);
+        }
+      for (const aura of ["rain-cloud", "bees"] as const) {
+        const pc = paint({
+          ...base,
+          accessories: { ...base.accessories, aura: { kind: aura, color: "#feae34" } },
+        });
+        expect(topRow(pc, 0)).toBeLessThan(HEADROOM);
+      }
+    } finally {
+      proto.set = origSet;
+    }
+    expect(bad.slice(0, 10)).toEqual([]);
   });
 
   test("tall hats use the headroom", () => {
