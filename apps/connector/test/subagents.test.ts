@@ -119,6 +119,12 @@ describe("subagent meta", () => {
     expect([...calls.started]).toEqual(["a", "b"]);
     expect([...calls.returned]).toEqual(["a"]);
   });
+
+  test("tool calls ignore api-request-blob copies of old requests", () => {
+    const blob = { type: "api-request-blob", message: toolUse("old").message };
+    const calls = toolCalls([blob, toolUse("b")]);
+    expect([...calls.started]).toEqual(["b"]);
+  });
 });
 
 describe("countSubagents lifecycle", () => {

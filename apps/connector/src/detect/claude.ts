@@ -235,11 +235,17 @@ export function parseSubagentMeta(raw: unknown): SubagentMeta | null {
 /** Tool calls seen in transcript entries: tool_use ids started and tool_result ids returned. */
 export type ToolCalls = { started: Set<string>; returned: Set<string> };
 
-/** Collect tool_use / tool_result ids from raw transcript entries (any entry with content). */
+/**
+ * Collect tool_use / tool_result ids from the user/assistant entries of a transcript. Other
+ * entries are skipped: Claude Code's `api-request-blob` lines copy earlier request content,
+ * old tool_use blocks included, whose results may lie before the tail we read, so counting
+ * them would keep finished subagents "pending" and inflate the helper count.
+ */
 export function toolCalls(entries: readonly Record<string, unknown>[]): ToolCalls {
   const started = new Set<string>();
   const returned = new Set<string>();
   for (const e of entries) {
+    if (e.type !== "user" && e.type !== "assistant") continue;
     const message = isObj(e.message) ? e.message : undefined;
     if (!message) continue;
     for (const block of arr(message.content)) {
