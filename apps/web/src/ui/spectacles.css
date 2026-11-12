@@ -1,0 +1,36 @@
+.spectacle-controls {
+  position: fixed;
+  left: 12px;
+  top: calc(48px + env(safe-area-inset-top));
+  z-index: 32;
+  max-width: min(280px, calc(100vw - 24px));
+  padding: 8px 12px;
+  background: var(--ink);
+  color: var(--cream);
+  border-color: var(--amber);
+  font: 14px var(--font-body);
+}
+.spectacle-controls summary {
+  cursor: pointer;
+  color: var(--amber);
+  min-height: 24px;
+  line-height: 24px;
+}
+.spectacle-controls p {
+  margin: 8px 0;
+  color: var(--silver);
+}
+.spectacle-controls p:empty {
+  display: none;
+}
+.spectacle-controls button {
+  display: block;
+  width: 100%;
+  margin: 8px 0;
+  padding: 10px;
+  text-align: left;
+}
+.spectacle-controls :focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 3px;
+}

@@ -53,6 +53,7 @@ export class FireAlarm {
   ) {
     for (let i = 0; i < 4; i++) {
       const g = new Sprite(glowTexture(30, C.red));
+      g.label = "actor";
       g.anchor.set(0.5);
       g.visible = false;
       scene.glows.addChild(g);
@@ -67,6 +68,7 @@ export class FireAlarm {
       this.drops.push(d);
     }
     this.truck = new Sprite(fireTruckTextures()[0]!);
+    this.truck.label = "actor";
     this.truck.anchor.set(0.5, 1);
     this.truck.visible = false;
     scene.decals.addChild(this.truck);
@@ -248,6 +250,7 @@ export class Raccoons {
     ];
     for (const [, , f] of spots) {
       const t = new Sprite(trashTextures()[f]!);
+      t.label = "actor";
       t.anchor.set(0.5, 1);
       t.visible = false;
       scene.decals.addChild(t);
@@ -577,6 +580,7 @@ export class Flood {
 
   constructor(private readonly scene: OfficeScene) {
     this.sheet = new Sprite(waterTexture(120, 64));
+    this.sheet.label = "actor";
     this.sheet.anchor.set(0.5);
     this.sheet.visible = false;
     scene.decals.addChild(this.sheet);
@@ -587,6 +591,7 @@ export class Flood {
       [26, 10],
     ] as const) {
       const p = new Sprite(waterTexture(w, h));
+      p.label = "actor";
       p.anchor.set(0.5);
       p.visible = false;
       scene.decals.addChild(p);

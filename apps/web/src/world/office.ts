@@ -158,10 +158,13 @@ export class OfficeScene {
 
   /** Rebuild everything static (used when the desk floor grows). Characters re-attach. */
   rebuild(map: OfficeMap) {
-    const keepChars = this.objects.children.filter(
-      (c) => c.label === "character" || c.label === "actor",
+    // Dynamic actors also live in decals/glows (graveyard, outdoor traffic, royal carpet).
+    const keepChars = [this.decals, this.objects, this.glows].flatMap((layer) =>
+      layer.children
+        .filter((c) => c.label === "character" || c.label === "actor")
+        .map((child) => ({ layer, child })),
     );
-    for (const c of keepChars) this.objects.removeChild(c);
+    for (const { layer, child } of keepChars) layer.removeChild(child);
     for (const c of this.floor.removeChildren()) c.destroy({ texture: true, textureSource: true });
     for (const layer of [this.decals, this.objects, this.glows]) {
       for (const c of layer.removeChildren()) c.destroy();
@@ -179,7 +182,7 @@ export class OfficeScene {
     this.leaves = [];
     this.whiteboardKey = "";
     this.build();
-    for (const c of keepChars) this.objects.addChild(c);
+    for (const { layer, child } of keepChars) layer.addChild(child);
   }
 
   private build() {

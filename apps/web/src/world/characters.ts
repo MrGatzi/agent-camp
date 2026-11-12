@@ -1688,6 +1688,37 @@ export class CharacterManager {
     }
   }
 
+  /** The UFO may relocate only a still-idle, live character onto a verified safe tile. */
+  landIdle(c: SessionCharacter, spot: Point): boolean {
+    if (
+      this.chars.get(c.sessionId) !== c ||
+      c.removed ||
+      this.isOffline(c) ||
+      this.activityOf(c) !== "idle" ||
+      c.evac ||
+      c.rally ||
+      ["queued", "zapped", "waving", "leaving", "carried"].includes(c.mode) ||
+      !this.scene.map.isWalkable(Math.floor(spot.x / TILE), Math.floor((spot.y - 4) / TILE))
+    )
+      return false;
+    const path = findPathPx(this.scene.map, { x: c.x, y: c.y }, spot);
+    if (!path) return false;
+    if (c.mode === "seated") this.resetChair(c);
+    this.releasePoi(c);
+    this.endChat(c);
+    c.chatTarget = null;
+    c.path = [];
+    c.x = spot.x;
+    c.y = spot.y;
+    c.mode = "poi";
+    c.goal = "poi";
+    c.facing = "down";
+    c.timer = 8;
+    this.place(c);
+    this.say(c, "THIS IS NOT MY DESK.");
+    return true;
+  }
+
   /** The hourly bow: everyone online who can drop what they are doing right now. */
   rallyable(): SessionCharacter[] {
     return [...this.chars.values()].filter(

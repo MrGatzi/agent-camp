@@ -7,6 +7,8 @@
  *   ?bar=open|closed  ?shop=open|closed  ignore the opening hours (17-02 / 10-20)
  *   ?weather=sun|clouds|rain|snow  force the weather (default: changes hour by hour, seeded)
  *   ?season=winter|spring|summer|autumn  force the season (default: the local month)
+ *   ?spectacles=0|1  off/on for this screen (default: on, off on kiosk)
+ *   ?spectacle=conga|ufo|disco  preview an office show on this screen
  *   ?lively=1     office life at party speed (chattier, waits count 10x, pizza drone in 3 s)
  *   ?key=...      viewer key passed through to /ws/viewer
  *   ?kiosk=1      iPad kiosk (no cursor, big text, no panels, wake lock, 30 fps, auto-tour,
@@ -76,6 +78,7 @@ import { Celebration } from "./ui/celebration.ts";
 import { GamesUi } from "./ui/gamesUi.ts";
 import { MessagesPanel, storedMessageRead } from "./ui/messages.ts";
 import { Minimap } from "./ui/minimap.ts";
+import { spectacleControls } from "./ui/spectacles.ts";
 import { Cfo } from "./world/cfo.ts";
 import { CharacterManager } from "./world/characters.ts";
 import { CatColony } from "./world/colony.ts";
@@ -101,6 +104,8 @@ import { PartyWorld } from "./world/party.ts";
 import { PortalDuo } from "./world/portalCharacters.ts";
 import { OfficeQueen } from "./world/queen.ts";
 import { SalesChef } from "./world/salesChef.ts";
+import { SPECTACLES, type Spectacle, spectaclesEnabled } from "./world/spectacleRules.ts";
+import { OfficeSpectacles } from "./world/spectacles.ts";
 
 type OfficeApi = {
   ready: boolean;
@@ -128,6 +133,11 @@ type OfficeApi = {
   portalCharacters(): { x: number; y: number; mode: string } | null;
   /** where the IT guy is and what he is up to (inside = in the server cabin) */
   itGuy(): { x: number; y: number; mode: string; inside: boolean; burning: boolean } | null;
+  spectacles: {
+    trigger(kind: Spectacle): boolean;
+    quack(): boolean;
+    status(): ReturnType<OfficeSpectacles["status"]>;
+  } | null;
   /** slow down / freeze the world clock (screenshots of short moments); 1 = normal */
   setSpeed(k: number): void;
 };
@@ -146,6 +156,7 @@ const showGifs = !["0", "false", "off"].includes(params.get("gifs") ?? "");
 // client-only, nothing is sent and no toon textures are built while off
 const toonsParam = params.get("toons");
 const showToons = toonsParam === null ? !kiosk : !["0", "false", "off"].includes(toonsParam);
+const showSpectacles = spectaclesEnabled(params.get("spectacles"), kiosk);
 // `?itguy=0`: no IT guy on this screen (e.g. the wall); default on everywhere, client-only.
 // `?richard=0` stays as an alias so screens bookmarked with the old switch keep working.
 const showItGuy = !["itguy", "richard"].some((k) =>
@@ -200,6 +211,17 @@ async function boot() {
   const chars = new CharacterManager(scene, model, effects);
   const gifs = showGifs ? new HeadGifs(scene.fx, model, chars) : null;
   const partyWorld = new PartyWorld(scene, chars, model);
+  const spectacleParam = params.get("spectacle") as Spectacle | null;
+  const spectacles = showSpectacles
+    ? new OfficeSpectacles(
+        scene,
+        chars,
+        model,
+        effects,
+        spectacleParam && SPECTACLES.includes(spectacleParam) ? spectacleParam : null,
+      )
+    : null;
+  if (spectacles && !kiosk && !nohud) spectacleControls(host, spectacles);
   // Friday after work (`?demo=feierabend`, or `?feierabend=1` on a live feed): happy hour at
   // 17:30, office life at party speed, the weed shop sells more
   const feierabend = demo === "feierabend" || flag("feierabend");
@@ -377,6 +399,9 @@ async function boot() {
   // the frame only while someone is there, so tiles stay big on a 1080p wall
   camera.fitWidth = () =>
     chars.positions().some((p) => p.x >= OFFICE_COLS * 16) ? scene.widthPx : OFFICE_COLS * 16;
+  if (spectacles)
+    spectacles.onMoment = (_kind, spot) =>
+      camera.notify(spot.x, spot.y, { zoom: 1.4, hold: 6, ambient: true });
   camera.skipStop = (name) =>
     (name === "bar" && !scene.barOpen) || (name === "shop" && !scene.shopOpen);
   const minimap = new Minimap(hud.minimapHost, camera, chars);
@@ -1011,6 +1036,12 @@ async function boot() {
       };
 
   camera.onTap = (wx, wy) => {
+    if (spectacles?.tap(wx, wy)) return;
+    const spectacleActor = spectacles?.pick(wx, wy);
+    if (!kiosk && spectacleActor) {
+      openSession(spectacleActor.sessionId);
+      return;
+    }
     if (!kiosk && life.hitCar(wx, wy)) {
       location.href = key ? `./stats?key=${encodeURIComponent(key)}` : "./stats";
       return;
@@ -1321,6 +1352,7 @@ async function boot() {
     const t0 = performance.now();
     const dt = Math.min(0.1, deltaMS / 1000) * speed;
     time += dt;
+    spectacles?.beforeFrame();
     scene.update(time, dt);
     chars.update(dt, time);
     gifs?.update(dt);
@@ -1338,6 +1370,7 @@ async function boot() {
     cfo.update(dt, time);
     duo?.update(dt, time);
     life.update(dt, time);
+    spectacles?.update(dt, time);
     effects.update(dt);
     living.update(dt);
     camera.update(dt);
@@ -1396,6 +1429,13 @@ async function boot() {
         fr.readAsDataURL(blob);
       });
     },
+    spectacles: spectacles
+      ? {
+          trigger: (kind) => SPECTACLES.includes(kind) && spectacles.trigger(kind),
+          quack: () => spectacles.quackNow(),
+          status: () => spectacles.status(),
+        }
+      : null,
     characters: () => chars.chars.size,
     cats: () => colony.cats().length,
     portalCharacters: () => duo?.where() ?? null,

@@ -540,6 +540,40 @@ summer, autumn), `?weather=snow` (sun, clouds, rain, snow; otherwise it changes 
 raccoons, alarm, catboss, flood, happyhour) and `?birthday=<personId>` to see the rare stuff
 now. A car drives by every minute or so: click it for the stats.
 
+### Office nonsense
+
+The garden now has a **giant rubber duck** watching the hardest-working online agent
+(currently active, then most helpers, then longest current work stint). Click it for an enormous,
+silent **QUACK**. The head of development gets an absurd golden throne, a red carpet and two
+helmeted cat guards. These landmarks stay visible even when the office is empty.
+
+Automatic shows use office-local time on each screen, with no AI calls or extra network traffic:
+
+- **Chair conga:** every hour at **:05**, a 35-second rolling chair train around the office aisles.
+- **UFO abduction:** **:12, :32 and :52**, an 18-second alien visit targeting an idle colleague,
+  returning them to a reachable silly spot (preferably the boss\'s red carpet). Stops if they
+  become busy, go offline or leave.
+- **Emergency disco:** **:20 and :40**, a giant disco ball, slow pastel spotlights and dancing
+  for exactly 15 seconds. No strobe or surprise sound.
+
+Open **Office nonsense** at the top left to preview a show **only on this screen**. Clicking
+the hanging disco ball also starts a local disco. `?spectacle=conga|ufo|disco` previews one on
+load (use `?demo=busy&spectacle=ufo` without a server). Spectacles are **off on kiosks by default**; use
+`?kiosk=1&spectacles=1` to opt in. `?spectacles=0` disables the whole feature on any screen;
+preview controls are hidden while disabled and on kiosks. Other screens select from their current visible sessions,
+so choreography is cosmetic rather than a new shared gameplay state.
+
+Shows keep session status, desk ownership and the existing character simulation intact, with
+at most 256 proxy actors. Waiting or burning sessions stay out so their waiting markers,
+ping rings and context fire remain visible; actors leave immediately if they start needing
+attention mid-show. Ended/offline characters are removed, and scene rebuilds cancel the
+current show and restore originals. Reduced-motion viewers get a static chair formation,
+steady lights and an in-place alien encounter rather than bobbing, sweeping or abduction travel.
+
+Offline checks: `bun test apps/web/test/spectacles.test.ts`. For visual/lifecycle checks start
+Vite on port 5184, then run `bun tools/screenshots/spectacles-smoke.ts`; it writes screenshots
+under `/tmp/agent-office-spectacles` (override `SPECTACLES_URL` / `SPECTACLES_SHOTS`).
+
 East of the garden there is a street block with the **Feierabend bar** (17:00–02:00, Fridays
 from 16:00 with happy hour until 18:00) and a **weed shop** (10:00–20:00) with a smokers'
 corner outside. Idle agents pour a beer at the tap and take it to a stool or standing table,

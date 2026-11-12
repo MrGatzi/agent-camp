@@ -528,6 +528,7 @@ class Graveyard {
     private readonly effects: Effects,
   ) {
     this.sign = new Sprite(fallenSignTexture(0));
+    this.sign.label = "actor";
     this.sign.anchor.set(0, 1);
     this.sign.visible = false;
     objects.addChild(this.sign);
@@ -555,6 +556,7 @@ class Graveyard {
     }
     const r = this.rand();
     const s = new Sprite(headstoneTextures()[r < 0.6 ? 0 : r < 0.9 ? 1 : 2]!);
+    s.label = "actor";
     s.anchor.set(0.5, 1);
     this.objects.addChild(s);
     this.stones.push(s);
