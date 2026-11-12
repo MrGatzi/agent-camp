@@ -271,7 +271,7 @@ export function buildDesignPane(o: Opts): DesignPane {
 /** Switch tabs of the design pane with ◀ ▶ while a tab has focus. */
 export function designTabStep(pane: DesignPane, dir: -1 | 1): boolean {
   const tabs = [...pane.el.querySelectorAll<HTMLButtonElement>(".design-tab")];
-  const at = tabs.findIndex((t) => t === document.activeElement);
+  const at = tabs.indexOf(document.activeElement as HTMLButtonElement);
   if (at < 0) return false;
   const next = tabs[(at + dir + tabs.length) % tabs.length]!;
   next.click();

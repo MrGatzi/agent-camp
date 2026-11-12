@@ -359,10 +359,11 @@ function drawNecklace(c: Ctx, b: TorsoBox) {
   ];
   switch (n.kind) {
     case "chain":
-      arc.forEach(([x, y], i) => pc.set(x, y, i % 2 ? r.light : r.base));
+      for (const [i, [x, y]] of arc.entries()) pc.set(x, y, i % 2 ? r.light : r.base);
       return;
     case "pearls":
-      arc.forEach(([x, y], i) => pc.set(x, y, i % 2 ? mix(PEARL, r.base, 0.25) : PEARL));
+      for (const [i, [x, y]] of arc.entries())
+        pc.set(x, y, i % 2 ? mix(PEARL, r.base, 0.25) : PEARL);
       pc.set(15, T + 4, PEARL);
       pc.set(16, T + 4, mix(PEARL, r.base, 0.25));
       return;

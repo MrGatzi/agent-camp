@@ -1325,15 +1325,15 @@ body.kiosk .hud-reconnect {
 .look-studio .design-row.colors-only {
   grid-template-columns: 110px 1fr;
 }
+.look-studio .row-colors {
+  display: flex;
+  gap: 4px;
+}
 .look-studio .design-row.colors-only .row-colors {
   grid-column: 2;
 }
 .look-studio .design-row.colors-only .row-value {
   display: none;
-}
-.look-studio .row-colors {
-  display: flex;
-  gap: 4px;
 }
 .look-studio .color-chip,
 .look-studio .swatch {

@@ -4,32 +4,17 @@
  * Pixel-styled via theme.css.
  */
 import {
-  ACCENT_COLORS,
-  ACCESSORIES,
   type ACTIVITIES,
   type Activity,
   AGENT_COLORS,
   AGENT_PALETTES,
   type AgentKind,
   type AvatarSpec,
-  catalogAvatar,
-  DESK_MESS_LEVELS,
-  DESK_PROPS,
-  FACIAL_HAIR,
   type GenerateOutcome,
-  GLASSES,
-  HAIR_COLORS,
-  HAIR_STYLES,
-  HELD_ITEMS,
   type InteractionKind,
   type LookMacState,
-  MAX_DESK_PROPS,
   MAX_SELF_DESCRIPTION,
-  OUTFITS,
   type PersonDayResponse,
-  SKIN_TONES,
-  VEHICLES,
-  WRISTWEAR,
 } from "@agent-office/protocol";
 import { iconUrl } from "./art/icons.ts";
 import type { ConnectionStatus } from "./net/viewer.ts";

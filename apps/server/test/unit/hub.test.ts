@@ -9,7 +9,6 @@ import {
   CONNECTOR_TIMEOUT_MS,
   envelope,
   hashString,
-  lookFromCatalog,
   MAX_SELF_DESCRIPTION,
   PERSON_GRACE_MS,
   parseServerToConnector,
