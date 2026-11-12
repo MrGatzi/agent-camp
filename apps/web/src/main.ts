@@ -80,6 +80,7 @@ import { HeadDev } from "./world/headDev.ts";
 import { OfficeLife } from "./world/life.ts";
 import { catCount, SEASONS, type Season, seasonFor } from "./world/lifeRules.ts";
 import { Living } from "./world/living.ts";
+import { MagicWorld } from "./world/magic.ts";
 import {
   type AreaName,
   BASE_POD_ROWS,
@@ -192,6 +193,7 @@ async function boot() {
   const chars = new CharacterManager(scene, model, effects);
   const gifs = showGifs ? new HeadGifs(scene.fx, model, chars) : null;
   const partyWorld = new PartyWorld(scene, chars, model);
+  const magic = new MagicWorld(scene, chars, model);
   // Friday after work (`?demo=feierabend`, or `?feierabend=1` on a live feed): happy hour at
   // 17:30, office life at party speed, the weed shop sells more
   const feierabend = demo === "feierabend" || flag("feierabend");
@@ -1226,6 +1228,7 @@ async function boot() {
     chars.update(dt, time);
     gifs?.update(dt);
     partyWorld.update(dt, time);
+    magic.update(dt, time);
     colony.update(dt, time);
     // cats coming in or going home get the door opened too
     if (!scene.doorWanted) {

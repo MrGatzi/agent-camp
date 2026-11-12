@@ -12,6 +12,7 @@ import {
   AGENT_PALETTES,
   type AgentKind,
   type AvatarSpec,
+  COMPANIONS,
   catalogAvatar,
   DESK_MESS_LEVELS,
   DESK_PROPS,
@@ -26,6 +27,7 @@ import {
   OUTFITS,
   type PersonDayResponse,
   SKIN_TONES,
+  TRAILS,
   VEHICLES,
   WRISTWEAR,
 } from "@agent-office/protocol";
@@ -127,6 +129,8 @@ const LOOK_FIELDS: {
   { key: "wrist", label: "Bracelets", options: WRISTWEAR },
   { key: "accentColor", label: "Accent color", options: ACCENT_COLORS },
   { key: "vehicle", label: "Vehicle", options: VEHICLES },
+  { key: "trail", label: "Trail", options: TRAILS },
+  { key: "companion", label: "Companion", options: COMPANIONS },
 ];
 const MESS_LABEL = ["spotless", "a bit messy", "messy", "chaos"] as const;
 /** Where each catalog row sits in the look studio. */
@@ -137,6 +141,7 @@ const LOOK_GROUPS: { title: string; keys: readonly LookField[] }[] = [
   },
   { title: "Outfit & hands", keys: ["outfit", "leftHand", "rightHand", "wrist", "accentColor"] },
   { title: "Ride", keys: ["vehicle"] },
+  { title: "Magic", keys: ["trail", "companion"] },
 ];
 
 /** One carousel in the look studio: a list of choices and how it reads/writes the draft. */
