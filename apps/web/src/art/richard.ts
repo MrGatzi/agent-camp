@@ -97,8 +97,8 @@ export const RICHARD_LOOK: CharacterLook = {
     hem: "plain",
   },
   legwear: { kind: "none", color: "#eaa98a", accent: "none" },
-  // the painter has no crocs: bright slippers with a darker "hole" dot come closest
-  shoes: { kind: "slippers", ramp: CROCS, sole: "#5c9a2c", accent: "#4a7d22", laces: "none" },
+  // lime crocs: holes and heel strap come with the kind (WD1)
+  shoes: { kind: "crocs", ramp: CROCS, sole: "#5c9a2c", accent: "#4a7d22", laces: "none" },
   pose: { hands: "relaxed", stance: "wide", headTilt: false },
   extras: {
     leftHand: "none",
