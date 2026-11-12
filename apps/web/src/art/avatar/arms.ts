@@ -2,12 +2,12 @@
  * Arms and hands for every view, the standing poses (front idle + the free arm while waving),
  * raised/waving hands, the reading book and the mug.
  */
-import type { Ramp } from "@agent-office/protocol";
+import { type Ramp, rampFrom } from "@agent-office/protocol";
 import { C } from "../palette.ts";
 import type { Ctx } from "./ctx.ts";
 import { heldFront } from "./extras.ts";
 import type { Arms } from "./geometry.ts";
-import type { TorsoBox } from "./torso.ts";
+import { agentMark, type TorsoBox, trimColor } from "./torso.ts";
 
 /** Rightmost texel column a part may use so the 2-texel outline still fits in the frame. */
 const MAX_X = 29;
@@ -15,18 +15,75 @@ const MAX_X = 29;
 /** Sleeve colour of row `k` below the shoulder; null = bare skin. */
 function sleeveAt(c: Ctx, k: number): Ramp | null {
   const L = c.L;
-  if (L.outer.kind !== "none") return c.sleeve;
+  const o = L.outer;
+  if (o.kind !== "none" && o.kind !== "cape") {
+    // varsity jackets have sleeves in the contrast colour
+    return o.kind === "varsity" ? rampFrom(trimColor(o)) : c.sleeve;
+  }
+  // a cape lies over the shoulders, the shirt's sleeves (or bare arms) come out under it
+  if (o.kind === "cape" && k < 2) return c.sleeve;
   const s = L.shirt;
-  if (s.kind === "tank") return null;
-  if (s.sleeves === "short") return k < 4 ? c.sleeve : null;
-  if (s.sleeves === "rolled") return k < 7 ? c.sleeve : null;
-  return c.sleeve;
+  const sl = o.kind === "none" ? c.sleeve : s.ramp;
+  if (s.kind === "tank" || s.kind === "none" || s.kind === "camisole") return null;
+  if (s.sleeves === "none") return null;
+  if (s.sleeves === "puff") return k < 3 ? sl : null;
+  if (s.sleeves === "short") return k < 4 ? sl : null;
+  if (s.sleeves === "rolled") return k < 7 ? sl : null;
+  return sl;
+}
+
+/** Puffed shoulder of a puff sleeve (no outer layer with its own sleeves over it). */
+const puffAt = (c: Ctx, k: number) =>
+  k < 3 &&
+  c.L.shirt.sleeves === "puff" &&
+  (c.L.outer.kind === "none" || c.L.outer.kind === "cape") &&
+  sleeveAt(c, k) !== null;
+
+/** Arms under a poncho: only the hands show below it. */
+const hiddenArms = (c: Ctx) => c.L.outer.kind === "poncho";
+
+/**
+ * Sleeve colour of the bent arms of a pose (hands on hips, arms crossed, waving, a raised
+ * hand): the outer garment's or shirt's sleeve, as before; bare skin for the wardrobe's
+ * sleeveless tops (no shirt, camisole, sleeves "none" / "puff"), the cape's shirt underneath.
+ */
+function poseSleeve(c: Ctx): Ramp {
+  const o = c.L.outer;
+  if (o.kind !== "none" && o.kind !== "cape") return sleeveAt(c, 5) ?? c.sleeve;
+  const s = c.L.shirt;
+  const bare =
+    s.kind === "none" || s.kind === "camisole" || s.sleeves === "none" || s.sleeves === "puff";
+  if (bare) return c.L.skin;
+  return o.kind === "cape" ? s.ramp : c.sleeve;
+}
+
+/** Colours of the hands: gloves (WD6) or skin. */
+function handRamp(c: Ctx): Ramp {
+  const g = c.L.accessories.gloves;
+  return g.kind === "none" ? c.L.skin : rampFrom(g.color);
+}
+
+/** A 2x2 hand at (x, y) (a 3x3 mitt in boxing gloves), `out` = the side away from the body. */
+function drawHand(c: Ctx, x: number, y: number, out: -1 | 1) {
+  const h = handRamp(c);
+  if (c.L.accessories.gloves.kind === "boxing") {
+    const mx = out < 0 ? x - 1 : x;
+    c.pc.rect(mx, y, 3, 3, h.base);
+    c.pc.set(mx + 1, y, h.light);
+    c.pc.vline(mx + 2, y + 1, 2, h.shadow);
+    c.pc.hline(mx, y + 2, 2, h.shadow);
+    return;
+  }
+  c.pc.rect(x, y, 2, 2, h.base);
+  c.pc.set(x + 1, y + 1, h.shadow);
 }
 
 /** Cuff row: rolled sleeves (light band) or knitted cuffs of long sleeves. */
 function isCuff(c: Ctx, k: number): boolean {
   const s = c.L.shirt;
-  if (c.L.outer.kind !== "none") return c.L.outer.kind === "bomber" && k === 9;
+  if (c.L.outer.kind === "varsity") return k === 9;
+  if (c.L.outer.kind !== "none" && c.L.outer.kind !== "cape")
+    return c.L.outer.kind === "bomber" && k === 9;
   if (s.sleeves === "rolled") return k === 6;
   return (
     s.sleeves === "long" &&
@@ -38,9 +95,22 @@ function isCuff(c: Ctx, k: number): boolean {
 /** A straight 2-texel arm column from row y0 for `len` rows, hand below. */
 function armColumn(c: Ctx, x: number, y0: number, len: number, dark: boolean, hand = true) {
   const skin = c.L.skin;
+  const out: -1 | 1 = x < 16 ? -1 : 1;
+  const ox = out < 0 ? x - 1 : x + 2;
+  const o = c.L.outer;
+  const g = c.L.accessories.gloves;
+  const glove = g.kind === "long" && len >= 6 ? rampFrom(g.color) : null;
+  const hidden = hiddenArms(c);
   for (let k = 0; k < len; k++) {
-    const sl = sleeveAt(c, k);
+    if (hidden) continue;
     const y = y0 + k;
+    if (glove && k >= len - 4) {
+      // long gloves up the forearm
+      c.pc.set(x, y, dark ? glove.shadow : glove.base);
+      c.pc.set(x + 1, y, glove.shadow);
+      continue;
+    }
+    const sl = sleeveAt(c, k);
     if (!sl) {
       c.pc.set(x, y, dark ? skin.shadow : skin.base);
       c.pc.set(x + 1, y, skin.shadow);
@@ -49,11 +119,13 @@ function armColumn(c: Ctx, x: number, y0: number, len: number, dark: boolean, ha
     const col = isCuff(c, k) ? sl.light : dark ? sl.shadow : sl.base;
     c.pc.set(x, y, col);
     c.pc.set(x + 1, y, dark ? sl.shadow : k < 2 ? sl.base : sl.shadow);
+    if (puffAt(c, k)) c.pc.set(ox, y, k === 0 ? sl.light : sl.base);
+    // kimono: wide sleeves hang below the arm
+    else if (o.kind === "kimono" && k >= 3) c.pc.set(ox, y, k === len - 1 ? sl.shadow : sl.base);
+    // track jacket: a stripe down the outside of the sleeve
+    if (o.kind === "track-jacket") c.pc.set(out < 0 ? x : x + 1, y, trimColor(o));
   }
-  if (hand) {
-    c.pc.rect(x, y0 + len, 2, 2, skin.base);
-    c.pc.set(x + 1, y0 + len + 1, skin.shadow);
-  }
+  if (hand) drawHand(c, x, y0 + len, out);
 }
 
 /** Front-view arm on the viewer's left (`side` -1) or right (+1) in the look's pose. */
@@ -61,8 +133,9 @@ function posedArm(c: Ctx, b: TorsoBox, side: -1 | 1, dark: boolean) {
   const pose = c.L.pose.hands;
   const T = b.T;
   const x = side < 0 ? c.tl - 2 : c.tr + 1;
-  // a hand that holds something hangs relaxed (extras.ts draws the item at its hand)
-  if (heldFront(c.L, side) !== "none") {
+  // a hand that holds something hangs relaxed (extras.ts draws the item at its hand); under a
+  // poncho the arms hang too
+  if (heldFront(c.L, side) !== "none" || hiddenArms(c)) {
     armColumn(c, x, T, 10, dark);
     return;
   }
@@ -81,7 +154,7 @@ function posedArm(c: Ctx, b: TorsoBox, side: -1 | 1, dark: boolean) {
     c.pc.set(kx, T + 8, sl.shadow);
     c.pc.set(kx + inward, T + 8, col);
     // knuckles at the pocket opening
-    const sk = c.L.skin;
+    const sk = handRamp(c);
     c.pc.set(kx + inward, T + 9, sk.base);
     c.pc.set(kx + 2 * inward, T + 9, sk.shadow);
     c.pc.set(kx + 2 * inward, T + 8, sk.base);
@@ -89,7 +162,7 @@ function posedArm(c: Ctx, b: TorsoBox, side: -1 | 1, dark: boolean) {
   }
   if (pose === "hands-on-hips") {
     const out = side;
-    const sl = c.sleeve;
+    const sl = poseSleeve(c);
     armColumn(c, x, T, 3, dark, false);
     for (let k = 3; k < 6; k++) {
       const ox = x + out * (k - 2);
@@ -102,12 +175,12 @@ function posedArm(c: Ctx, b: TorsoBox, side: -1 | 1, dark: boolean) {
       c.pc.set(ox + 1, T + k, sl.shadow);
     }
     const hx = side < 0 ? c.tl - 1 : c.tr;
-    c.pc.rect(hx, T + 7, 2, 2, c.L.skin.base);
+    c.pc.rect(hx, T + 7, 2, 2, handRamp(c).base);
     return;
   }
   if (pose === "arms-crossed") {
     armColumn(c, x, T, 5, dark, false);
-    const sl = c.sleeve;
+    const sl = poseSleeve(c);
     const y = T + 5 + (side < 0 ? 0 : 1);
     const a = side < 0 ? c.tl - 2 : 15;
     const z = side < 0 ? 16 : c.tr + 2;
@@ -116,7 +189,7 @@ function posedArm(c: Ctx, b: TorsoBox, side: -1 | 1, dark: boolean) {
       c.pc.set(xx, y + 1, sl.shadow);
     }
     const hx = side < 0 ? z - 1 : a;
-    c.pc.rect(hx, y, 2, 2, c.L.skin.base);
+    c.pc.rect(hx, y, 2, 2, handRamp(c).base);
     return;
   }
   armColumn(c, x, T, 10, dark);
@@ -134,8 +207,8 @@ export function drawArmsFront(c: Ctx, b: TorsoBox, arms: Arms, phase: number) {
   if (arms === "raise0" || arms === "raise1" || waving) {
     armColumn(c, rx, T, 3, true, false);
     if (!waving) return;
-    const sl = c.sleeve;
-    const sk = c.L.skin;
+    const sl = poseSleeve(c);
+    const sk = handRamp(c);
     if (arms === "wave0") {
       c.pc.rect(rx + 2, T - 13, 2, 16, sl.shadow);
       c.pc.vline(rx + 2, T - 13, 14, sl.base);
@@ -164,8 +237,8 @@ export function drawArmsFront(c: Ctx, b: TorsoBox, arms: Arms, phase: number) {
 /** Raised hand drawn over the head's edge so it reads at a glance ("waiting for you!"). */
 export function drawRaisedHand(c: Ctx, b: TorsoBox, arms: Arms) {
   if (arms !== "raise0" && arms !== "raise1") return;
-  const sl = c.sleeve;
-  const sk = c.L.skin;
+  const sl = poseSleeve(c);
+  const sk = handRamp(c);
   const lift = arms === "raise0" ? 0 : 2;
   const x = Math.min(c.tr + 3, MAX_X - 3); // old x13 -> 26 for an average torso
   const T = b.T;
@@ -190,9 +263,11 @@ export function drawArmsBack(c: Ctx, b: TorsoBox, arms: Arms, phase: number) {
   }
   const lx = c.tl - 2;
   const rx = c.tr + 1;
-  armColumn(c, lx, T, lenL, true, arms === "down");
+  // a cape covers the arms from behind
+  const cape = c.L.outer.kind === "cape";
+  if (!cape) armColumn(c, lx, T, lenL, true, arms === "down");
   if (arms === "book0" || arms === "book1") {
-    const sk = c.L.skin;
+    const sk = handRamp(c);
     armColumn(c, rx, T, 3, true, false);
     c.pc.rect(rx - 2, T - 2, 4, 2, sk.base);
     const bx = rx - 2;
@@ -207,7 +282,7 @@ export function drawArmsBack(c: Ctx, b: TorsoBox, arms: Arms, phase: number) {
     }
     return;
   }
-  armColumn(c, rx, T, lenR, true, arms === "down");
+  if (!cape) armColumn(c, rx, T, lenR, true, arms === "down");
 }
 
 export function drawArmSide(c: Ctx, b: TorsoBox, phase: number) {
@@ -215,23 +290,40 @@ export function drawArmSide(c: Ctx, b: TorsoBox, phase: number) {
   const T = b.T;
   const x = 14;
   const sk = c.L.skin;
+  const o = c.L.outer;
+  const g = c.L.accessories.gloves;
+  const glove = g.kind === "long" ? rampFrom(g.color) : null;
+  const hidden = hiddenArms(c);
   for (let k = 0; k < 10; k++) {
+    if (hidden) continue;
     const off = k < 4 ? 0 : k < 8 ? ax * 2 : ax * 4;
-    const sl = sleeveAt(c, k);
+    const sl = glove && k >= 6 ? glove : sleeveAt(c, k);
     const xx = x + off;
     if (!sl) {
       c.pc.hline(xx, T + k, 3, sk.base);
       c.pc.set(xx + 3, T + k, sk.shadow);
       continue;
     }
-    const base = isCuff(c, k) ? sl.light : sl.base;
+    const base = isCuff(c, k) && sl !== glove ? sl.light : sl.base;
     c.pc.set(xx, T + k, k < 3 ? sl.light : base);
     c.pc.hline(xx + 1, T + k, 2, base);
     c.pc.set(xx + 3, T + k, sl.shadow);
+    if (puffAt(c, k)) {
+      c.pc.set(xx - 1, T + k, sl.base);
+      c.pc.set(xx + 4, T + k, sl.shadow);
+    }
+    if (o.kind === "kimono" && k >= 4) c.pc.set(xx + 4, T + k, sl.shadow);
+    if (o.kind === "track-jacket" && sl !== glove) c.pc.set(xx + 1, T + k, trimColor(o));
   }
-  c.pc.rect(x + ax * 4, T + 10, 4, 2, sk.base);
-  c.pc.set(x + ax * 4 + 3, T + 11, sk.shadow);
-  if (c.r.accent) {
+  const h = handRamp(c);
+  const boxing = g.kind === "boxing";
+  c.pc.rect(x + ax * 4, T + 10, 4, boxing ? 3 : 2, h.base);
+  c.pc.set(x + ax * 4 + 3, T + 11, h.shadow);
+  if (boxing) {
+    c.pc.hline(x + ax * 4, T + 12, 4, h.shadow);
+    c.pc.set(x + ax * 4 + 1, T + 10, h.light);
+  }
+  if (agentMark(c) && !hidden) {
     const a = c.r.agentRamp;
     c.pc.hline(x, T + 4, 4, a.base);
     c.pc.hline(x, T + 5, 3, a.base);
