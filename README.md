@@ -348,6 +348,12 @@ one `AvatarSpec` and one editor: saved looks keep the existing custom/automatic 
 appear on every sibling session. The front, side and seated previews include the new items;
 a separate ride preview appears when a vehicle is equipped. Existing automatic looks stay unchanged.
 
+Under **Magic**: a **trail** of glitter stars and/or sweets that drops behind you while you walk
+and fades after a few seconds, and a **companion** (a glowing floating eye in a triangle, a
+little pig, or both) that turns up next to you every few minutes, tags along for half a minute to
+a minute and leaves again. The rhythm is the same in every browser (seeded by your name), it is
+drawn locally (no requests, nothing about your agents changes) and it respects reduced motion.
+
 The games panel adds:
 
 - **Use left/right item:** swing a lightsaber, fire confetti, toast a beer, puff cigarette/joint
