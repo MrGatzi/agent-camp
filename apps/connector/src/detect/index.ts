@@ -92,6 +92,14 @@ export const DESIGN_RAW_ID = "claude-app";
 /** Hosted processes keep a quiet desk busy for at most this much transcript silence. */
 export const HOSTED_BUSY_MAX_MS = 10 * 60_000;
 
+/**
+ * An idle session whose last walk found no live subagents has its subagents folder walked again
+ * only this often: the folder may hold thousands of finished transcripts (a readdir + a stat
+ * each), and long-idle sessions are the common case. A session that is not idle, or had live
+ * subagents last time, is walked every poll.
+ */
+export const IDLE_SUBAGENT_RESCAN_MS = 60_000;
+
 export class Detector {
   private tail = new TailReader();
   private cowork = new CoworkScanner();
@@ -101,6 +109,8 @@ export class Detector {
   /** pids from pid files whose process is alive in the current poll (rule 1) */
   private alivePids: ReadonlySet<number> = new Set();
   private subagentCache = newSubagentCache();
+  /** `agent:rawId` of idle sessions -> when a walk last found no live subagents for them */
+  private idleWalkedAt = new Map<string, number>();
   /** transcript -> its newest conversation entry, and when that entry was first seen */
   private moved = new Map<string, { entry: object | null; atMs: number }>();
   private readonly now: () => number;
@@ -135,7 +145,9 @@ export class Detector {
       ...safe(() => scanClaude(dirs.claude, this.metaCache, this.subagentCache)),
       ...safe(() => scanCodex(dirs.codex, this.metaCache)),
       ...safe(() => scanPi(dirs.pi, this.metaCache)),
-      ...(cowork ? safe(() => this.cowork.scan(dirs.claudeDesktop, now, this.metaCache)) : []),
+      ...(cowork
+        ? safe(() => this.cowork.scan(dirs.claudeDesktop, now, this.metaCache, this.subagentCache))
+        : []),
     ];
 
     // 0. agents hosted inside another agent: their sessions belong to the host's desk
@@ -229,6 +241,8 @@ export class Detector {
 
     const sessions: SessionInfo[] = [];
     const keep = new Set<string>();
+    const liveIds = new Set([...live].map(idOf));
+    for (const id of this.idleWalkedAt.keys()) if (!liveIds.has(id)) this.idleWalkedAt.delete(id);
     for (const c of live) {
       try {
         sessions.push(this.describe(c, now, busy.has(c), helpers.get(c) ?? 0));
@@ -303,7 +317,7 @@ export class Detector {
     const startedAt = Math.max(0, Math.min(now, Math.floor(meta.startedAt ?? c.mtimeMs ?? now)));
     // Live subagents (counted by their own lifecycle, see countSubagents) mean the session is
     // working even while its own transcript is quiet and nothing above held it: never idle then.
-    const subagents = safe(() => c.subagents?.(now, entries) ?? 0, 0);
+    const subagents = this.subagentsOf(c, now, entries, activity === "idle");
     if (activity === "idle" && subagents > 0) activity = "thinking";
     const info: SessionInfo = {
       sessionKey: sessionKeyFor(this.opts.clientId, c.agent, c.rawId),
@@ -320,6 +334,34 @@ export class Detector {
       if (project) info.project = project;
     }
     return info;
+  }
+
+  /**
+   * Live subagents of `c`. An idle session whose last walk found none is walked again only after
+   * IDLE_SUBAGENT_RESCAN_MS (0 in between): a subagent spawned by a turn writes the parent's
+   * transcript, so the parent is not idle then and is walked at once.
+   */
+  private subagentsOf(
+    c: Candidate,
+    now: number,
+    entries: readonly Record<string, unknown>[],
+    idle: boolean,
+  ): number {
+    if (!c.subagents) return 0;
+    const id = `${c.agent}:${c.rawId}`;
+    const walkedAt = this.idleWalkedAt.get(id);
+    if (
+      idle &&
+      walkedAt !== undefined &&
+      now >= walkedAt &&
+      now - walkedAt < IDLE_SUBAGENT_RESCAN_MS
+    ) {
+      return 0;
+    }
+    const n = safe(() => c.subagents?.(now, entries) ?? 0, 0);
+    if (idle && n === 0) this.idleWalkedAt.set(id, now);
+    else this.idleWalkedAt.delete(id);
+    return n;
   }
 
   /**

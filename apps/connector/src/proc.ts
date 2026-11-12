@@ -80,11 +80,20 @@ export function isCodexAppServer(argv: readonly string[]): boolean {
  */
 export function runsAsExe(args: string, exe: string): boolean {
   if (args.trim() === "") return true;
-  const name =
-    exe.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + (exe.length >= UCOMM_WIDTH ? "\\S*" : "");
-  // a path starts with / ~ or . and, up to `/exe`, has no space that starts another argument
-  return new RegExp(`^(?:(?=[/~.])(?:(?!\\s[-/~]).)*?/)?${name}(?:\\s|$)`).test(args);
+  let re = exeRegExps.get(exe);
+  if (!re) {
+    const name =
+      exe.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + (exe.length >= UCOMM_WIDTH ? "\\S*" : "");
+    // a path starts with / ~ or . and, up to `/exe`, has no space that starts another argument
+    re = new RegExp(`^(?:(?=[/~.])(?:(?!\\s[-/~]).)*?/)?${name}(?:\\s|$)`);
+    if (exeRegExps.size >= 64) exeRegExps.clear();
+    exeRegExps.set(exe, re);
+  }
+  return re.test(args);
 }
+
+/** `runsAsExe` patterns per executable name (only agent names reach it from `procRow`). */
+const exeRegExps = new Map<string, RegExp>();
 
 /**
  * One process. `exe`: the executable's file name when the platform reports it apart from argv
@@ -92,7 +101,9 @@ export function runsAsExe(args: string, exe: string): boolean {
  * executable too (see `runsAsExe`).
  */
 export function procRow(pid: number, ppid: number, argv: readonly string[], exe?: string): ProcRow {
-  const byExe = exe && runsAsExe(argv.join(" "), exe) ? kindOfName(exe) : null;
+  // only an agent's executable name needs the argv0 check: anything else classifies by argv
+  const exeKind = exe ? kindOfName(exe) : null;
+  const byExe = exeKind && exe && runsAsExe(argv.join(" "), exe) ? exeKind : null;
   const agent = byExe ?? classifyArgv(argv);
   const r: ProcRow = { pid, ppid, agent };
   if (agent === "claude" && isAgentSdkBackend(argv)) r.backend = true;

@@ -14,7 +14,7 @@ import {
   SUBAGENT_SILENT_MAX_MS,
   toolCalls,
 } from "../src/detect/claude.ts";
-import { Detector } from "../src/detect/index.ts";
+import { Detector, IDLE_SUBAGENT_RESCAN_MS } from "../src/detect/index.ts";
 import { agentDirs } from "../src/paths.ts";
 import { fakeProcesses } from "../src/proc.ts";
 import { addCowork, type FakeHome, makeHome, P } from "./helpers.ts";
@@ -265,6 +265,40 @@ describe("detector", () => {
     writeFileSync(h.path(sub("agent-abc.meta.json")), JSON.stringify(bg({ finished: true })));
     const after = await detector(h).poll();
     expect(after[0]).toMatchObject({ activity: "idle", subagents: 0 });
+  });
+
+  test("an idle session without subagents is walked again only after IDLE_SUBAGENT_RESCAN_MS", async () => {
+    home = makeHome(NOW);
+    const h = home;
+    appendFileSync(
+      h.path(P.claudeActive),
+      line({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "done" }], stop_reason: "end_turn" },
+      }),
+    );
+    for (const p of [P.claudeActive, P.claudeWaiting, P.sub1, P.sub2]) h.age(p, 3 * MIN);
+    let now = NOW;
+    const d = new Detector({
+      dirs: agentDirs({}, h.home),
+      clientId: "c_test",
+      shareProjectNames: true,
+      processes: fakeProcesses([{ pid: 12345, agent: "claude" }]),
+      now: () => now,
+    });
+    const office = async () => (await d.poll()).find((s) => s.project === "agent-office");
+    expect(await office()).toMatchObject({ activity: "idle", subagents: 0 });
+    // a background subagent appears with no parent write: not seen until the rescan is due
+    writeFileSync(h.path(sub("agent-abc.meta.json")), JSON.stringify(bg()));
+    h.age(P.sub1, 1_000, NOW);
+    now = NOW + 2_000;
+    expect(await office()).toMatchObject({ activity: "idle", subagents: 0 });
+    now = NOW + IDLE_SUBAGENT_RESCAN_MS;
+    expect(await office()).toMatchObject({ activity: "thinking", subagents: 1 });
+    // with live subagents it is walked every poll: their end shows at once
+    writeFileSync(h.path(sub("agent-abc.meta.json")), JSON.stringify(bg({ finished: true })));
+    now += 2_000;
+    expect(await office()).toMatchObject({ activity: "idle", subagents: 0 });
   });
 
   test("a non-idle activity is kept as is when subagents run", async () => {
