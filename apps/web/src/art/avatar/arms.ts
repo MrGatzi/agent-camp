@@ -26,6 +26,8 @@ function sleeveAt(c: Ctx, k: number): Ramp | null {
   const sl = o.kind === "none" ? c.sleeve : s.ramp;
   if (s.kind === "tank" || s.kind === "none" || s.kind === "camisole") return null;
   if (s.sleeves === "none") return null;
+  // mesh top: skin shows between the rows of netting
+  if (s.kind === "mesh-top" && k % 2 === 1) return null;
   if (s.sleeves === "puff") return k < 3 ? sl : null;
   if (s.sleeves === "short") return k < 4 ? sl : null;
   if (s.sleeves === "rolled") return k < 7 ? sl : null;
@@ -120,8 +122,12 @@ function armColumn(c: Ctx, x: number, y0: number, len: number, dark: boolean, ha
     c.pc.set(x, y, col);
     c.pc.set(x + 1, y, dark ? sl.shadow : k < 2 ? sl.base : sl.shadow);
     if (puffAt(c, k)) c.pc.set(ox, y, k === 0 ? sl.light : sl.base);
-    // kimono: wide sleeves hang below the arm
-    else if (o.kind === "kimono" && k >= 3) c.pc.set(ox, y, k === len - 1 ? sl.shadow : sl.base);
+    // kimono, wizard robe: wide sleeves hang below the arm
+    else if ((o.kind === "kimono" || o.kind === "wizard-robe") && k >= 3)
+      c.pc.set(ox, y, k === len - 1 ? sl.shadow : sl.base);
+    // fur coat: shaggy sleeves; chainmail: rings
+    else if (o.kind === "fur-coat" && (k + x) % 3 === 0) c.pc.set(ox, y, sl.light);
+    if (o.kind === "chainmail") c.pc.set(x + (k % 2), y, sl.light);
     // track jacket: a stripe down the outside of the sleeve
     if (o.kind === "track-jacket") c.pc.set(out < 0 ? x : x + 1, y, trimColor(o));
   }
@@ -312,7 +318,10 @@ export function drawArmSide(c: Ctx, b: TorsoBox, phase: number) {
       c.pc.set(xx - 1, T + k, sl.base);
       c.pc.set(xx + 4, T + k, sl.shadow);
     }
-    if (o.kind === "kimono" && k >= 4) c.pc.set(xx + 4, T + k, sl.shadow);
+    if ((o.kind === "kimono" || o.kind === "wizard-robe") && k >= 4)
+      c.pc.set(xx + 4, T + k, sl.shadow);
+    if (o.kind === "fur-coat" && k % 3 === 1) c.pc.set(xx + 4, T + k, sl.light);
+    if (o.kind === "chainmail" && sl !== glove) c.pc.set(xx + 1 + (k % 2), T + k, sl.light);
     if (o.kind === "track-jacket" && sl !== glove) c.pc.set(xx + 1, T + k, trimColor(o));
   }
   const h = handRamp(c);
