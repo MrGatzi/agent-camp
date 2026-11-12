@@ -36,9 +36,11 @@ import {
   OUTFITS,
   repairAvatar,
   repairLookScored,
+  resolveLook,
   SKIN_TONES,
   VEHICLES,
   WRISTWEAR,
+  withWardrobe,
 } from "@agent-office/protocol";
 import { z } from "zod";
 import type { AvatarJob } from "./hub.ts";
@@ -50,6 +52,8 @@ export type AvatarRequest = {
   selfDescription?: string;
   /** the look the person has now; kept when generation fails or there is nothing to go on */
   previous?: AvatarSpec;
+  /** "Change by prompt" (WD10): edit `base` as `instruction` says (selfDescription = it) */
+  change?: { instruction: string; base: AvatarSpec };
 };
 export type ProviderResult = {
   candidate: unknown;
@@ -231,6 +235,37 @@ export const SYSTEM_PROMPT = [
   "  when the outer garment's colour is described (the agent colour becomes an armband).",
   "- Unmentioned details: pick plausible, varied choices that suit the described style.",
   "",
+  "The wardrobe (everything you can find while shopping, plus costumes):",
+  "- Give every part and item that the description mentions its colour: garments, underwear,",
+  "  apron, shoes, hats, accessories (mask, wings, tail, gloves, necklace, bag) and held items",
+  '  (extras.leftTint / rightTint, "none" = the item\'s usual colours).',
+  "- body.height: petite / short / average / tall / very-tall from words like small, tiny, tall,",
+  '  lanky; average otherwise. body.figure: curvy, belly (round tummy), muscular, else "neutral".',
+  "  build stays the overall width (slim / average / broad).",
+  '- Layers, inside out: underwear -> shirt -> vest -> apron -> outer. A garment kind "none"',
+  "  leaves the layer below visible: no shirt shows the underwear top or bare skin, no bottoms",
+  "  shows the underwear bottom or bare hips.",
+  '- Swimwear and underwear go in "underwear" (bikini, swim-trunks, swimsuit, briefs, boxers,',
+  '  bra...) with shirt, outer, vest and bottoms "none" when nothing else is worn. Naked = all',
+  '  of them "none", underwear none, legwear none, shoes none: it is drawn as a smooth,',
+  "  featureless doll body. Otherwise give a plausible underwear that matches (it rarely shows).",
+  "- Dirndl: shirt dirndl-blouse, vest dirndl-bodice (piping = the lacing), bottoms",
+  "  dirndl-skirt, apron dirndl (bow left = single, right = taken, front = maiden, back = widow).",
+  "  Lederhosen: bottoms lederhosen or kneebund-lederhosen, often suspenders h-bridge, a",
+  "  trachten-shirt, loferl or knee-socks, haferl shoes, maybe a janker and a tyrolean-hat.",
+  "- Suit: shirt (collar shirt) + tie, blazer closed, trousers, oxfords; tuxedo: outer tuxedo",
+  "  (satin lapels in collarColor), bow-tie, often a waistcoat. Gowns and long dresses: bottoms",
+  "  gown / maxi-skirt / dress with a matching top; capes and robes: outer cape / kimono /",
+  "  bathrobe with length knee or ankle.",
+  "- Costumes: build them from garments, a hat, accessories and tints (witch = witch-hat, cape,",
+  "  maxi-skirt; superhero = cape, mask eye-mask, leggings; angel = wings angel + halo...).",
+  "  extras.costume adds the old costume details (cat, robot, astronaut, pirate, vampire,",
+  "  disco); use it only when asked for one of those.",
+  "",
+  "When the user message gives a current look and a change request, answer with the whole",
+  "avatar: the current look with only that change applied. Keep every other field exactly as it",
+  "is in the current look (same colours, kinds, desk props, vehicle).",
+  "",
   "The catalog fields are the low-resolution fallback; approximate the look with them:",
   `hairStyle: ${list(HAIR_STYLES)}`,
   `hairColor: ${list(HAIR_COLORS)}`,
@@ -253,6 +288,21 @@ export const SYSTEM_PROMPT = [
 ].join("\n");
 
 export function userPrompt(req: AvatarRequest): string {
+  if (req.change) {
+    const base = req.change.base;
+    const current = { ...base, look: withWardrobe(resolveLook(base)) };
+    const change = req.change.instruction.trim().slice(0, MAX_SELF_DESCRIPTION);
+    return [
+      `Name: ${req.name}`,
+      "<current_look>",
+      JSON.stringify(current),
+      "</current_look>",
+      "<change_request>",
+      change,
+      "</change_request>",
+      "Apply only this change to the current look and answer with the whole avatar.",
+    ].join("\n");
+  }
   const desc = req.selfDescription?.trim().slice(0, MAX_SELF_DESCRIPTION) || "(none given)";
   return `Name: ${req.name}\n<self_description>\n${desc}\n</self_description>`;
 }
@@ -478,9 +528,21 @@ export class AvatarService {
     by: string,
   ): AvatarResult | null {
     const key = job.key ?? this.cacheKey(job.name, job.selfDescription);
-    const { avatar, repaired } = repairAvatar(candidate, job.personId, job.previous);
+    const repairedAvatar = repairAvatar(candidate, job.personId, job.previous);
+    let { avatar } = repairedAvatar;
+    const { repaired } = repairedAvatar;
     const candidateLook = isRecord(candidate) ? candidate.look : undefined;
-    const score = avatar.look ? repairLookScored(candidateLook, lookFromCatalog(avatar)).score : 0;
+    // a change keeps what the model got wrong as it was, not as the catalog would draw it
+    const repairBase = job.change
+      ? withWardrobe(resolveLook(job.change.base))
+      : avatar.look
+        ? lookFromCatalog(avatar)
+        : null;
+    const scored = repairBase
+      ? repairLookScored(candidateLook, repairBase)
+      : { look: undefined, score: 0 };
+    if (job.change && scored.look) avatar = { ...avatar, look: scored.look };
+    const score = avatar.look ? scored.score : 0;
     if (score < MIN_LOOK_SCORE) {
       this.log(
         `genui ${by} unusable avatar for ${job.personId} (look score ${score.toFixed(2)}), kept current look`,

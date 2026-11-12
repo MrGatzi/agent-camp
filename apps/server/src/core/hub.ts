@@ -12,7 +12,6 @@ import {
   CLOSE_TOO_OLD,
   CONNECTOR_STALE_MS,
   CONNECTOR_TIMEOUT_MS,
-  catalogAvatar,
   compareVersions,
   envelope,
   type HelperSkin,
@@ -107,6 +106,12 @@ export type AvatarJob = {
   key: string;
   /** the stored look, kept when there is no description or generation fails */
   previous?: AvatarSpec;
+  /**
+   * "Change by prompt" (WD10): edit `base` (the look worn when asked) as `instruction` says,
+   * instead of drawing a look from the description. `selfDescription` is the instruction. The
+   * answer is pinned as a custom look; the description and the automatic look stay as they are.
+   */
+  change?: { instruction: string; base: AvatarSpec };
 };
 
 export type HubResult = {
@@ -401,8 +406,8 @@ export class Hub {
   }
 
   /**
-   * Look editor: pin a custom look (catalog ids, already validated) or, with `null`, drop it
-   * and go back to the automatic look. The automatic look is kept in its own row, so going
+   * Look editor: pin a custom look (already validated; its detailed look is kept, WD9) or,
+   * with `null`, drop it and go back to the automatic look. The automatic look is kept in its own row, so going
    * back is free; an avatar job is returned only when that row is missing or was made for an
    * older description. Only for people in the office; returns null otherwise.
    */
@@ -416,8 +421,8 @@ export class Hub {
     const stored = this.storedAvatar(personId);
     if (p.selfDescription === undefined) p.selfDescription = stored?.selfDescription ?? "";
     if (avatar) {
-      // catalog ids only: the look comes from them, never from a GenUI answer
-      const custom = catalogAvatar(avatar);
+      // the whole look as designed (WD9; LK23 kept catalog ids only)
+      const custom = structuredClone(avatar);
       this.store.putCustomAvatar(personId, custom);
       p.avatar = custom;
       this.log(`look ${personId} custom`);
@@ -464,6 +469,25 @@ export class Hub {
    * custom look stays pinned until the caller drops it (only once the AI made a new look, so
    * a failed attempt never costs the person their look). Null when not in the office.
    */
+  /**
+   * "Change by prompt" (WD10): a job that edits the look the person wears now as `instruction`
+   * says. Neither the description nor the automatic look change; the answer is pinned as a
+   * custom look (app.ts applyLook). The key is unique per request, so it never hits a cache.
+   */
+  changeLook(personId: string, instruction: string, now: number): AvatarJob | null {
+    const p = this.people.get(personId);
+    if (!p) return null;
+    this.log(`look ${personId} change requested in the look studio`);
+    return {
+      personId,
+      name: p.name,
+      key: `C1:${hashString(`${personId}\n${instruction}\n${now}`).toString(36)}`,
+      selfDescription: instruction,
+      previous: p.avatar,
+      change: { instruction, base: structuredClone(p.avatar) },
+    };
+  }
+
   describeLook(personId: string, description: string): AvatarJob | null {
     const p = this.people.get(personId);
     if (!p) return null;
@@ -780,14 +804,11 @@ export class Hub {
   }
 
   /**
-   * The look picked in the look editor, if any. It is catalog ids only: a detailed `look` (say
-   * one copied from the GenUI avatar it was edited from, or a row stored before this rule) is
-   * dropped, so the look is derived from the picked ids (`lookFromCatalog`) and no GenUI
-   * answer can show through.
+   * The look designed in the look studio, if any, with its detailed look (WD9). Rows saved
+   * before the wardrobe are catalog ids only, as they were drawn then (Store.getCustomAvatar).
    */
   private customAvatar(personId: string): AvatarSpec | null {
-    const custom = this.store.getCustomAvatar(personId);
-    return custom ? catalogAvatar(custom) : null;
+    return this.store.getCustomAvatar(personId);
   }
 
   /** Stored avatar row with its look repaired (rows are not validated when written/read). */
