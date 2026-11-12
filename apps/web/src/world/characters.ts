@@ -82,6 +82,7 @@ import {
   ZOMBIE_AFTER_MS,
 } from "./dramaRules.ts";
 import type { Effects } from "./effects.ts";
+import { facingFor } from "./facing.ts";
 import { helperArea } from "./helperRules.ts";
 import { HelperSwarm, type HelperWorld } from "./helpers.ts";
 import {
@@ -2110,8 +2111,7 @@ export class CharacterManager {
       const dy = wp.y - c.y;
       const dist = Math.hypot(dx, dy);
       if (dist > 0.01) {
-        c.facing =
-          Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? "left" : "right") : dy < 0 ? "up" : "down";
+        c.facing = facingFor(dx, dy, c.facing);
       }
       if (dist <= budget) {
         c.x = wp.x;
