@@ -24,6 +24,12 @@
  * subagent workers, `pi` under `pi`) are the host session's helpers (robots), and any live
  * hosted process keeps the host session from going idle while its transcript is quiet, for at
  * most HOSTED_BUSY_MAX_MS. A hidden session shows again once a top-level pid owns it.
+ *
+ * A daemon (`ProcInfo.daemon`: the Codex app's `codex app-server`) counts as "the agent runs"
+ * for rule 3, so the Codex app's sessions show while their transcripts are fresh, but it owns no
+ * session by rule 1 or 2: in the cwd it was started in it would otherwise keep the newest
+ * transcript there on a desk forever ("idle, started 9d ago"). It owns nothing, so agents hosted
+ * below it are helpers of no session and keep none busy.
  */
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
@@ -148,7 +154,8 @@ export class Detector {
     const tiedPids = new Set<number>();
     for (const c of candidates) {
       for (const pid of c.pids) {
-        const alive = assumeProcesses || procs.some((p) => p.pid === pid && p.agent === c.agent);
+        const alive =
+          assumeProcesses || procs.some((p) => p.pid === pid && p.agent === c.agent && !p.daemon);
         if (alive) {
           live.add(c);
           tiedPids.add(pid);
@@ -157,7 +164,7 @@ export class Detector {
       }
     }
     // 2. process cwd -> newest matching transcript
-    const untied = procs.filter((p) => !tiedPids.has(p.pid));
+    const untied = procs.filter((p) => !tiedPids.has(p.pid) && !p.daemon);
     if (untied.length > 0) {
       let cwds = new Map<number, string>();
       try {
@@ -201,7 +208,7 @@ export class Detector {
         seen.add(top.pid);
         top = byPid.get(top.hostPid);
       }
-      const c = top && top.hostPid === undefined ? owner.get(top.pid) : undefined;
+      const c = top && top.hostPid === undefined && !top.daemon ? owner.get(top.pid) : undefined;
       if (!c) continue;
       if (now - c.mtimeMs < HOSTED_BUSY_MAX_MS) busy.add(c);
       if (!h.backend) helpers.set(c, (helpers.get(c) ?? 0) + 1);

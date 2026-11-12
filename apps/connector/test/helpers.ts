@@ -1,6 +1,6 @@
 import { cpSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 export const FIXTURE_HOME = join(import.meta.dir, "..", "..", "..", "fixtures", "home");
 
@@ -47,6 +47,22 @@ export function makeHome(now = Date.now()): FakeHome {
   };
   for (const rel of Object.values(P)) h.age(rel, 5_000);
   return h;
+}
+
+/**
+ * `ps -axo pid=,ppid=,ucomm=,args=` output as macOS prints it: right-aligned pids, then `ucomm`
+ * (the executable's file name) cut and padded to exactly 16 chars. Rows are
+ * `[pid, ppid, args, ucomm?]`; ucomm defaults to the file name of the first word of args.
+ */
+export function psOut(...rows: [number, number, string, string?][]): string {
+  return rows
+    .map(([pid, ppid, args, exe = basename(args.split(" ")[0]!)]) =>
+      [String(pid).padStart(5), String(ppid).padStart(5), exe.slice(0, 16).padEnd(16), args].join(
+        " ",
+      ),
+    )
+    .join("\n")
+    .concat("\n");
 }
 
 // ---- Cowork (Claude desktop app) ---------------------------------------------------------------

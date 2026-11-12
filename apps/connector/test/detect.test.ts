@@ -12,13 +12,17 @@ import { agentDirs } from "../src/paths.ts";
 import {
   agentProcesses,
   classifyArgv,
+  claudeDesktopInPs,
   fakeProcesses,
+  isCodexAppServer,
   type ProcInfo,
   parseLsof,
   parsePs,
   parseStatPpid,
+  procRow,
+  psLines,
 } from "../src/proc.ts";
-import { type FakeHome, makeHome, P, RAW_IDS } from "./helpers.ts";
+import { type FakeHome, makeHome, P, psOut, RAW_IDS } from "./helpers.ts";
 
 let h: FakeHome;
 afterEach(() => h?.cleanup());
@@ -454,8 +458,15 @@ describe("helpers", () => {
     expect(classifyArgv(["/Applications/Claude.app/Contents/MacOS/Claude"])).toBeNull();
     expect(classifyArgv(["vim", "claude.md"])).toBeNull();
     expect(classifyArgv([])).toBeNull();
+    // the native Claude CLI's file name (ucomm) is its version: argv0 `claude` names it
     expect(
-      parsePs("  123     1 claude --resume\n 456 1 /bin/zsh\n789 456 node /x/bin/pi\n"),
+      parsePs(
+        psOut(
+          [123, 1, "claude --resume", "2.1.322"],
+          [456, 1, "/bin/zsh"],
+          [789, 456, "node /x/bin/pi"],
+        ),
+      ),
     ).toEqual([
       { pid: 123, agent: "claude" },
       { pid: 789, agent: "pi" },
@@ -464,7 +475,12 @@ describe("helpers", () => {
     const sdk = "/x/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude";
     expect(
       parsePs(
-        `10 1 /bin/zsh\n20 10 pi\n25 20 /bin/sh -c x\n30 25 ${sdk} --output-format stream-json\n`,
+        psOut(
+          [10, 1, "/bin/zsh"],
+          [20, 10, "pi"],
+          [25, 20, "/bin/sh -c x"],
+          [30, 25, `${sdk} --output-format stream-json`],
+        ),
       ),
     ).toEqual([
       { pid: 20, agent: "pi" },
@@ -472,7 +488,13 @@ describe("helpers", () => {
     ]);
     // a purrness worker is a hosted pi, not a backend; native claude is never a backend
     expect(
-      parsePs("20 1 pi\n40 20 pi --mode json --print\n50 1 /Users/a/.local/bin/claude\n"),
+      parsePs(
+        psOut(
+          [20, 1, "pi"],
+          [40, 20, "pi --mode json --print"],
+          [50, 1, "/Users/a/.local/bin/claude", "2.1.322"],
+        ),
+      ),
     ).toEqual([
       { pid: 20, agent: "pi" },
       { pid: 40, agent: "pi", hostPid: 20 },
@@ -483,14 +505,21 @@ describe("helpers", () => {
     const vendored = "/x/@openai/codex/vendor/aarch64-apple-darwin/codex/codex";
     expect(
       parsePs(
-        `60 1 node /opt/homebrew/bin/codex\n61 60 ${vendored} --sandbox\n62 61 /bin/zsh -c x\n63 62 claude -p hi\n`,
+        psOut(
+          [60, 1, "node /opt/homebrew/bin/codex"],
+          [61, 60, `${vendored} --sandbox`],
+          [62, 61, "/bin/zsh -c x"],
+          [63, 62, "claude -p hi"],
+        ),
       ),
     ).toEqual([
       { pid: 60, agent: "codex" },
       { pid: 63, agent: "claude", hostPid: 60 },
     ]);
     // a JS-run pi worker under a JS-run pi (Linux argv) is still a hosted helper
-    expect(parsePs("70 1 node /x/bin/pi\n71 70 node /x/bin/pi --mode json\n")).toEqual([
+    expect(
+      parsePs(psOut([70, 1, "node /x/bin/pi"], [71, 70, "node /x/bin/pi --mode json"])),
+    ).toEqual([
       { pid: 70, agent: "pi" },
       { pid: 71, agent: "pi", hostPid: 70 },
     ]);
@@ -513,5 +542,134 @@ describe("helpers", () => {
         [456, "/tmp"],
       ]),
     );
+  });
+});
+
+// Shapes copied from `ps -axo pid=,ppid=,ucomm=,args=` on a Mac running the Claude and Codex apps.
+const DESKTOP_CLAUDE =
+  "/Users/a/Library/Application Support/Claude/claude-code/2.1.321/ddbdf2b334e1/claude.app/Contents/MacOS/claude";
+const DESKTOP_FLAGS = "--output-format stream-json --verbose --input-format stream-json";
+const CODEX_DAEMON =
+  "/Users/a/.codex/packages/app-server-daemon/releases/0.167.2-aarch64-apple-darwin/bin/codex";
+const MAC_PS = psOut(
+  [58935, 1, "/Applications/Claude.app/Contents/MacOS/Claude", "Claude"],
+  [
+    39917,
+    58935,
+    "/Applications/Claude.app/Contents/Frameworks/Claude Helper (Renderer).app/Contents/MacOS/Claude Helper (Renderer) --type=renderer --user-data-dir=/Users/a/Library/Application Support/Claude",
+    "Claude Helper (Renderer)",
+  ],
+  [
+    12344,
+    58935,
+    `/Applications/Claude.app/Contents/Helpers/disclaimer --pgroup -- ${DESKTOP_CLAUDE} ${DESKTOP_FLAGS} --resume=7a735e29`,
+  ],
+  [12345, 12344, `${DESKTOP_CLAUDE} ${DESKTOP_FLAGS} --resume=7a735e29`, "claude"],
+  [94331, 1, `${CODEX_DAEMON} app-server daemon pid-update-loop`],
+  [
+    36879,
+    94331,
+    `${CODEX_DAEMON} app-server --listen unix:// --analytics-default-enabled -c features.code_mode_host=true --managed-daemon`,
+  ],
+  [
+    68150,
+    1895,
+    "/Users/a/.codex/plugins/cache/openai-bundled/chrome/latest/extension-host/macos/arm64/ChatGPT for Chrome chrome-extension://x/",
+    "ChatGPT for Chrome",
+  ],
+  [50833, 50125, "claude", "2.1.319"],
+);
+
+describe("macOS app processes", () => {
+  test("Claude Code run by the Claude desktop app is an agent; its disclaimer wrapper is not", () => {
+    const procs = parsePs(MAC_PS);
+    expect(procs.filter((p) => p.agent === "claude")).toEqual([
+      { pid: 12345, agent: "claude" },
+      { pid: 50833, agent: "claude" },
+    ]);
+    // whitespace-split argv alone cannot tell (argv0 = `…/Library/Application`)
+    expect(classifyArgv(`${DESKTOP_CLAUDE} ${DESKTOP_FLAGS}`.split(" "))).toBeNull();
+    // ucomm holds spaces and is cut at 16 chars: split by width, not by whitespace
+    expect(psLines(MAC_PS).find((l) => l.pid === 39917)?.exe).toBe("Claude Helper (R");
+    expect(psLines(MAC_PS).find((l) => l.pid === 12344)?.exe).toBe("disclaimer");
+    expect(claudeDesktopInPs(MAC_PS)).toBe(true);
+    // a line without args, and junk, never throw
+    expect(parsePs("  123     1 claude          \nnot ps\n\n")).toEqual([
+      { pid: 123, agent: "claude" },
+    ]);
+  });
+
+  test("the desktop app's session stays live through its pid file", async () => {
+    h = makeHome();
+    h.age(P.claudeActive, 100_000); // past the 90 s window
+    const d = new Detector({
+      dirs: agentDirs({}, h.home),
+      clientId: "c_test",
+      shareProjectNames: true,
+      processes: fakeProcesses(parsePs(MAC_PS)),
+    });
+    expect(byProject(await d.poll())["agent-office"]).toMatchObject({ agent: "claude" });
+  });
+
+  test("the Codex app-server daemon is marked; codex subcommand args elsewhere are not", () => {
+    expect(parsePs(MAC_PS).filter((p) => p.agent === "codex")).toEqual([
+      { pid: 94331, agent: "codex", daemon: true },
+      { pid: 36879, agent: "codex", hostPid: 94331, daemon: true },
+    ]);
+    expect(isCodexAppServer(["node", "/opt/homebrew/bin/codex", "app-server"])).toBe(true);
+    expect(isCodexAppServer(["/x/codex-aarch64-apple-darwin", "app-server", "--listen"])).toBe(
+      true,
+    );
+    expect(isCodexAppServer(["codex", "exec", "fix", "the", "app-server"])).toBe(false);
+    expect(isCodexAppServer(["/x/bin/app-server"])).toBe(false);
+    expect(procRow(1, 0, ["codex", "exec", "app-server"]).daemon).toBeUndefined();
+    expect(procRow(1, 0, ["/x/pi", "app-server"]).daemon).toBeUndefined();
+    // Linux argv (no ucomm) marks it too
+    expect(procRow(1, 0, [CODEX_DAEMON, "app-server", "daemon"])).toMatchObject({
+      agent: "codex",
+      daemon: true,
+    });
+  });
+
+  test("a daemon owns no session (cwd or pid file) but fresh transcripts still show", async () => {
+    h = makeHome();
+    h.age(P.codex, 5 * 60_000);
+    const daemon: ProcInfo = { pid: 94331, agent: "codex", daemon: true };
+    const cwd = "/Users/anna/code/codex-thing";
+    // quiet transcript in the daemon's cwd: no ghost desk
+    expect(await detector({ procs: [daemon], cwds: { 94331: cwd } }).poll()).toEqual([]);
+    // the same cwd held by a real codex process keeps it (idle) as before
+    const real = await detector({
+      procs: [{ pid: 777, agent: "codex" }],
+      cwds: { 777: cwd },
+    }).poll();
+    expect(real.map((s) => s.agent)).toEqual(["codex"]);
+    // a Codex-app session writing its transcript shows while the daemon runs
+    h.age(P.codex, 5_000);
+    const fresh = await detector({ procs: [daemon], cwds: { 94331: cwd } }).poll();
+    expect(fresh).toHaveLength(1);
+    expect(fresh[0]).toMatchObject({ agent: "codex", project: "codex-thing" });
+    // a daemon pid named by a pid file does not tie that session
+    h.age(P.claudeActive, 100_000);
+    const tied = await detector({ procs: [{ pid: 12345, agent: "claude", daemon: true }] }).poll();
+    expect(byProject(tied)["agent-office"]).toBeUndefined();
+  });
+
+  test("agents hosted below the daemon are nobody's helpers and keep nobody busy", async () => {
+    h = makeHome();
+    h.age(P.codex, 5 * 60_000);
+    const cwd = "/Users/anna/code/codex-thing";
+    const sessions = await detector({
+      procs: [
+        { pid: 777, agent: "codex" },
+        { pid: 94331, agent: "codex", daemon: true },
+        { pid: 36879, agent: "codex", hostPid: 94331, daemon: true },
+        { pid: 40000, agent: "codex", hostPid: 36879 },
+        { pid: 40001, agent: "claude", hostPid: 94331 },
+      ],
+      cwds: { 777: cwd, 94331: cwd, 36879: cwd },
+    }).poll();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({ agent: "codex", activity: "idle", subagents: 0 });
   });
 });
